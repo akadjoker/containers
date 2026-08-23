@@ -11,7 +11,7 @@
 namespace
 {
 
-    struct Bullet // POD de jogo típico — sem construtores, como deve ser
+    struct Bullet 
     {
         float x, y, vx, vy;
         int damage;
@@ -31,7 +31,7 @@ namespace
         return (reinterpret_cast<std::uintptr_t>(p) & (align - 1)) == 0;
     }
 
-} // namespace
+} 
 
 TEST(Pool, AllocateGivesDistinctAlignedSlots)
 {
@@ -54,7 +54,7 @@ TEST(Pool, NoOverlapPatternCheck)
     for (int i = 0; i < 5000; ++i)
     {
         Bullet *b = pool.allocate();
-        b->damage = i; // escreve identidade
+        b->damage = i; 
         b->x = float(i);
         all.push_back(b);
     }
@@ -72,7 +72,7 @@ TEST(Pool, DeallocateRecyclesLIFO)
     Bullet *b = pool.allocate();
     pool.deallocate(b);
     pool.deallocate(a);
-    // LIFO: o último libertado é o primeiro reutilizado (cache quente)
+
     EXPECT_EQ(pool.allocate(), a);
     EXPECT_EQ(pool.allocate(), b);
     EXPECT_EQ(pool.live(), 2u);
@@ -85,7 +85,7 @@ TEST(Pool, ReuseKeepsCapacityStable)
     for (int i = 0; i < 1000; ++i)
         v.push_back(pool.allocate());
     std::size_t cap = pool.capacity();
-    // 100 gerações de morte+respawn total — capacidade não se mexe
+
     for (int gen = 0; gen < 100; ++gen)
     {
         for (Bullet *b : v)
@@ -100,7 +100,7 @@ TEST(Pool, ReuseKeepsCapacityStable)
 
 TEST(Pool, InterleavedChurnAgainstReference)
 {
-    // fuzz: alloc/free aleatório, verificando que slots vivos nunca se pisam
+
     ct::Pool<std::uint64_t> pool;
     std::vector<std::uint64_t *> alive;
     unsigned seed = 99;
@@ -108,16 +108,16 @@ TEST(Pool, InterleavedChurnAgainstReference)
     for (int i = 0; i < 100000; ++i)
     {
         seed = seed * 1664525u + 1013904223u;
-        if (alive.empty() || (seed & 3) != 0) // 75% alloc
+        if (alive.empty() || (seed & 3) != 0) 
         {
             std::uint64_t *p = pool.allocate();
-            *p = ++stamp; // carimbo único
+            *p = ++stamp; 
             alive.push_back(p);
         }
         else
         {
             std::size_t idx = (seed >> 8) % alive.size();
-            // antes de libertar, o carimbo tem de estar intacto
+
             std::uint64_t *p = alive[idx];
             ASSERT_NE(*p, 0u);
             *p = 0;
@@ -127,7 +127,7 @@ TEST(Pool, InterleavedChurnAgainstReference)
         }
         ASSERT_EQ(pool.live(), alive.size());
     }
-    // no fim, todos os vivos ainda têm carimbo válido
+
     for (std::uint64_t *p : alive)
         ASSERT_NE(*p, 0u);
 }
@@ -164,14 +164,14 @@ TEST(Pool, ClearReusesChunks)
 
 TEST(Pool, TinyTypeSlotAtLeastPointerSize)
 {
-    ct::Pool<char> pool; // slot tem de caber o ponteiro da free list
+    ct::Pool<char> pool; 
     EXPECT_GE(ct::Pool<char>::slot_size(), sizeof(void *));
     char *a = pool.allocate();
     char *b = pool.allocate();
     *a = 'x';
     *b = 'y';
     pool.deallocate(a);
-    char *c = pool.allocate(); // reutiliza o slot de a sem tocar em b
+    char *c = pool.allocate(); 
     (void)c;
     EXPECT_EQ(*b, 'y');
 }
@@ -193,10 +193,10 @@ TEST(Pool, BigObjectSmallChunk)
     {
         char data[10000];
     };
-    ct::Pool<Big> pool(2); // 2 slots por chunk
+    ct::Pool<Big> pool(2); 
     Big *a = pool.allocate();
     Big *b = pool.allocate();
-    Big *c = pool.allocate(); // força 2º chunk
+    Big *c = pool.allocate(); 
     std::memset(a->data, 1, sizeof(a->data));
     std::memset(b->data, 2, sizeof(b->data));
     std::memset(c->data, 3, sizeof(c->data));

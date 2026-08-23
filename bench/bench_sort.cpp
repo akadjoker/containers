@@ -1,4 +1,4 @@
-// ct::sort (radix + introsort combinados) vs std::sort
+
 #include <ct/sort.hpp>
 #include <ct/string.hpp>
 #include <ct/vector.hpp>
@@ -14,7 +14,7 @@ volatile std::uint64_t bench::sink = 0;
 
 namespace
 {
-    constexpr int N = 10000000; // 10M números
+    constexpr int N = 10000000; 
 
     unsigned next(unsigned &s) { return s = s * 1664525u + 1013904223u; }
 
@@ -47,7 +47,7 @@ namespace
 
     std::uint64_t ct_sort_small_arrays()
     {
-        // 100k arrays de 64 ints (caminho introsort — depth sort de sprites etc)
+
         std::uint64_t acc = 0;
         unsigned s = 7;
         int a[64];
@@ -88,7 +88,7 @@ namespace
         return v[v.size() / 2].size();
     }
 
-} // namespace
+} 
 
 int main()
 {
@@ -108,7 +108,7 @@ int main()
     auto sorted_int = make_data<int>(N, [](unsigned &, int i) { return i; });
     auto small_range = make_data<int>(N, [](unsigned &s, int) {
         s = s * 1664525u + 1013904223u;
-        return static_cast<int>(s % 256); // chaves pequenas: radix salta passes
+        return static_cast<int>(s % 256); 
     });
 
     bench::header("numeros (caminho radix O(n))");

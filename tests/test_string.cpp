@@ -9,11 +9,6 @@
 
 using ct::String;
 
-// nota: usar EXPECT_TRUE(x == String::npos) e não EXPECT_EQ (evita ODR-use
-// de membro constexpr em C++14)
-
-// ---------- layout / SSO ----------
-
 TEST(StringSSO, SizeIs24Bytes)
 {
     EXPECT_EQ(sizeof(String), 24u);
@@ -33,7 +28,7 @@ TEST(StringSSO, SmallStaysInline)
 
 TEST(StringSSO, TwentyFourGoesToHeap)
 {
-    String s("abcdefghijklmnopqrstuvwx"); // 24 chars
+    String s("abcdefghijklmnopqrstuvwx"); 
     EXPECT_FALSE(s.is_small());
     EXPECT_EQ(s.size(), 24u);
     EXPECT_STREQ(s.c_str(), "abcdefghijklmnopqrstuvwx");
@@ -46,7 +41,7 @@ TEST(StringSSO, BoundaryTransitionByPushBack)
         s.push_back(char('a' + i % 26));
     EXPECT_TRUE(s.is_small());
     EXPECT_EQ(s.size(), 23u);
-    s.push_back('!'); // 24º char: salta para o heap
+    s.push_back('!'); 
     EXPECT_FALSE(s.is_small());
     EXPECT_EQ(s.size(), 24u);
     EXPECT_EQ(s.back(), '!');
@@ -56,13 +51,11 @@ TEST(StringSSO, BoundaryTransitionByPushBack)
 
 TEST(StringSSO, Exactly23HasImplicitNul)
 {
-    String s("12345678901234567890123"); // exatamente 23
+    String s("12345678901234567890123"); 
     EXPECT_TRUE(s.is_small());
     EXPECT_EQ(s.size(), 23u);
-    EXPECT_EQ(s.c_str()[23], '\0'); // o byte de controlo É o NUL
+    EXPECT_EQ(s.c_str()[23], '\0'); 
 }
-
-// ---------- construção / cópia / move ----------
 
 TEST(StringBasic, DefaultEmpty)
 {
@@ -138,13 +131,11 @@ TEST(StringBasic, MoveStealsHeap)
 TEST(StringBasic, AssignShrinkAndGrow)
 {
     String s("uma string suficientemente longa para ir ao heap");
-    s = "curta"; // encolher mantém o buffer heap
+    s = "curta"; 
     EXPECT_TRUE(s == "curta");
     s = "outra string ainda mais comprida para forçar novo crescimento do buffer";
     EXPECT_TRUE(s.ends_with("buffer"));
 }
-
-// ---------- append / concat ----------
 
 TEST(StringAppend, OperatorPlusEquals)
 {
@@ -170,10 +161,10 @@ TEST(StringAppend, GrowthAcrossManyAppends)
 
 TEST(StringAppend, SelfAppendIsSafe)
 {
-    String s("abcdefghij"); // small
+    String s("abcdefghij"); 
     s += s;
     EXPECT_TRUE(s == "abcdefghijabcdefghij");
-    s += s; // 40 chars, heap, com realloc no meio
+    s += s; 
     EXPECT_EQ(s.size(), 40u);
     EXPECT_TRUE(s.starts_with("abcdefghijabcdefghij"));
     String h("string longa no heap para o self append ser perigoso!");
@@ -192,8 +183,6 @@ TEST(StringAppend, OperatorPlus)
     EXPECT_TRUE("pre" + b == "prebar");
     EXPECT_TRUE(a + '!' == "foo!");
 }
-
-// ---------- números ----------
 
 TEST(StringNumber, Integers)
 {
@@ -221,8 +210,6 @@ TEST(StringNumber, AppendChain)
     EXPECT_TRUE(s == "pos=10,-5");
 }
 
-// ---------- pesquisa ----------
-
 TEST(StringFind, CharAndSubstring)
 {
     String s("the quick brown fox jumps over the lazy dog");
@@ -233,13 +220,13 @@ TEST(StringFind, CharAndSubstring)
     EXPECT_EQ(s.find("the"), 0u);
     EXPECT_EQ(s.find("the", 1), 31u);
     EXPECT_TRUE(s.find("cat") == String::npos);
-    EXPECT_EQ(s.rfind('o'), 41u); // o 'o' de "dog"
-    EXPECT_EQ(s.find_first_of("xyz"), 18u); // o 'x' de fox... conferir: f-o-x
+    EXPECT_EQ(s.rfind('o'), 41u); 
+    EXPECT_EQ(s.find_first_of("xyz"), 18u); 
 }
 
 TEST(StringFind, AgainstStdReference)
 {
-    // fuzz: find tem de dar o mesmo que o std::string
+
     std::string ref = "abracadabra alakazam abracadabra";
     String s(ref);
     const char *needles[] = {"abra", "cad", "zam", "a", "abracadabra", "xyz", ""};
@@ -263,11 +250,9 @@ TEST(StringFind, StartsEndsContains)
     EXPECT_TRUE(s.contains(".tar."));
     EXPECT_TRUE(s.contains('.'));
     EXPECT_FALSE(s.contains('!'));
-    EXPECT_TRUE(s.starts_with("filename.tar.gz")); // igual a si própria
-    EXPECT_FALSE(String("gz").ends_with(".tar.gz")); // needle maior que a string
+    EXPECT_TRUE(s.starts_with("filename.tar.gz")); 
+    EXPECT_FALSE(String("gz").ends_with(".tar.gz")); 
 }
-
-// ---------- fatias / utils ----------
 
 TEST(StringSlice, Substr)
 {
@@ -296,16 +281,14 @@ TEST(StringSlice, Split)
     EXPECT_TRUE(parts[2] == "ccc");
 
     auto sparse = String(",a,,b,").split(',');
-    ASSERT_EQ(sparse.size(), 2u); // vazios descartados por defeito
+    ASSERT_EQ(sparse.size(), 2u); 
     EXPECT_TRUE(sparse[0] == "a");
 
     auto kept = String(",a,,b,").split(',', true);
-    ASSERT_EQ(kept.size(), 5u); // "","a","","b",""
+    ASSERT_EQ(kept.size(), 5u); 
     EXPECT_TRUE(kept[0] == "");
     EXPECT_TRUE(kept[4] == "");
 }
-
-// ---------- comparação / ordenação ----------
 
 TEST(StringCompare, Operators)
 {
@@ -332,8 +315,6 @@ TEST(StringCompare, SortMatchesStd)
     for (std::size_t i = 0; i < ref.size(); ++i)
         EXPECT_TRUE(v[i] == ref[i].c_str());
 }
-
-// ---------- resize / reserve / hash ----------
 
 TEST(StringMisc, ResizeReserve)
 {
@@ -363,8 +344,6 @@ TEST(StringMisc, Swap)
     EXPECT_TRUE(b == "pequena");
 }
 
-// ---------- fuzz geral contra std::string ----------
-
 TEST(StringFuzz, RandomOpsMatchStd)
 {
     String s;
@@ -375,7 +354,7 @@ TEST(StringFuzz, RandomOpsMatchStd)
         seed = seed * 1664525u + 1013904223u;
         int op = seed % 5;
         char c = char('a' + (seed >> 8) % 26);
-        if (op == 0 || op == 1) // 40% push
+        if (op == 0 || op == 1) 
         {
             s.push_back(c);
             ref.push_back(c);

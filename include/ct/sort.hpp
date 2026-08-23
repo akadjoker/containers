@@ -1,4 +1,4 @@
- 
+
 #pragma once
 
 #include "detail/utils.hpp"
@@ -9,10 +9,8 @@ namespace ct
     namespace detail
     {
 
-        constexpr std::size_t kSmallSort = 24;   // abaixo disto: insertion sort
-        constexpr std::size_t kRadixMin = 128;   // abaixo disto: intro mesmo p/ números
-
-        // ---- insertion sort -------------------------------------------------
+        constexpr std::size_t kSmallSort = 24;   
+        constexpr std::size_t kRadixMin = 128;   
 
         template <typename T, typename C>
         inline void insertion_sort(T *lo, T *hi, C cmp)
@@ -32,8 +30,6 @@ namespace ct
                 }
             }
         }
-
-        // ---- heapsort (salvaguarda do introsort) ----------------------------
 
         template <typename T, typename C>
         inline void sift_down(T *a, std::size_t n, std::size_t i, C cmp)
@@ -64,8 +60,6 @@ namespace ct
             }
         }
 
-        // ---- introsort ------------------------------------------------------
-
         template <typename T, typename C>
         inline T *median3(T *a, T *b, T *c, C cmp)
         {
@@ -86,7 +80,7 @@ namespace ct
                 }
                 T *mid = lo + (hi - lo) / 2;
                 T *pv = median3(lo, mid, hi - 1, cmp);
-                swap_vals(*pv, *(hi - 1)); // pivot para o fim
+                swap_vals(*pv, *(hi - 1)); 
                 T &pivot = *(hi - 1);
                 T *i = lo;
                 for (T *j = lo; j < hi - 1; ++j)
@@ -96,7 +90,7 @@ namespace ct
                         ++i;
                     }
                 swap_vals(*i, *(hi - 1));
-                // recursão no lado menor, loop no maior (stack O(log n))
+
                 if (i - lo < hi - (i + 1))
                 {
                     intro_rec(lo, i, depth, cmp);
@@ -126,8 +120,6 @@ namespace ct
                 intro_rec(lo, hi, 2 * log2_floor(static_cast<std::size_t>(hi - lo)), cmp);
         }
 
-        // já ordenado? scan linear barato (sai ao primeiro desvio) — torna
-        // re-sorts de dados quase-parados gratuitos (comum em jogos)
         template <typename T>
         inline bool is_sorted_fast(const T *lo, const T *hi)
         {
@@ -136,11 +128,6 @@ namespace ct
                     return false;
             return true;
         }
-
-        // ---- radix sort LSD (números) ---------------------------------------
-        // key_of transforma o valor num inteiro sem sinal que ordena igual:
-        //   unsigned: identidade | signed: flip do bit de sinal
-        //   float: flip total se negativo (IEEE754 ordena como int assim)
 
         template <typename T, typename U, typename KeyFn>
         inline void radix_sort(T *a, std::size_t n, KeyFn key_of)
@@ -160,7 +147,7 @@ namespace ct
                 std::memset(count, 0, sizeof(count));
                 for (std::size_t i = 0; i < n; ++i)
                     ++count[(key_of(src[i]) >> shift) & 0xFF];
-                // todos os bytes iguais? passe é no-op, salta (comum em chaves pequenas)
+
                 if (count[(key_of(src[0]) >> shift) & 0xFF] == n)
                     continue;
                 std::size_t pos = 0;
@@ -181,9 +168,7 @@ namespace ct
             allocator.deallocate(buf, bytes);
         }
 
-    } // namespace detail
-
-    // ---- API genérica (introsort) -------------------------------------------
+    } 
 
     template <typename It, typename C>
     inline void sort(It first, It last, C cmp)
@@ -202,8 +187,6 @@ namespace ct
         detail::intro_sort(&*first, &*first + (last - first),
                            [](const T &a, const T &b) { return a < b; });
     }
-
-    // ---- overloads combinados: radix para números grandes -------------------
 
 #define CT_RADIX_SORT(T, U, KEY_EXPR)                                          \
     inline void sort(T *first, T *last)                                        \
@@ -231,12 +214,10 @@ namespace ct
     CT_RADIX_SORT(long long, std::uint64_t,
                   static_cast<std::uint64_t>(x) ^ (std::uint64_t(1) << 63))
 
-    // long: mesmo tamanho de long long em LP64
     CT_RADIX_SORT(unsigned long, std::uint64_t, static_cast<std::uint64_t>(x))
     CT_RADIX_SORT(long, std::uint64_t,
                   static_cast<std::uint64_t>(x) ^ (std::uint64_t(1) << 63))
 
-    // float: bits IEEE754; negativos → ~bits, positivos → bits | topo
     inline void sort(float *first, float *last)
     {
         std::size_t n = static_cast<std::size_t>(last - first);
@@ -273,4 +254,4 @@ namespace ct
 
 #undef CT_RADIX_SORT
 
-} // namespace ct
+} 

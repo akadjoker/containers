@@ -1,4 +1,4 @@
-// ct::Queue vs std::queue (default = deque) — padrões FIFO de jogo.
+
 #include <ct/queue.hpp>
 
 #include <cstdint>
@@ -29,7 +29,6 @@ namespace
         return acc;
     }
 
-    // fila de eventos em regime estacionário
     template <typename Q>
     std::uint64_t steady_fifo()
     {
@@ -46,7 +45,6 @@ namespace
         return acc + q.size();
     }
 
-    // BFS-ish: cada pop gera 1-2 pushes (frontier cresce até ao cap e oscila)
     template <typename Q>
     std::uint64_t bfs_expand()
     {
@@ -85,7 +83,7 @@ namespace
         return acc + q.size();
     }
 
-} // namespace
+} 
 
 int main()
 {

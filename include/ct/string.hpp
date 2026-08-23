@@ -12,21 +12,16 @@ namespace ct
         {
             char *data;
             std::size_t size;
-            std::size_t capacity; // bit mais significativo = "é heap" (ver kFlag)
+            std::size_t capacity; 
         };
 
-        // kSSO e kFlag derivados da largura real de size_t/ponteiro do alvo —
-        // 23 chars em 64-bit, menos em 32-bit (wasm32/Android armv7); nunca UB.
         static constexpr std::size_t kSSO = sizeof(HeapRep) - 1;
         static constexpr std::size_t kFlag = std::size_t(1)
                                               << (sizeof(std::size_t) * 8 - 1);
 
-        // último byte do buffer aliasa o byte mais significativo de
-        // HeapRep::capacity (mesmo endereço na union) — só é o MSB em
-        // little-endian, daí o static_assert abaixo.
         struct SmallRep
         {
-            char data[kSSO + 1]; // data[kSSO] = kSSO - size (0 quando cheia = NUL)
+            char data[kSSO + 1]; 
         };
 
         union Storage
@@ -230,12 +225,6 @@ namespace ct
             set_size(n);
         }
 
-        // GCC (13, -O3) por vezes confunde-se aqui: quando isto fica todo inlined numa
-        // função pequena, o -Wstringop-overflow tenta provar o bound do escrever usando
-        // o tamanho do ramo pequeno da union (SmallRep::data, 24 B) mesmo em código que só
-        // corre depois de current já ter passado da SSO — falso positivo confirmado sem
-        // ASan/UBSan a acusar nada e com o resultado em runtime correto (ver
-        // include/ct/variant.hpp para o repro mínimo que o disparou primeiro).
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
@@ -722,4 +711,4 @@ namespace ct
         return os;
     }
 
-} // namespace ct
+} 

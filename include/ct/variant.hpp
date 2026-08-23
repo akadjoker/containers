@@ -1,7 +1,5 @@
 #pragma once
 
- 
-
 #include "detail/utils.hpp"
 
 namespace ct
@@ -22,7 +20,7 @@ namespace ct
         };
 
         template <typename... Ts>
-        struct VariantMaxSize; // tamanho do maior Ts...
+        struct VariantMaxSize; 
         template <typename T>
         struct VariantMaxSize<T>
         {
@@ -35,7 +33,7 @@ namespace ct
         };
 
         template <typename... Ts>
-        struct VariantMaxAlign; // alinhamento do maior Ts...
+        struct VariantMaxAlign; 
         template <typename T>
         struct VariantMaxAlign<T>
         {
@@ -47,8 +45,6 @@ namespace ct
             static constexpr std::size_t value = variant_max(alignof(T), VariantMaxAlign<Rest...>::value);
         };
 
-        // índice de T dentro de Ts... — erro de compilação (especialização em falta) se
-        // T não estiver na lista
         template <typename T, typename... Ts>
         struct VariantIndexOf;
         template <typename T, typename... Rest>
@@ -62,7 +58,6 @@ namespace ct
             static constexpr std::size_t value = 1 + VariantIndexOf<T, Rest...>::value;
         };
 
-        // tipo no índice I de Ts...
         template <std::size_t I, typename... Ts>
         struct VariantTypeAt;
         template <typename T, typename... Rest>
@@ -76,7 +71,6 @@ namespace ct
             using type = typename VariantTypeAt<I - 1, Rest...>::type;
         };
 
-        // dispatch por índice em runtime, recursivo sobre Ts... (sem vtable)
         template <typename... Ts>
         struct VariantOps
         {
@@ -116,7 +110,6 @@ namespace ct
             }
         };
 
-        // visit: aplica f ao alternativo ativo; ReturnT decidido pela invocação no 1º tipo
         template <typename F, typename... Ts>
         struct VariantVisit
         {
@@ -138,7 +131,7 @@ namespace ct
                 return VariantVisit<F, Rest...>::template apply<ReturnT>(idx - 1, p, f);
             }
         };
-    } // namespace detail
+    } 
 
     template <typename... Ts>
     class Variant
@@ -208,8 +201,6 @@ namespace ct
             return index_ == detail::VariantIndexOf<T, Ts...>::value;
         }
 
-        // reinterpret_cast de um buffer de bytes para T* é o mesmo truque que o
-        // std::variant/std::any da própria std usam por baixo — legal (basic.life)
         template <typename T>
         T &get()
         {
@@ -236,8 +227,6 @@ namespace ct
             return is<T>() ? reinterpret_cast<const T *>(storage_) : nullptr;
         }
 
-        // aplica f ao valor ativo; f tem de aceitar todos os Ts... (operator() sobrecarregado
-        // ou um lambda genérico) e devolver sempre o mesmo tipo (deduzido do 1º alternativo)
         template <typename F>
         auto visit(F &&f)
             -> decltype(f(detail::declval<typename detail::VariantTypeAt<0, Ts...>::type &>()))
@@ -280,4 +269,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

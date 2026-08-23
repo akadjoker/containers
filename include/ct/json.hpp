@@ -1,16 +1,8 @@
 #pragma once
 
-// JSON (RFC 8259) sobre os containers ct: String para texto, Vector para arrays e
-// para os membros dos objetos. Sem exceções — erros de *dados* (input malformado)
-// vêm num Json::Error; erros de *programa* (pedir um array a um número) são fatal().
-//
-// Um valor ocupa 32 bytes: 24 da String inline (SSO de 23 evita o malloc na maioria
-// das chaves e strings curtas) + tag + padding. Arrays e objetos são um ponteiro para
-// um Vector alocado à parte — o Json não pode conter-se a si próprio por valor.
-
-#include <cmath>   // floor/log10 no dtoa rapido
-#include <cfloat>  // LDBL_MANT_DIG: decide se o dtoa rapido tem precisao
-#include <clocale> // localeconv: strtod/snprintf usam o ponto decimal do locale
+#include <cmath>   
+#include <cfloat>  
+#include <clocale> 
 
 #include "detail/utils.hpp"
 #include "string.hpp"
@@ -20,12 +12,9 @@ namespace ct
 {
     namespace detail
     {
-        // ---- números: parse/format independentes do locale ----------------------
 
         inline bool json_is_digit(char c) { return c >= '0' && c <= '9'; }
 
-        // 1e0..1e22 são exatos em double: mantissa*10^e com |e|<=22 e mantissa <= 2^53
-        // dá o resultado corretamente arredondado com uma única operação
         inline double json_pow10(int e)
         {
             static const double kTable[23] = {
@@ -40,7 +29,6 @@ namespace ct
             return (dp && *dp) ? *dp : '.';
         }
 
-        // fallback: strtod respeita o LC_NUMERIC, por isso o '.' tem de ser traduzido
         inline double json_strtod_locale(const char *p, std::size_t n)
         {
             char small[64];
@@ -61,7 +49,6 @@ namespace ct
             return std::strtod(buf, nullptr);
         }
 
-        // converte [p,end) — já validado como número JSON — em double
         inline double json_to_double(const char *p, const char *end)
         {
             const char *const start = p;
@@ -70,8 +57,8 @@ namespace ct
                 neg = (*p++ == '-');
 
             std::uint64_t mant = 0;
-            int digits = 0;   // dígitos significativos guardados na mantissa
-            int exp10 = 0;    // expoente acumulado
+            int digits = 0;   
+            int exp10 = 0;    
             bool truncated = false;
 
             for (; p != end && json_is_digit(*p); ++p)
@@ -84,7 +71,7 @@ namespace ct
                 }
                 else
                 {
-                    ++exp10; // dígito descartado: passa para o expoente
+                    ++exp10; 
                     truncated = true;
                 }
             }
@@ -117,7 +104,6 @@ namespace ct
                 exp10 += eneg ? -e : e;
             }
 
-            // caminho exato: mantissa cabe no double sem perda e o expoente é pequeno
             if (!truncated && mant <= (std::uint64_t(1) << 53) && exp10 >= -22 && exp10 <= 22)
             {
                 double d = static_cast<double>(mant);
@@ -127,8 +113,6 @@ namespace ct
             return json_strtod_locale(start, static_cast<std::size_t>(end - start));
         }
 
-        // 10^e para e em [0, 350] com a precisão da long double (x87: 64 bits de
-        // mantissa). Duas tabelas pequenas em vez de uma de 350 entradas.
         inline long double json_pow10l(int e)
         {
             static const long double kSmall[10] = {1e0L, 1e1L, 1e2L, 1e3L, 1e4L,
@@ -141,9 +125,6 @@ namespace ct
             return kSmall[e % 10] * kBig[e / 10];
         }
 
-        // escreve os `digits` dígitos de d com expoente decimal k (valor =
-        // d1.d2d3... x 10^k) no formato do %g: tira zeros à direita e escolhe
-        // notação científica quando k < -4 ou k >= prec. Devolve o comprimento.
         inline int json_format_digits(char *buf, bool neg, std::uint64_t d, int digits,
                                       int k, int prec)
         {
@@ -212,10 +193,7 @@ namespace ct
 
 #if defined(LDBL_MANT_DIG) && LDBL_MANT_DIG >= 64
 #define CT_JSON_FAST_DTOA 1
-        // gera os 17 dígitos significativos por escalamento em long double (19 dígitos
-        // de mantissa dão folga de sobra) e corta para o menor número de dígitos que
-        // ainda faz round-trip. Devolve -1 se não conseguiu — nesse caso o chamador
-        // volta ao snprintf.
+
         inline int json_dtoa_fast(char *buf, double v)
         {
             const bool neg = v < 0;
@@ -233,13 +211,13 @@ namespace ct
                                       : static_cast<long double>(a) / json_pow10l(-shift);
                 if (scaled >= 1e16L && scaled < 1e17L)
                     break;
-                k += (scaled >= 1e17L) ? 1 : -1; // estimativa do log10 falhou por 1
+                k += (scaled >= 1e17L) ? 1 : -1; 
                 if (tentativa == 2)
                     return -1;
             }
 
             std::uint64_t n = static_cast<std::uint64_t>(scaled + 0.5L);
-            if (n >= 100000000000000000ull) // o arredondamento subiu uma casa
+            if (n >= 100000000000000000ull) 
             {
                 n /= 10;
                 ++k;
@@ -247,7 +225,7 @@ namespace ct
             if (n < 10000000000000000ull)
                 return -1;
 
-            static const std::uint64_t kDiv[3] = {100, 10, 1}; // 15, 16 e 17 dígitos
+            static const std::uint64_t kDiv[3] = {100, 10, 1}; 
             for (int i = 0; i < 3; ++i)
             {
                 const int digits = 15 + i;
@@ -258,7 +236,7 @@ namespace ct
                 std::uint64_t limite = 1;
                 for (int j = 0; j < digits; ++j)
                     limite *= 10;
-                if (d >= limite) // 999... arredondou para 1000...
+                if (d >= limite) 
                 {
                     d /= 10;
                     ++ke;
@@ -271,14 +249,13 @@ namespace ct
         }
 #endif
 
-        // escreve o double com o menor número de dígitos que ainda faz round-trip
         inline void json_append_double(String &out, double v)
         {
             std::uint64_t bits;
             std::memcpy(&bits, &v, sizeof(bits));
             const bool neg = (bits >> 63) != 0;
 
-            if (v == 0.0) // -0.0 == 0.0, o sinal só está nos bits
+            if (v == 0.0) 
             {
                 if (neg)
                     out.append("-0.0", 4);
@@ -287,9 +264,6 @@ namespace ct
                 return;
             }
 
-            // caminho rápido: doubles de valor inteiro (0.0, 1.0, 2048.0 — em dados de
-            // jogo são a maioria). Abaixo de 1e15 o %g também escreveria em notação
-            // fixa, por isso o texto é o mesmo, mas sem passar pelo snprintf.
             if (v > -1e15 && v < 1e15)
             {
                 const std::int64_t i = static_cast<std::int64_t>(v);
@@ -345,7 +319,7 @@ namespace ct
                 for (int k = 0; k < n; ++k)
                     if (buf[k] == dp)
                         buf[k] = '.';
-            // manter o ".0" preserva o tipo no round-trip (1.0 volta a Real, não a Int)
+
             bool marcado = false;
             for (int k = 0; k < n; ++k)
                 if (buf[k] == '.' || buf[k] == 'e' || buf[k] == 'E' || buf[k] == 'n' ||
@@ -355,8 +329,6 @@ namespace ct
             if (!marcado)
                 out.append(".0", 2);
         }
-
-        // ---- texto ---------------------------------------------------------------
 
         inline void json_encode_utf8(String &out, std::uint32_t cp)
         {
@@ -382,8 +354,6 @@ namespace ct
             }
         }
 
-        // escapa o mínimo obrigatório e copia o resto em blocos (os bytes UTF-8 passam
-        // tal e qual — é output JSON válido e evita inchar o ficheiro com \uXXXX)
         inline void json_escape_to(String &out, const char *s, std::size_t n)
         {
             out.push_back('"');

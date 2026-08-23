@@ -1,4 +1,4 @@
-// ct::HashMap vs std::unordered_map  |  ct::FlatMap vs std::map
+
 #include <ct/flatmap.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/hashset.hpp>
@@ -18,11 +18,9 @@ volatile std::uint64_t bench::sink = 0;
 namespace
 {
     constexpr int N = 1000000;
-    constexpr int NF = 10000; // flat map: tamanho típico de jogo
+    constexpr int NF = 10000; 
 
     unsigned next(unsigned &s) { return s = s * 1664525u + 1013904223u; }
-
-    // ---- HashMap vs unordered_map ----
 
     std::uint64_t ct_hash_insert()
     {
@@ -171,8 +169,6 @@ namespace
         return acc;
     }
 
-    // ---- HashSet vs unordered_set ----
-
     std::uint64_t ct_set_insert_contains()
     {
         ct::HashSet<int> s;
@@ -197,8 +193,6 @@ namespace
             acc += s.count(static_cast<int>(next(r)));
         return acc;
     }
-
-    // ---- FlatMap vs std::map ----
 
     std::uint64_t ct_flat_insert()
     {
@@ -260,8 +254,6 @@ namespace
                 acc += static_cast<std::uint64_t>(e.second);
         return acc;
     }
-
-    // ---- TreeMap vs std::map ----
 
     std::uint64_t ct_tree_insert()
     {
@@ -339,7 +331,7 @@ namespace
         return m.size();
     }
 
-} // namespace
+} 
 
 int main()
 {

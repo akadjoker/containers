@@ -1,21 +1,9 @@
 #pragma once
 
-// Ponteiros RAII: Unique<T> (um dono), Rc<T> (vários donos) e Weak<T> (observa sem
-// manter vivo). Os contadores são normais, não atómicos — é single-thread por
-// desenho, como o resto da lib.
-//
-// Diferenças para a std, todas a favor:
-//   - make_rc faz UMA alocação com o bloco de controlo colado ao objeto (mesma linha
-//     de cache); o std::shared_ptr solto faz duas
-//   - contador de 4+4 bytes sem vtable de deleter (o bloco da std anda nos 24-32 B)
-//   - ++/-- normais em vez de lock xadd
-//   - não puxa o <memory>, que é dos headers mais pesados da std
-
 #include "detail/utils.hpp"
 
 namespace ct
 {
-    // ---- Unique: um dono, morre no fim do scope --------------------------------
 
     template <typename T>
     class Unique
@@ -26,7 +14,6 @@ namespace ct
         Unique() noexcept : p_(nullptr) {}
         Unique(std::nullptr_t) noexcept : p_(nullptr) {}
 
-        // adota um ponteiro vindo do ct::make_unique (ou de HeapAlloc + placement new)
         static Unique adopt(T *p) noexcept
         {
             Unique u;
@@ -39,7 +26,6 @@ namespace ct
 
         Unique(Unique &&o) noexcept : p_(o.p_) { o.p_ = nullptr; }
 
-        // Unique<Derivada> -> Unique<Base> (a base precisa de destrutor virtual)
         template <typename D,
                   typename = typename detail::enable_if<
                       std::is_convertible<D *, T *>::value>::type>
@@ -65,7 +51,7 @@ namespace ct
             if (!p_)
                 return;
             T *p = p_;
-            p_ = nullptr; // primeiro, para o destrutor poder mexer neste Unique
+            p_ = nullptr; 
             p->~T();
             HeapAlloc().deallocate(static_cast<void *>(p), sizeof(T));
         }
@@ -124,14 +110,12 @@ namespace ct
         return a.get() != nullptr;
     }
 
-    // ---- Rc / Weak -------------------------------------------------------------
-
     namespace detail
     {
         struct RcCtrl
         {
             std::uint32_t strong;
-            std::uint32_t weak; // nº de Weak + 1 enquanto houver strong
+            std::uint32_t weak; 
             void (*op)(RcCtrl *, int);
         };
 
@@ -141,7 +125,6 @@ namespace ct
             kRcFree = 1
         };
 
-        // bloco único: [RcCtrl][padding][T]
         template <typename T>
         struct RcBlock
         {
@@ -162,7 +145,7 @@ namespace ct
             else
                 HeapAlloc().deallocate(static_cast<void *>(base), RcBlock<T>::total);
         }
-    } // namespace detail
+    } 
 
     template <typename T>
     class Weak;
@@ -192,7 +175,6 @@ namespace ct
             o.c_ = nullptr;
         }
 
-        // Rc<Derivada> -> Rc<Base>: o bloco sabe destruir o tipo original
         template <typename D,
                   typename = typename detail::enable_if<
                       std::is_convertible<D *, T *>::value>::type>
@@ -206,7 +188,7 @@ namespace ct
         {
             if (c_ != o.c_ || p_ != o.p_)
             {
-                Rc tmp(o); // conta primeiro, larga depois (aguenta a = a[0])
+                Rc tmp(o); 
                 swap(tmp);
             }
             return *this;
@@ -261,8 +243,7 @@ namespace ct
         }
 
     private:
-        // só o make_rc, o lock() e as conversões podem montar um Rc a partir de um
-        // ponteiro cru — de fora não há maneira de forjar um
+
         Rc(T *p, detail::RcCtrl *c) noexcept : p_(p), c_(c) {}
         detail::RcCtrl *ctrl() const noexcept { return c_; }
 
@@ -362,7 +343,6 @@ namespace ct
         bool expired() const noexcept { return !c_ || c_->strong == 0; }
         std::uint32_t use_count() const noexcept { return c_ ? c_->strong : 0; }
 
-        // única forma de chegar ao objeto: ou está vivo, ou vem vazio
         Rc<T> lock() const noexcept
         {
             if (!c_ || c_->strong == 0)
@@ -418,4 +398,4 @@ namespace ct
         return a.get() != nullptr;
     }
 
-} // namespace ct
+} 

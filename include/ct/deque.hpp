@@ -7,7 +7,7 @@
 
 namespace ct
 {
- 
+
     template <typename T, typename Alloc = HeapAlloc>
     class Deque : private Alloc
     {
@@ -25,7 +25,6 @@ namespace ct
         using pointer = T *;
         using const_pointer = const T *;
 
- 
         template <typename Ref, typename Ptr>
         class It
         {
@@ -81,8 +80,6 @@ namespace ct
         using const_iterator = It<const T &, const T *>;
         using reverse_iterator = detail::ReverseIt<iterator>;
         using const_reverse_iterator = detail::ReverseIt<const_iterator>;
-
-        // ---- construction / destruction ----------------------------------------
 
         Deque() noexcept : data_(nullptr), head_(0), size_(0), cap_(0) {}
 
@@ -169,8 +166,6 @@ namespace ct
             return *this;
         }
 
-        // ---- element access ----------------------------------------------------
-
         reference operator[](size_type i) { return data_[(head_ + i) & (cap_ - 1)]; }
         const_reference operator[](size_type i) const { return data_[(head_ + i) & (cap_ - 1)]; }
 
@@ -192,7 +187,6 @@ namespace ct
         reference back() { return data_[(head_ + size_ - 1) & (cap_ - 1)]; }
         const_reference back() const { return data_[(head_ + size_ - 1) & (cap_ - 1)]; }
 
- 
         struct Span
         {
             T *ptr;
@@ -212,8 +206,6 @@ namespace ct
         Span second_span() noexcept { return Span{data_, size_ - first_seg()}; }
         ConstSpan second_span() const noexcept { return ConstSpan{data_, size_ - first_seg()}; }
 
-        // ---- iterators ---------------------------------------------------------
-
         iterator begin() noexcept { return iterator(data_, head_, cap_ ? cap_ - 1 : 0); }
         const_iterator begin() const noexcept
         {
@@ -230,8 +222,6 @@ namespace ct
         const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
         reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
         const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
-
-        // ---- capacity ----------------------------------------------------------
 
         bool empty() const noexcept { return size_ == 0; }
         size_type size() const noexcept { return size_; }
@@ -273,8 +263,6 @@ namespace ct
             if (want < cap_)
                 change_capacity(want);
         }
-
-        // ---- modifiers ---------------------------------------------------------
 
         void clear() noexcept
         {
@@ -415,15 +403,10 @@ namespace ct
 
     private:
         T *data_;
-        size_type head_; // índice do primeiro elemento
+        size_type head_; 
         size_type size_;
-        size_type cap_; // potência de 2 (ou 0)
+        size_type cap_; 
 
-
-        // caminho frio fora do hot path: mantém o push_* pequeno para inlinar
-        // em TUs grandes (mesma lição do fill_assign_n)
-        // trivial: por valor — o endereço do argumento não escapa (o clang mantém
-        // o call site em registos) e o aliasing fica resolvido pela cópia
         void push_back_cold(T value, detail::true_type)
         {
             grow();
@@ -489,7 +472,6 @@ namespace ct
             return address >= begin && address < end;
         }
 
-        // comprimento do 1º segmento linear [head_, min(head_+size_, cap_))
         size_type first_seg() const noexcept
         {
             size_type tail_room = cap_ - head_;
@@ -521,7 +503,7 @@ namespace ct
             change_capacity(cap_ ? cap_ * 2 : 8);
         }
 
-        void change_capacity(size_type new_cap) // new_cap: potência de 2 >= size_
+        void change_capacity(size_type new_cap) 
         {
             if (new_cap == 0 || new_cap > max_size() || !detail::is_power_of_two(new_cap))
                 detail::fatal("ct::Deque: capacidade invalida");
@@ -554,7 +536,6 @@ namespace ct
             move_to_fresh(new_cap, detail::false_type{});
         }
 
-        // buffer novo, desenrola o wrap em (até) dois memcpy/moves; head_ volta a 0
         template <typename Trivial>
         void move_to_fresh(size_type new_cap, Trivial t)
         {
@@ -601,4 +582,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

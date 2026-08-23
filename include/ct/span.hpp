@@ -1,9 +1,5 @@
 #pragma once
 
-// Vistas sem dono: Span<T> sobre qualquer bloco contíguo, StringView sobre texto.
-// Não alocam, não copiam e não têm dono — quem as usa tem de garantir que o que está
-// por baixo sobrevive à vista (por isso os construtores só aceitam lvalues).
-
 #include "detail/utils.hpp"
 
 namespace ct
@@ -22,12 +18,7 @@ namespace ct
         using const_iterator = const T *;
         using reverse_iterator = detail::ReverseIt<T *>;
 
-        // enum em vez de static constexpr: em C++14 um static constexpr num header
-        // precisa de definição fora da classe assim que alguém lhe pegue por
-        // referência (EXPECT_EQ, std::min...) e isso dá erro de link
         enum : size_type { npos = static_cast<size_type>(-1) };
-
-        // ---- construção ------------------------------------------------------
 
         constexpr Span() noexcept : data_(nullptr), size_(0) {}
         constexpr Span(T *p, size_type n) noexcept : data_(p), size_(n) {}
@@ -41,8 +32,6 @@ namespace ct
         {
         }
 
-        // qualquer container contíguo com data()/size() (Vector, Array, String,
-        // SlotMap::items()...). Só lvalues: um temporário morria já a seguir.
         template <typename C,
                   typename = typename detail::enable_if<
                       !detail::is_same<typename detail::bare<C>::type, Span>::value &&
@@ -61,8 +50,6 @@ namespace ct
         Span(const C &c) noexcept : data_(c.data()), size_(c.size())
         {
         }
-
-        // ---- acesso ----------------------------------------------------------
 
         constexpr T *data() const noexcept { return data_; }
         constexpr size_type size() const noexcept { return size_; }
@@ -92,14 +79,10 @@ namespace ct
             return data_[size_ - 1];
         }
 
-        // ---- iteradores ------------------------------------------------------
-
         constexpr iterator begin() const noexcept { return data_; }
         constexpr iterator end() const noexcept { return data_ + size_; }
         reverse_iterator rbegin() const noexcept { return reverse_iterator(end()); }
         reverse_iterator rend() const noexcept { return reverse_iterator(begin()); }
-
-        // ---- sub-vistas ------------------------------------------------------
 
         Span first(size_type n) const
         {
@@ -115,7 +98,6 @@ namespace ct
             return Span(data_ + (size_ - n), n);
         }
 
-        // n == npos → até ao fim
         Span subspan(size_type offset, size_type n = npos) const
         {
             if (CT_UNLIKELY(offset > size_))
@@ -129,15 +111,12 @@ namespace ct
         size_type size_;
     };
 
-    // vista de bytes crus, para escrever em ficheiros/buffers
     template <typename T>
     inline Span<const unsigned char> as_bytes(Span<T> s) noexcept
     {
         return Span<const unsigned char>(reinterpret_cast<const unsigned char *>(s.data()),
                                          s.size_bytes());
     }
-
-    // ---- StringView ----------------------------------------------------------
 
     class StringView
     {
@@ -146,7 +125,7 @@ namespace ct
         using iterator = const char *;
         using const_iterator = const char *;
 
-        enum : size_type { npos = static_cast<size_type>(-1) }; // ver a nota no Span
+        enum : size_type { npos = static_cast<size_type>(-1) }; 
 
         constexpr StringView() noexcept : data_(""), size_(0) {}
         constexpr StringView(const char *s, size_type n) noexcept : data_(s), size_(n) {}
@@ -155,7 +134,6 @@ namespace ct
         {
         }
 
-        // ct::String, std::string, Span<const char>... (só lvalues)
         template <typename S,
                   typename = typename detail::enable_if<
                       !detail::is_same<typename detail::bare<S>::type, StringView>::value &&
@@ -164,8 +142,6 @@ namespace ct
         StringView(const S &s) noexcept : data_(s.data()), size_(s.size())
         {
         }
-
-        // ---- acesso ----------------------------------------------------------
 
         constexpr const char *data() const noexcept { return data_; }
         constexpr size_type size() const noexcept { return size_; }
@@ -200,8 +176,6 @@ namespace ct
 
         Span<const char> bytes() const noexcept { return Span<const char>(data_, size_); }
 
-        // ---- cortes ----------------------------------------------------------
-
         StringView substr(size_type pos, size_type n = npos) const
         {
             if (CT_UNLIKELY(pos > size_))
@@ -225,7 +199,6 @@ namespace ct
             size_ -= n;
         }
 
-        // corta espaços/tabs/newlines das pontas — sem alocar nada
         StringView trimmed() const noexcept
         {
             size_type i = 0, j = size_;
@@ -236,7 +209,6 @@ namespace ct
             return StringView(data_ + i, j - i);
         }
 
-        // parte no primeiro `sep`; devolve false (e head = tudo) se não houver
         bool split_once(char sep, StringView &head, StringView &tail) const noexcept
         {
             const size_type p = find(sep);
@@ -250,8 +222,6 @@ namespace ct
             tail = StringView(data_ + p + 1, size_ - p - 1);
             return true;
         }
-
-        // ---- procura ---------------------------------------------------------
 
         size_type find(char c, size_type pos = 0) const noexcept
         {
@@ -330,8 +300,6 @@ namespace ct
                (a.size() == 0 || std::memcmp(a.data(), b.data(), a.size()) == 0);
     }
 
-    // sobrecargas diretas: sem elas, "sv == algo" fica ambíguo entre converter o outro
-    // lado para StringView ou converter a StringView para String (que tem ctor genérico)
     template <typename S,
               typename = typename detail::enable_if<
                   !detail::is_same<typename detail::bare<S>::type, StringView>::value &&
@@ -366,4 +334,4 @@ namespace ct
     inline bool operator<=(StringView a, StringView b) noexcept { return !(b < a); }
     inline bool operator>=(StringView a, StringView b) noexcept { return !(a < b); }
 
-} // namespace ct
+} 

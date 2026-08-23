@@ -1,5 +1,4 @@
-// ct::Pool vs new/delete, malloc/free e o BlockAllocator do box3d (phys).
-// Cenários de jogo: churn de spawn/kill de objetos pequenos.
+
 #include <ct/pool.hpp>
 
 #include <cstdint>
@@ -17,18 +16,16 @@ volatile std::uint64_t bench::sink = 0;
 namespace
 {
 
-    struct Bullet // 24 bytes, POD, sem construtores
+    struct Bullet 
     {
         float x, y, vx, vy;
         int damage;
         int owner;
     };
 
-    constexpr int N = 100000;   // objetos por vaga
-    constexpr int WAVES = 10;   // vagas de spawn+kill
+    constexpr int N = 100000;   
+    constexpr int WAVES = 10;   
     constexpr int CHURN = 1000000;
-
-    // ---- vagas: spawn N, matar todos, repetir ----
 
     template <typename AllocFn, typename FreeFn>
     std::uint64_t waves(AllocFn af, FreeFn ff)
@@ -51,8 +48,6 @@ namespace
         }
         return acc;
     }
-
-    // ---- churn misto: 75% spawn / 25% kill aleatório, 1M operações ----
 
     template <typename AllocFn, typename FreeFn>
     std::uint64_t churn(AllocFn af, FreeFn ff)
@@ -84,8 +79,6 @@ namespace
         return acc;
     }
 
-    // ---- par quente: spawn+kill imediato (pior caso de alocador) ----
-
     template <typename AllocFn, typename FreeFn>
     std::uint64_t hot_pair(AllocFn af, FreeFn ff)
     {
@@ -93,7 +86,7 @@ namespace
         for (int i = 0; i < CHURN; ++i)
         {
             Bullet *b = af();
-            bench::escape(b); // impede o compilador de elidir o par alloc/free
+            bench::escape(b); 
             b->damage = i;
             acc += static_cast<std::uint64_t>(b->damage);
             ff(b);
@@ -101,14 +94,13 @@ namespace
         return acc;
     }
 
-} // namespace
+} 
 
 int main()
 {
     std::printf("ct::Pool<Bullet> (%zu B/slot) — cenários de spawn/kill de jogo\n",
                 ct::Pool<Bullet>::slot_size());
 
-    // adversários
     auto new_a = [] { return new Bullet; };
     auto new_f = [](Bullet *b) { delete b; };
     auto mal_a = [] { return static_cast<Bullet *>(std::malloc(sizeof(Bullet))); };

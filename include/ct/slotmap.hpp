@@ -1,30 +1,17 @@
 #pragma once
 
-// SlotMap: guarda objetos num array denso (iteração contígua, boa para o game loop)
-// e devolve handles estáveis com geração. Um handle de um objeto já apagado é
-// detetado — get() devolve nullptr em vez de te dar um ponteiro pendurado, que é o
-// bug clássico de guardar T* para entidades/corpos.
-//
-//   ct::SlotMap<Body> bodies;
-//   auto h = bodies.insert(Body{...});
-//   if (Body *b = bodies.get(h)) b->integrate(dt);   // seguro depois de qualquer erase
-//   for (Body &b : bodies.items()) b.integrate(dt);  // denso e vectorizável
-//
-// Atenção: os endereços NÃO são estáveis (insert realoca, erase troca com o último).
-// O que é estável é o handle. Iterar por items() e apagar ao mesmo tempo não pode ser.
-
 #include "detail/utils.hpp"
 #include "span.hpp"
 #include "vector.hpp"
 
 namespace ct
 {
-    // handle tipado (8 bytes): não se troca o de uma entidade pelo de um corpo
+
     template <typename T>
     struct Handle
     {
         std::uint32_t index;
-        std::uint32_t generation; // ímpar = vivo quando foi criado; 0 = handle nulo
+        std::uint32_t generation; 
 
         constexpr Handle() noexcept : index(0), generation(0) {}
         constexpr Handle(std::uint32_t i, std::uint32_t g) noexcept : index(i), generation(g) {}
@@ -32,7 +19,6 @@ namespace ct
         constexpr bool valid() const noexcept { return generation != 0; }
         constexpr explicit operator bool() const noexcept { return generation != 0; }
 
-        // id de 64 bits para logs, chaves de HashMap ou serialização
         constexpr std::uint64_t bits() const noexcept
         {
             return (static_cast<std::uint64_t>(generation) << 32) | index;
@@ -62,8 +48,6 @@ namespace ct
 
         SlotMap() noexcept : free_head_(kNoFree) {}
 
-        // ---- capacidade ------------------------------------------------------
-
         size_type size() const noexcept { return dense_.size(); }
         bool empty() const noexcept { return dense_.empty(); }
         size_type capacity() const noexcept { return dense_.capacity(); }
@@ -75,8 +59,6 @@ namespace ct
             owners_.reserve(n);
             slots_.reserve(n);
         }
-
-        // ---- inserir / apagar ------------------------------------------------
 
         handle_type insert(const T &v)
         {
@@ -100,7 +82,6 @@ namespace ct
             return finish_insert(slot);
         }
 
-        // devolve false se o handle já não for válido (apagar duas vezes não rebenta)
         bool erase(handle_type h)
         {
             if (!contains(h))
@@ -108,7 +89,7 @@ namespace ct
             Slot &s = slots_[h.index];
             const std::uint32_t hole = s.dense;
             const std::uint32_t last = static_cast<std::uint32_t>(dense_.size() - 1);
-            if (hole != last) // tapa o buraco com o último (mantém o denso contíguo)
+            if (hole != last) 
             {
                 dense_[hole] = detail::move(dense_[last]);
                 owners_[hole] = owners_[last];
@@ -117,13 +98,12 @@ namespace ct
             dense_.pop_back();
             owners_.pop_back();
 
-            ++s.generation;      // fica par → todos os handles antigos morrem aqui
-            s.dense = free_head_; // o campo passa a ser o "próximo livre"
+            ++s.generation;      
+            s.dense = free_head_; 
             free_head_ = h.index;
             return true;
         }
 
-        // invalida todos os handles mas guarda os slots para reutilizar
         void clear()
         {
             dense_.clear();
@@ -138,8 +118,6 @@ namespace ct
                 free_head_ = static_cast<std::uint32_t>(i - 1);
             }
         }
-
-        // ---- acesso ----------------------------------------------------------
 
         bool contains(handle_type h) const noexcept
         {
@@ -157,7 +135,6 @@ namespace ct
             return contains(h) ? &dense_[slots_[h.index].dense] : nullptr;
         }
 
-        // para quando o handle *tem* de ser válido — se não for, é bug do programa
         T &operator[](handle_type h)
         {
             if (CT_UNLIKELY(!contains(h)))
@@ -172,8 +149,6 @@ namespace ct
             return dense_[slots_[h.index].dense];
         }
 
-        // ---- iteração (densa, sem buracos) -----------------------------------
-
         Span<T> items() noexcept { return Span<T>(dense_.data(), dense_.size()); }
         Span<const T> items() const noexcept
         {
@@ -185,8 +160,6 @@ namespace ct
         const_iterator begin() const noexcept { return dense_.data(); }
         const_iterator end() const noexcept { return dense_.data() + dense_.size(); }
 
-        // handle do elemento que está na posição i do denso (para apagar durante uma
-        // passagem: recolhe handles, apaga depois)
         handle_type handle_at(size_type i) const
         {
             if (CT_UNLIKELY(i >= dense_.size()))
@@ -195,7 +168,6 @@ namespace ct
             return handle_type(slot, slots_[slot].generation);
         }
 
-        // posição no array denso (muda com os erase) — útil para índices temporários
         size_type index_of(handle_type h) const
         {
             if (CT_UNLIKELY(!contains(h)))
@@ -206,8 +178,8 @@ namespace ct
     private:
         struct Slot
         {
-            std::uint32_t dense;      // índice no denso; se livre, o próximo livre
-            std::uint32_t generation; // ímpar = ocupado, par = livre
+            std::uint32_t dense;      
+            std::uint32_t generation; 
         };
 
         static const std::uint32_t kNoFree = 0xFFFFFFFFu;
@@ -218,7 +190,7 @@ namespace ct
             {
                 const std::uint32_t i = free_head_;
                 free_head_ = slots_[i].dense;
-                ++slots_[i].generation; // par → ímpar (nunca 0, logo nunca parece nulo)
+                ++slots_[i].generation; 
                 return i;
             }
             if (CT_UNLIKELY(slots_.size() >= kNoFree))
@@ -237,10 +209,10 @@ namespace ct
             return handle_type(slot, slots_[slot].generation);
         }
 
-        Vector<T, Alloc> dense_;                // os objetos, sem buracos
-        Vector<std::uint32_t, Alloc> owners_;   // denso -> slot
-        Vector<Slot, Alloc> slots_;             // slot -> denso + geração
+        Vector<T, Alloc> dense_;                
+        Vector<std::uint32_t, Alloc> owners_;   
+        Vector<Slot, Alloc> slots_;             
         std::uint32_t free_head_;
     };
 
-} // namespace ct
+} 

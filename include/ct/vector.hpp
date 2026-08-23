@@ -1,4 +1,4 @@
- 
+
 #pragma once
 
 #include <initializer_list>
@@ -8,8 +8,6 @@
 namespace ct
 {
 
-    // Alloc é um policy (ver detail/utils.hpp); HeapAlloc é vazio → via herança privada
-    // (EBO) o Vector default continua a ter só 3 ponteiros.
     template <typename T, typename Alloc = HeapAlloc>
     class Vector : private Alloc
     {
@@ -30,8 +28,6 @@ namespace ct
         using const_iterator = const T *;
         using reverse_iterator = detail::ReverseIt<iterator>;
         using const_reverse_iterator = detail::ReverseIt<const_iterator>;
-
-        // ---- construction / destruction ----------------------------------------
 
         Vector() noexcept : data_(nullptr), end_(nullptr), cap_(nullptr) {}
 
@@ -141,8 +137,6 @@ namespace ct
             resize(n, value);
         }
 
-        // ---- element access ----------------------------------------------------
-
         reference operator[](size_type i) { return data_[i]; }
         const_reference operator[](size_type i) const { return data_[i]; }
 
@@ -167,8 +161,6 @@ namespace ct
         T *data() noexcept { return data_; }
         const T *data() const noexcept { return data_; }
 
-        // ---- iterators ---------------------------------------------------------
-
         iterator begin() noexcept { return data_; }
         const_iterator begin() const noexcept { return data_; }
         const_iterator cbegin() const noexcept { return data_; }
@@ -179,8 +171,6 @@ namespace ct
         const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
         reverse_iterator rend() noexcept { return reverse_iterator(begin()); }
         const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
-
-        // ---- capacity ----------------------------------------------------------
 
         bool empty() const noexcept { return end_ == data_; }
         size_type size() const noexcept
@@ -221,8 +211,6 @@ namespace ct
                 }
             }
         }
-
-        // ---- modifiers ---------------------------------------------------------
 
         void clear() noexcept
         {
@@ -282,8 +270,6 @@ namespace ct
             detail::destroy_n(end_, 1, trivial_dtor{});
         }
 
-        // NOTE: for trivial T the new elements are left UNINITIALIZED (that is the
-        // speed win). Use resize(n, T()) when you need value-initialization.
         void resize(size_type n)
         {
             const size_type current = size();
@@ -354,7 +340,7 @@ namespace ct
                 grow();
             if (idx < size())
             {
-                // open a gap: relocate tail one slot to the right (backwards)
+
                 open_gap(idx, trivial_copy{});
             }
             ::new (static_cast<void *>(data_ + idx)) T(detail::forward<Args>(args)...);
@@ -394,9 +380,9 @@ namespace ct
         }
 
     private:
-        T *data_; // start of storage
-        T *end_;  // one past last element
-        T *cap_;  // one past end of storage
+        T *data_; 
+        T *end_;  
+        T *cap_;  
 
         bool contains_address(const T *value) const noexcept
         {
@@ -408,8 +394,6 @@ namespace ct
             return address >= begin && address < end;
         }
 
-        // preencher slots novos: em tipos triviais, atribuição simples — o GCC
-        // vectoriza (o loop de placement new não)
         void fill_new(size_type from, size_type to, const T &value, detail::true_type)
         {
             detail::fill_assign_n(data_ + from, to - from, value);
@@ -426,7 +410,6 @@ namespace ct
             end_ = data_ + n;
         }
 
-        // gap of 1 at idx; [idx, size_) shifts to [idx+1, size_+1)
         void open_gap(size_type idx, detail::true_type)
         {
             std::memmove(static_cast<void *>(data_ + idx + 1),
@@ -442,7 +425,6 @@ namespace ct
             }
         }
 
-        // close a gap of n destroyed slots starting at idx
         void close_gap(size_type idx, size_type n, detail::true_type)
         {
             std::memmove(static_cast<void *>(data_ + idx),
@@ -545,4 +527,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

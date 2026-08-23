@@ -1,6 +1,4 @@
-// ct::SlotMap vs as alternativas normais para entidades com id estável:
-// std::unordered_map<id,T> (o que se faz por defeito) e um Vector denso com
-// procura por id (o que se faz quando se quer iteração rápida).
+
 #include <ct/slotmap.hpp>
 #include <ct/vector.hpp>
 
@@ -15,7 +13,7 @@ volatile std::uint64_t bench::sink = 0;
 
 namespace
 {
-    struct Body // 32 bytes, como um corpo rígido simples
+    struct Body 
     {
         float x, y, vx, vy;
         float raio, massa;
@@ -40,7 +38,6 @@ int main()
 {
     const std::vector<std::uint32_t> ordem = ordem_aleatoria(N, 1234);
 
-    // ---- preencher ----
     ct::SlotMap<Body> sm;
     std::vector<ct::Handle<Body>> handles;
     std::unordered_map<std::uint64_t, Body> um;
@@ -54,8 +51,6 @@ int main()
         um.emplace(static_cast<std::uint64_t>(i), b);
     }
 
-    // as duas listas na mesma ordem aleatoria: cada lado le a sua chave
-    // sequencialmente e faz um acesso aleatorio — comparacao justa
     std::vector<ct::Handle<Body>> handles_baralhados;
     std::vector<std::uint64_t> ids_baralhados;
     handles_baralhados.reserve(N);
@@ -133,12 +128,10 @@ int main()
             bench::sink += um.size();
         });
 
-    // o churn substituiu metade dos handles: refazer a lista baralhada
     handles_baralhados.clear();
     for (std::uint32_t i : ordem)
         handles_baralhados.push_back(handles[i]);
 
-    // ---- contra um Vector denso puro (o limite teórico da iteração) ----
     bench::header("custo do handle vs indexar um Vector a seco");
     ct::Vector<Body> puro;
     puro.reserve(N);

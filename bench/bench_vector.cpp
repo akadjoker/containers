@@ -1,4 +1,4 @@
-// ct::Vector vs std::vector — dados crus e tipos complexos, com edge cases.
+
 #include <ct/vector.hpp>
 
 #include <algorithm>
@@ -17,17 +17,17 @@ namespace
 
     constexpr int N = 2000000;
 
-    struct Pod32 // POD médio (partícula)
+    struct Pod32 
     {
         double a, b, c, d;
     };
 
-    struct Pod256 // POD grande (transform + material)
+    struct Pod256 
     {
         double m[32];
     };
 
-    struct Mixed // tipo complexo típico de jogo: POD + heap
+    struct Mixed 
     {
         std::string name;
         float x, y, z;
@@ -36,10 +36,8 @@ namespace
         Mixed(std::string n, int i) : name(std::move(n)), x(1), y(2), z(3), id(i) {}
     };
 
-    // ---------------- dados crus ----------------
-
     template <typename Vec>
-    std::uint64_t push_bytes() // elemento de 1 byte, 8M
+    std::uint64_t push_bytes() 
     {
         Vec v;
         for (int i = 0; i < N * 4; ++i)
@@ -89,7 +87,7 @@ namespace
     }
 
     template <typename Vec>
-    std::uint64_t insert_front() // pior caso absoluto: shift de tudo
+    std::uint64_t insert_front() 
     {
         Vec v;
         for (int i = 0; i < 20000; ++i)
@@ -136,7 +134,7 @@ namespace
     }
 
     template <typename Vec>
-    std::uint64_t clear_refill_cycles() // reutilizar capacidade, padrão de frame
+    std::uint64_t clear_refill_cycles() 
     {
         Vec v;
         std::uint64_t acc = 0;
@@ -151,7 +149,7 @@ namespace
     }
 
     template <typename Vec>
-    std::uint64_t resize_oscillate() // cresce/encolhe 1000x
+    std::uint64_t resize_oscillate() 
     {
         Vec v;
         std::uint64_t acc = 0;
@@ -164,10 +162,8 @@ namespace
         return acc + v.size();
     }
 
-    // ---------------- tipos complexos ----------------
-
     template <typename Vec>
-    std::uint64_t push_short_strings() // cabem no SSO
+    std::uint64_t push_short_strings() 
     {
         Vec v;
         for (int i = 0; i < 200000; ++i)
@@ -176,7 +172,7 @@ namespace
     }
 
     template <typename Vec>
-    std::uint64_t push_long_strings() // heap-allocated de certeza
+    std::uint64_t push_long_strings() 
     {
         Vec v;
         for (int i = 0; i < 200000; ++i)
@@ -186,7 +182,7 @@ namespace
     }
 
     template <typename OuterVec, typename InnerVec>
-    std::uint64_t nested_vectors() // Vector<Vector<int>>
+    std::uint64_t nested_vectors() 
     {
         OuterVec outer;
         for (int i = 0; i < 1000; ++i)
@@ -196,12 +192,12 @@ namespace
                 inner.push_back(i + j);
             outer.push_back(std::move(inner));
         }
-        OuterVec copy(outer); // deep copy de 1M ints em 1000 vectors
+        OuterVec copy(outer); 
         return copy.size() + static_cast<std::uint64_t>(copy[999][999]);
     }
 
     template <typename Vec>
-    std::uint64_t move_only_ptrs() // growth só com move, nunca cópia
+    std::uint64_t move_only_ptrs() 
     {
         Vec v;
         for (int i = 0; i < 500000; ++i)
@@ -213,12 +209,12 @@ namespace
     }
 
     template <typename Vec>
-    std::uint64_t mixed_struct_churn() // push + erase de tipo com string
+    std::uint64_t mixed_struct_churn() 
     {
         Vec v;
         for (int i = 0; i < 50000; ++i)
             v.push_back(Mixed("entity_" + std::to_string(i), i));
-        v.erase(v.begin() + 10000, v.begin() + 40000); // shift com moves
+        v.erase(v.begin() + 10000, v.begin() + 40000); 
         for (int i = 0; i < 30000; ++i)
             v.push_back(Mixed("respawn_" + std::to_string(i), i));
         return v.size() + static_cast<std::uint64_t>(v.back().id);
@@ -239,7 +235,7 @@ namespace
         return static_cast<std::uint64_t>(v.back().a);
     }
 
-} // namespace
+} 
 
 int main()
 {

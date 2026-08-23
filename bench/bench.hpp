@@ -1,4 +1,4 @@
-// Minimal benchmark harness: runs each case several times, reports the best.
+
 #pragma once
 
 #include <chrono>
@@ -7,10 +7,8 @@
 
 namespace bench {
 
-// global sink so the optimizer cannot delete the measured work
 extern volatile std::uint64_t sink;
 
-// forces the compiler to treat p as escaped (blocks new/delete elision)
 inline void escape(const void *p)
 {
 #if defined(__GNUC__) || defined(__clang__)
@@ -35,7 +33,6 @@ double time_best_ms(F&& f, int reps = 7) {
     return best;
 }
 
-// prints:  name | ct ms | std ms | speedup
 template <typename FCt, typename FStd>
 void compare(const char* name, FCt&& fct, FStd&& fstd, int reps = 7) {
     double ct_ms = time_best_ms(fct, reps);
@@ -49,4 +46,4 @@ inline void header(const char* title) {
                 "speedup");
 }
 
-}  // namespace bench
+}  

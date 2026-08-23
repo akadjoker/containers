@@ -14,8 +14,6 @@
 #include <type_traits>
 #include <vector>
 
-// ================= Array =================
-
 TEST(Array, BasicsAndAggregateInit)
 {
     ct::Array<int, 4> a = {{10, 20, 30, 40}};
@@ -38,7 +36,7 @@ TEST(Array, IterationAndFill)
     for (int x : a)
         sum += x;
     EXPECT_EQ(sum, 35);
-    // reverse
+
     ct::Array<int, 3> b = {{1, 2, 3}};
     auto it = b.rbegin();
     EXPECT_EQ(*it, 3);
@@ -66,11 +64,9 @@ TEST(Array, WorksWithCtSort)
         EXPECT_EQ(a[i], i + 1);
 }
 
-// ---- Array: edge cases ----------------------------------------------------
-
 namespace
 {
-    // layout: um Array tem de ser exatamente o C array, nada mais
+
     static_assert(sizeof(ct::Array<int, 8>) == 8 * sizeof(int), "sem overhead");
     static_assert(sizeof(ct::Array<char, 3>) == 3, "sem overhead");
     static_assert(alignof(ct::Array<double, 3>) == alignof(double), "alinhamento do T");
@@ -78,7 +74,6 @@ namespace
     static_assert(std::is_trivially_copyable<ct::Array<int, 4>>::value, "memcpy-able");
     static_assert(std::is_standard_layout<ct::Array<int, 4>>::value, "standard layout");
 
-    // acesso constexpr (leitura)
     constexpr ct::Array<int, 4> kConst = {{1, 2, 3, 4}};
     static_assert(kConst[2] == 3, "operator[] constexpr");
     static_assert(kConst.at(0) == 1, "at() constexpr");
@@ -88,7 +83,6 @@ namespace
     static_assert(*(kConst.begin() + 1) == 2, "begin() constexpr");
     static_assert(kConst.end() - kConst.begin() == 4, "end() constexpr");
 
-    // acesso constexpr (escrita — C++14 deixa mutar em contexto constante)
     constexpr int constexpr_build()
     {
         ct::Array<int, 4> a = {{0, 0, 0, 0}};
@@ -98,7 +92,7 @@ namespace
         int sum = 0;
         for (int v : a)
             sum += v;
-        return sum; // 0 + 1 + 4 + 100
+        return sum; 
     }
     static_assert(constexpr_build() == 105, "escrita constexpr");
 
@@ -127,13 +121,13 @@ namespace
 
 TEST(Array, AggregateInitForms)
 {
-    ct::Array<int, 3> a = {{1, 2, 3}}; // com as duas chavetas
-    ct::Array<int, 3> b = {1, 2, 3};   // com brace elision
+    ct::Array<int, 3> a = {{1, 2, 3}}; 
+    ct::Array<int, 3> b = {1, 2, 3};   
     ct::Array<int, 3> c{{1, 2, 3}};
     EXPECT_TRUE(a == b);
     EXPECT_TRUE(a == c);
 
-    ct::Array<int, 4> partial = {{7, 8}}; // resto value-initialized
+    ct::Array<int, 4> partial = {{7, 8}}; 
     EXPECT_EQ(partial[0], 7);
     EXPECT_EQ(partial[1], 8);
     EXPECT_EQ(partial[2], 0);
@@ -163,14 +157,14 @@ TEST(Array, AtBoundsEdges)
     ct::Array<int, 3> a = {{1, 2, 3}};
     const ct::Array<int, 3> &ca = a;
 
-    EXPECT_EQ(a.at(2), 3);  // último índice válido
+    EXPECT_EQ(a.at(2), 3);  
     EXPECT_EQ(ca.at(2), 3);
-    EXPECT_DEATH(a.at(3), "fora dos limites");                            // logo a seguir
-    EXPECT_DEATH(ca.at(3), "fora dos limites");                           // versão const
-    EXPECT_DEATH(a.at(static_cast<std::size_t>(-1)), "fora dos limites"); // wrap-around
+    EXPECT_DEATH(a.at(3), "fora dos limites");                            
+    EXPECT_DEATH(ca.at(3), "fora dos limites");                           
+    EXPECT_DEATH(a.at(static_cast<std::size_t>(-1)), "fora dos limites"); 
     EXPECT_DEATH(a.at(1u << 30), "fora dos limites");
 
-    a.at(0) = 99; // at() não-const devolve referência mutável
+    a.at(0) = 99; 
     EXPECT_EQ(a[0], 99);
 }
 
@@ -179,7 +173,7 @@ TEST(Array, FillSelfReference)
     ct::Array<int, 8> a;
     for (int i = 0; i < 8; ++i)
         a[i] = i + 1;
-    a.fill(a[0]); // o valor está *dentro* do próprio array
+    a.fill(a[0]); 
     for (int i = 0; i < 8; ++i)
         EXPECT_EQ(a[i], 1);
 }
@@ -208,7 +202,6 @@ TEST(Array, FillOneByteTypesGoesThroughMemset)
     for (int i = 0; i < 3; ++i)
         EXPECT_EQ(sc[i], -3);
 
-    // struct de 1 byte: o byte tem de vir do object representation, não de um cast
     ct::Array<Byte1, 6> s;
     s.fill(Byte1{0x5A});
     for (int i = 0; i < 6; ++i)
@@ -228,7 +221,7 @@ TEST(Array, FillLargeTrivialAndNonTrivial)
     d.fill(1.5);
     EXPECT_DOUBLE_EQ(d[0] + d[1] + d[2], 4.5);
 
-    ct::Array<std::string, 3> s; // caminho não-trivial (assign por referência)
+    ct::Array<std::string, 3> s; 
     s.fill("uma string grande o suficiente para nao caber em SSO");
     for (int i = 0; i < 3; ++i)
         EXPECT_EQ(s[i], "uma string grande o suficiente para nao caber em SSO");
@@ -241,14 +234,13 @@ TEST(Array, FillLargeTrivialAndNonTrivial)
 
 TEST(Array, EqualityFloatEdgeCasesNotBytewise)
 {
-    // -0.0 e 0.0 têm bits diferentes mas são iguais → memcmp aqui seria errado
+
     ct::Array<double, 2> a = {{0.0, 1.0}};
     ct::Array<double, 2> b = {{-0.0, 1.0}};
     ASSERT_NE(std::memcmp(a.data(), b.data(), sizeof(a)), 0);
     EXPECT_TRUE(a == b);
     EXPECT_FALSE(a != b);
 
-    // NaN tem os mesmos bits mas nunca é igual a nada, nem a si próprio
     const double nan = std::numeric_limits<double>::quiet_NaN();
     ct::Array<double, 1> n1 = {{nan}};
     ct::Array<double, 1> n2 = n1;
@@ -266,8 +258,8 @@ TEST(Array, EqualityBytewiseTypes)
 {
     ct::Array<int, 4> a = {{1, 2, 3, 4}};
     ct::Array<int, 4> b = {{1, 2, 3, 4}};
-    ct::Array<int, 4> c = {{1, 2, 3, 5}}; // difere no último
-    ct::Array<int, 4> d = {{9, 2, 3, 4}}; // difere no primeiro
+    ct::Array<int, 4> c = {{1, 2, 3, 5}}; 
+    ct::Array<int, 4> d = {{9, 2, 3, 4}}; 
     EXPECT_TRUE(a == b);
     EXPECT_FALSE(a == c);
     EXPECT_FALSE(a == d);
@@ -293,7 +285,7 @@ TEST(Array, EqualityBytewiseTypes)
 
 TEST(Array, EqualityIgnoresStructPadding)
 {
-    // padding com lixo diferente, membros iguais → tem de dar igual
+
     ct::Array<Padded, 2> a;
     ct::Array<Padded, 2> b;
     std::memset(static_cast<void *>(&a), 0x00, sizeof(a));
@@ -325,7 +317,7 @@ TEST(Array, OrderingLexicographic)
     EXPECT_TRUE(a < b);
     EXPECT_FALSE(b < a);
     EXPECT_TRUE(b > a);
-    EXPECT_TRUE(a < c); // decide o primeiro elemento
+    EXPECT_TRUE(a < c); 
     EXPECT_FALSE(a < a2);
     EXPECT_FALSE(a > a2);
     EXPECT_TRUE(a <= a2);
@@ -340,7 +332,7 @@ TEST(Array, OrderingLexicographic)
 
 TEST(Array, OrderingSignedBytesNotMemcmp)
 {
-    // memcmp compara como unsigned: -1 daria 255 e ficaria "maior" que 1
+
     ct::Array<signed char, 1> n = {{-1}};
     ct::Array<signed char, 1> p = {{1}};
     EXPECT_TRUE(n < p);
@@ -350,14 +342,13 @@ TEST(Array, OrderingSignedBytesNotMemcmp)
     ct::Array<signed char, 3> s2 = {{0, 127, 0}};
     EXPECT_TRUE(s1 < s2);
 
-    // unsigned de 1 byte: aí o memcmp está certo, incluindo acima de 127
     ct::Array<unsigned char, 1> u200 = {{200}};
     ct::Array<unsigned char, 1> u5 = {{5}};
     EXPECT_TRUE(u5 < u200);
     EXPECT_FALSE(u200 < u5);
 
     ct::Array<unsigned char, 3> pre1 = {{1, 5, 9}};
-    ct::Array<unsigned char, 3> pre2 = {{1, 200, 0}}; // prefixo comum
+    ct::Array<unsigned char, 3> pre2 = {{1, 200, 0}}; 
     EXPECT_TRUE(pre1 < pre2);
 
     ct::Array<unsigned char, 2> eq1 = {{7, 7}};
@@ -365,7 +356,6 @@ TEST(Array, OrderingSignedBytesNotMemcmp)
     EXPECT_FALSE(eq1 < eq2);
     EXPECT_TRUE(eq1 <= eq2);
 
-    // inteiros com sinal maiores também não podem ir por memcmp
     ct::Array<int, 2> i1 = {{-5, 0}};
     ct::Array<int, 2> i2 = {{5, 0}};
     EXPECT_TRUE(i1 < i2);
@@ -379,11 +369,11 @@ TEST(Array, SwapIncludingSelfAndAdl)
     EXPECT_EQ(a[0], 4);
     EXPECT_EQ(b[2], 3);
 
-    swap(a, b); // ADL: ct::swap
+    swap(a, b); 
     EXPECT_EQ(a[0], 1);
     EXPECT_EQ(b[0], 4);
 
-    a.swap(a); // self-swap não pode corromper
+    a.swap(a); 
     EXPECT_TRUE((a == ct::Array<int, 3>{{1, 2, 3}}));
 
     ct::Array<std::string, 2> s1 = {{std::string("um"), std::string("dois")}};
@@ -408,7 +398,7 @@ TEST(Array, ReverseIterators)
     EXPECT_EQ(seen[0], 4);
     EXPECT_EQ(seen[3], 1);
 
-    *a.rbegin() = 99; // escrita através do reverse iterator
+    *a.rbegin() = 99; 
     EXPECT_EQ(a[3], 99);
 
     const ct::Array<int, 4> &ca = a;
@@ -425,7 +415,7 @@ TEST(Array, ReverseIterators)
 
     auto it = a.rbegin();
     ++it;
-    --it; // volta atrás
+    --it; 
     EXPECT_EQ(*it, 99);
     EXPECT_EQ(it.base(), a.end());
 
@@ -453,7 +443,7 @@ TEST(Array, NestedArrays)
     EXPECT_EQ(grid[2][1], 9);
     EXPECT_EQ(sizeof(grid), 6 * sizeof(int));
 
-    ct::sort(grid.begin(), grid.end()); // usa o nosso operator<
+    ct::sort(grid.begin(), grid.end()); 
     EXPECT_TRUE((grid[0] == ct::Array<int, 2>{{1, 2}}));
     EXPECT_TRUE((grid[1] == ct::Array<int, 2>{{2, 9}}));
     EXPECT_TRUE((grid[2] == ct::Array<int, 2>{{3, 1}}));
@@ -466,11 +456,11 @@ TEST(Array, NestedArrays)
 TEST(Array, CopyAndAssignAreBitwise)
 {
     ct::Array<int, 5> a = {{1, 2, 3, 4, 5}};
-    ct::Array<int, 5> b = a; // copy ctor implícito
+    ct::Array<int, 5> b = a; 
     EXPECT_TRUE(a == b);
     b[0] = 9;
-    EXPECT_EQ(a[0], 1); // cópias independentes
-    a = b;              // assign implícito
+    EXPECT_EQ(a[0], 1); 
+    a = b;              
     EXPECT_TRUE(a == b);
 
     ct::Array<std::string, 2> s = {{std::string("a"), std::string("b")}};
@@ -479,8 +469,6 @@ TEST(Array, CopyAndAssignAreBitwise)
     t[1] = "z";
     EXPECT_EQ(s[1], "b");
 }
-
-// ================= sort =================
 
 namespace
 {
@@ -506,18 +494,18 @@ namespace
         for (std::size_t i = 0; i < n; ++i)
             ASSERT_EQ(v[i], ref[i]) << "n=" << n << " i=" << i;
     }
-} // namespace
+} 
 
 TEST(Sort, IntAllSizesAndPatterns)
 {
-    // tamanhos à volta dos thresholds (24 insertion, 128 radix)
+
     for (std::size_t n : {0u, 1u, 2u, 3u, 23u, 24u, 25u, 127u, 128u, 129u, 1000u, 100000u})
     {
         check_sort_matches_std<int>(n, [](std::size_t) { return static_cast<int>(rng()); });
-        check_sort_matches_std<int>(n, [](std::size_t i) { return static_cast<int>(i); });      // já ordenado
-        check_sort_matches_std<int>(n, [n](std::size_t i) { return static_cast<int>(n - i); }); // inverso
-        check_sort_matches_std<int>(n, [](std::size_t) { return static_cast<int>(rng() % 4); }); // duplicados
-        check_sort_matches_std<int>(n, [](std::size_t) { return 7; });                           // tudo igual
+        check_sort_matches_std<int>(n, [](std::size_t i) { return static_cast<int>(i); });      
+        check_sort_matches_std<int>(n, [n](std::size_t i) { return static_cast<int>(n - i); }); 
+        check_sort_matches_std<int>(n, [](std::size_t) { return static_cast<int>(rng() % 4); }); 
+        check_sort_matches_std<int>(n, [](std::size_t) { return 7; });                           
     }
 }
 
@@ -548,7 +536,7 @@ TEST(Sort, Floats)
     check_sort_matches_std<float>(50000, [](std::size_t) {
         return (static_cast<float>(rng()) / 1e6f - 2000.0f);
     });
-    // negativos, zeros, infinitos
+
     ct::Vector<float> v;
     for (int i = 0; i < 300; ++i)
         v.push_back(static_cast<float>(300 - i) * (i % 2 ? -1.0f : 1.0f));
@@ -571,7 +559,7 @@ TEST(Sort, CustomComparator)
     ct::Vector<int> v;
     for (int i = 0; i < 5000; ++i)
         v.push_back(static_cast<int>(rng()));
-    ct::sort(v.begin(), v.end(), [](int a, int b) { return a > b; }); // descendente
+    ct::sort(v.begin(), v.end(), [](int a, int b) { return a > b; }); 
     for (std::size_t i = 1; i < v.size(); ++i)
         ASSERT_GE(v[i - 1], v[i]);
 }
@@ -612,8 +600,7 @@ TEST(Sort, StructByField)
 
 TEST(Sort, KillerPatternForQuicksort)
 {
-    // padrão organ-pipe + muitos iguais: se o introsort degenerar, o heapsort
-    // salvaguarda entra — o resultado tem de continuar certo
+
     ct::Vector<int> v;
     for (int i = 0; i < 50000; ++i)
         v.push_back(i % 100);
@@ -621,7 +608,7 @@ TEST(Sort, KillerPatternForQuicksort)
         v.push_back((50000 - i) % 100);
     std::vector<int> ref(v.begin(), v.end());
     std::sort(ref.begin(), ref.end());
-    ct::sort(v.begin(), v.end(), [](int a, int b) { return a < b; }); // força o introsort
+    ct::sort(v.begin(), v.end(), [](int a, int b) { return a < b; }); 
     for (std::size_t i = 0; i < ref.size(); ++i)
         ASSERT_EQ(v[i], ref[i]);
 }

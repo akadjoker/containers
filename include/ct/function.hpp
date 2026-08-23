@@ -1,29 +1,17 @@
 #pragma once
 
-// Function<R(Args...)> — wrapper type-erased para qualquer coisa chamável com essa
-// assinatura (função livre, lambda com captura, functor, std::bind). Como o
-// std::function, mas:
-//   - sem exceções: chamar uma Function vazia é fatal(), não std::bad_function_call
-//   - SBO de kSboSize bytes — lambdas pequenas (a maioria dos callbacks de engine, tipo
-//     "captura this e dois floats") não tocam o heap; só as grandes alocam
-//   - copiável só se o callable guardado também for (como o std::function)
-//
-// O alvo tem de ser CopyConstructible mesmo que só se use move — é o preço de a própria
-// Function continuar copiável sem complicar a API com duas variantes (movable-only vs not).
-
 #include "detail/utils.hpp"
 
 namespace ct
 {
     template <typename Sig>
-    class Function; // só a especialização R(Args...) existe
+    class Function; 
 
     template <typename R, typename... Args>
     class Function<R(Args...)>
     {
     public:
-        // 3 ponteiros: cobre "captura this + 1-2 valores" sem alocar; o folly::Function
-        // e a maioria dos std::function das libs usam algo nesta ordem de grandeza
+
         static constexpr std::size_t kSboSize = 3 * sizeof(void *);
         static constexpr std::size_t kSboAlign = alignof(std::max_align_t);
 
@@ -108,9 +96,9 @@ namespace ct
     private:
         enum class Op
         {
-            Destroy, // destrói o objeto guardado em self (não desaloca — reset() trata disso)
-            Clone,   // copia o objeto guardado em self para other (other começa vazia)
-            MoveInto // move o objeto guardado em self para other; self fica vazia
+            Destroy, 
+            Clone,   
+            MoveInto 
         };
         using ManageFn = void (*)(Op, Function *self, Function *other);
         using InvokeFn = R (*)(void *, Args...);
@@ -127,10 +115,6 @@ namespace ct
             return on_heap_ ? heap_ : static_cast<const void *>(buf_);
         }
 
-        // decide SBO vs heap em tempo de compilação (propriedade só de F) — usado como
-        // tag dispatch, para o ramo do heap nunca ser sequer instanciado com um F grande
-        // a fazer placement-new dentro de buf_ (o que o -Wplacement-new apanha, com razão:
-        // um "if" em runtime não livra o compilador de gerar código para os dois lados)
         template <typename F>
         using FitsTag = detail::integral_constant<
             bool, (sizeof(F) <= kSboSize && alignof(F) <= kSboAlign)>;
@@ -144,14 +128,14 @@ namespace ct
             manage_ = &manage_thunk<D>;
         }
         template <typename F>
-        void construct_impl(F &&f, detail::true_type /* cabe no SBO */)
+        void construct_impl(F &&f, detail::true_type )
         {
             using D = typename std::decay<F>::type;
             ::new (static_cast<void *>(buf_)) D(detail::forward<F>(f));
             on_heap_ = false;
         }
         template <typename F>
-        void construct_impl(F &&f, detail::false_type /* vai para o heap */)
+        void construct_impl(F &&f, detail::false_type )
         {
             using D = typename std::decay<F>::type;
             HeapAlloc a;
@@ -182,7 +166,7 @@ namespace ct
         }
 
         template <typename F>
-        static void move_into(Function *self, Function *other, detail::true_type /* SBO */)
+        static void move_into(Function *self, Function *other, detail::true_type )
         {
             ::new (static_cast<void *>(other->buf_))
                 F(detail::move(*static_cast<F *>(self->storage_mut())));
@@ -190,9 +174,9 @@ namespace ct
             other->on_heap_ = false;
         }
         template <typename F>
-        static void move_into(Function *self, Function *other, detail::false_type /* heap */)
+        static void move_into(Function *self, Function *other, detail::false_type )
         {
-            other->heap_ = self->heap_; // rouba o ponteiro — sem realocar nem mover F
+            other->heap_ = self->heap_; 
             other->on_heap_ = true;
             self->heap_ = nullptr;
         }
@@ -249,4 +233,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

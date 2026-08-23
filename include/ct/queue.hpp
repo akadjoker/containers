@@ -6,7 +6,6 @@
 namespace ct
 {
 
- 
     template <typename T, typename Container = Deque<T>>
     class Queue
     {
@@ -74,4 +73,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

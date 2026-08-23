@@ -59,7 +59,7 @@ TEST(Variant, AssignSwitchesActiveType)
     EXPECT_TRUE(v.is<double>());
     v = String("s");
     EXPECT_TRUE(v.is<String>());
-    v = 5; // volta a int
+    v = 5; 
     EXPECT_TRUE(v.is<int>());
     EXPECT_EQ(v.get<int>(), 5);
 }
@@ -103,7 +103,7 @@ TEST(Variant, MoveLeavesSourceInSameAlternativeButMovedFrom)
     V b = ct::detail::move(a);
     EXPECT_TRUE(b.is<String>());
     EXPECT_EQ(b.get<String>(), "string longa o suficiente para ir para o heap, de certeza!!");
-    EXPECT_TRUE(a.is<String>()); // continua String, só que moved-from (SSO: pode ficar vazia)
+    EXPECT_TRUE(a.is<String>()); 
 }
 
 TEST(Variant, Swap)
@@ -139,15 +139,15 @@ TEST(Variant, CopyConstructsTargetOnce)
     CopyCounter::copies = 0;
     Variant<int, CopyCounter> a = CopyCounter(3);
     CopyCounter::copies = 0;
-    Variant<int, CopyCounter> b = a; // clona: 1 cópia
+    Variant<int, CopyCounter> b = a; 
     EXPECT_EQ(CopyCounter::copies, 1);
     EXPECT_EQ(b.get<CopyCounter>().value, 3);
 }
 
 TEST(Variant, TwoAlternativesTypeAtWorks)
 {
-    Variant<int, int> nope = 1; // dois tipos iguais é um caso degenerado mas não deve
-                                 // rebentar a construir/destruir; get<int>() pega o 1º
+    Variant<int, int> nope = 1; 
+
     EXPECT_EQ(nope.index(), 0u);
     EXPECT_EQ(nope.get<int>(), 1);
 }

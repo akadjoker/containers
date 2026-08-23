@@ -270,4 +270,4 @@ namespace ct
         Alloc &allocator() { return static_cast<Alloc &>(*this); }
     };
 
-} // namespace ct
+} 

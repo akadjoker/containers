@@ -5,14 +5,10 @@
 namespace ct
 {
 
-    // Array fixo, agregado puro: sizeof(Array<T,N>) == N*sizeof(T), sem ponteiros,
-    // sem heap, sem overhead. Acesso constexpr (C++14: as versões não-const também
-    // servem para escrever em contexto constante); fill e comparação despacham para
-    // memset/memcmp quando isso é *seguro* bit a bit.
     template <typename T, std::size_t N>
     struct Array
     {
-        // público de propósito — é o que mantém o agregado ({{1,2,3}} funciona)
+
         T elems[N];
 
         using value_type = T;
@@ -26,8 +22,6 @@ namespace ct
         using const_iterator = const T *;
         using reverse_iterator = detail::ReverseIt<T *>;
         using const_reverse_iterator = detail::ReverseIt<const T *>;
-
-        // ---- acesso ---------------------------------------------------------
 
         constexpr T &operator[](size_type i) { return elems[i]; }
         constexpr const T &operator[](size_type i) const { return elems[i]; }
@@ -53,8 +47,6 @@ namespace ct
         constexpr T *data() noexcept { return elems; }
         constexpr const T *data() const noexcept { return elems; }
 
-        // ---- iteradores -----------------------------------------------------
-
         constexpr iterator begin() noexcept { return elems; }
         constexpr const_iterator begin() const noexcept { return elems; }
         constexpr const_iterator cbegin() const noexcept { return elems; }
@@ -69,16 +61,10 @@ namespace ct
         const_reverse_iterator crbegin() const noexcept { return const_reverse_iterator(cend()); }
         const_reverse_iterator crend() const noexcept { return const_reverse_iterator(cbegin()); }
 
-        // ---- capacidade -----------------------------------------------------
-
         static constexpr size_type size() noexcept { return N; }
         static constexpr size_type max_size() noexcept { return N; }
         static constexpr bool empty() noexcept { return N == 0; }
 
-        // ---- operações ------------------------------------------------------
-
-        // memset para tipos de 1 byte, loop sem aliasing (valor em local) para os
-        // outros triviais — ver detail::fill_fast_n
         void fill(const T &v) { detail::fill_fast_n(elems, N, v); }
 
         void swap(Array &o)
@@ -87,10 +73,6 @@ namespace ct
                 detail::swap_vals(elems[i], o.elems[i]);
         }
     };
-
-    // ---- comparações ---------------------------------------------------------
-    // == usa memcmp em inteiros/enums/ponteiros; floats e structs vão pelo loop
-    // (com floats memcmp daria -0.0 != 0.0 e NaN == NaN)
 
     template <typename T, std::size_t N>
     inline bool operator==(const Array<T, N> &a, const Array<T, N> &b)
@@ -134,4 +116,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

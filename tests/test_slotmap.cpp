@@ -59,7 +59,7 @@ TEST(SlotMap, InsertGetErase)
 
     EXPECT_TRUE(m.erase(b));
     EXPECT_EQ(m.size(), 2u);
-    EXPECT_EQ(m[a], 10); // os outros nao se mexem de valor
+    EXPECT_EQ(m[a], 10); 
     EXPECT_EQ(m[c], 30);
 }
 
@@ -72,10 +72,9 @@ TEST(SlotMap, StaleHandleIsDetected)
     EXPECT_TRUE(m.erase(h));
     EXPECT_FALSE(m.contains(h));
     EXPECT_EQ(m.get(h), nullptr);
-    EXPECT_FALSE(m.erase(h)); // apagar duas vezes nao rebenta
+    EXPECT_FALSE(m.erase(h)); 
     EXPECT_DEATH(m[h], "handle invalido");
 
-    // o slot e reutilizado, mas com geracao nova: o handle antigo continua morto
     const auto novo = m.insert(7);
     EXPECT_EQ(novo.index, h.index);
     EXPECT_NE(novo.generation, h.generation);
@@ -93,14 +92,13 @@ TEST(SlotMap, NullHandleIsNeverValid)
     EXPECT_FALSE(m.contains(nulo));
     EXPECT_EQ(m.get(nulo), nullptr);
 
-    m.insert(1); // com o slot 0 ocupado, o handle nulo continua a nao valer
+    m.insert(1); 
     EXPECT_FALSE(m.contains(nulo));
     EXPECT_EQ(m.get(nulo), nullptr);
 
-    // handles forjados fora do fim tambem nao passam
     EXPECT_FALSE(m.contains(Handle<int>(9999, 1)));
     EXPECT_FALSE(m.contains(Handle<int>(0, 12345)));
-    EXPECT_FALSE(m.contains(Handle<int>(0, 2))); // geracao par = slot livre
+    EXPECT_FALSE(m.contains(Handle<int>(0, 2))); 
 }
 
 TEST(SlotMap, SwapRemoveKeepsEverythingResolvable)
@@ -110,7 +108,7 @@ TEST(SlotMap, SwapRemoveKeepsEverythingResolvable)
     for (int i = 0; i < 10; ++i)
         hs.push_back(m.insert(i));
 
-    m.erase(hs[0]); // apaga o primeiro: o ultimo vem para o buraco
+    m.erase(hs[0]); 
     EXPECT_EQ(m.size(), 9u);
     for (int i = 1; i < 10; ++i)
     {
@@ -118,8 +116,8 @@ TEST(SlotMap, SwapRemoveKeepsEverythingResolvable)
         EXPECT_EQ(m[hs[i]], i) << i;
     }
 
-    m.erase(hs[9]); // apagar o que ja esta no fim
-    m.erase(hs[5]); // e um do meio
+    m.erase(hs[9]); 
+    m.erase(hs[5]); 
     EXPECT_EQ(m.size(), 7u);
     for (int i = 1; i < 9; ++i)
     {
@@ -132,7 +130,6 @@ TEST(SlotMap, SwapRemoveKeepsEverythingResolvable)
         EXPECT_EQ(m[hs[i]], i) << i;
     }
 
-    // o denso continua sem buracos e com os valores certos
     int soma = 0;
     for (int v : m.items())
         soma += v;
@@ -147,7 +144,6 @@ TEST(SlotMap, IterationAndHandleAt)
     for (int i = 0; i < 5; ++i)
         hs.push_back(m.insert(i * 10));
 
-    // handle_at devolve o handle do elemento naquela posicao do denso
     for (std::size_t i = 0; i < m.size(); ++i)
     {
         const Handle<int> h = m.handle_at(i);
@@ -158,13 +154,11 @@ TEST(SlotMap, IterationAndHandleAt)
     EXPECT_DEATH(m.handle_at(m.size()), "fora dos limites");
     EXPECT_DEATH(m.index_of(Handle<int>()), "handle invalido");
 
-    // escrever pelo span mexe mesmo nos objetos
     for (int &v : m.items())
         v += 1;
     EXPECT_EQ(m[hs[0]], 1);
     EXPECT_EQ(m[hs[4]], 41);
 
-    // range-for direto no slotmap
     int n = 0;
     for (int v : m)
     {
@@ -173,7 +167,6 @@ TEST(SlotMap, IterationAndHandleAt)
     }
     EXPECT_EQ(n, 5);
 
-    // apagar durante uma passagem: recolher handles primeiro, apagar depois
     std::vector<Handle<int>> apagar;
     for (std::size_t i = 0; i < m.size(); ++i)
         if (m.items()[i] % 20 == 1)
@@ -194,7 +187,7 @@ TEST(SlotMap, ClearInvalidatesButKeepsSlots)
     m.clear();
     EXPECT_EQ(m.size(), 0u);
     EXPECT_TRUE(m.empty());
-    EXPECT_EQ(m.slot_count(), slots); // guarda os slots para reutilizar
+    EXPECT_EQ(m.slot_count(), slots); 
     for (Handle<int> h : hs)
     {
         EXPECT_FALSE(m.contains(h));
@@ -203,12 +196,12 @@ TEST(SlotMap, ClearInvalidatesButKeepsSlots)
 
     const auto novo = m.insert(1);
     EXPECT_TRUE(m.contains(novo));
-    EXPECT_EQ(m.slot_count(), slots); // reutilizou, nao cresceu
+    EXPECT_EQ(m.slot_count(), slots); 
     for (Handle<int> h : hs)
         EXPECT_FALSE(m.contains(h));
 
     m.clear();
-    m.clear(); // duas vezes seguidas
+    m.clear(); 
     EXPECT_EQ(m.size(), 0u);
 }
 
@@ -268,15 +261,13 @@ TEST(SlotMap, ReserveAndGrowth)
         hs.push_back(m.insert(i));
     EXPECT_EQ(m.size(), 5000u);
     for (int i = 0; i < 5000; ++i)
-        ASSERT_EQ(m[hs[i]], i) << i; // realocar nao parte handles
+        ASSERT_EQ(m[hs[i]], i) << i; 
 }
 
-// o teste que interessa: milhares de operacoes aleatorias contra um modelo de
-// referencia, a confirmar que nenhum handle vivo aponta para o objeto errado
 TEST(SlotMap, RandomOpsAgainstModel)
 {
     SlotMap<int> m;
-    std::map<std::uint64_t, int> modelo; // handle.bits() -> valor
+    std::map<std::uint64_t, int> modelo; 
     std::vector<Handle<int>> vivos;
     std::mt19937 rng(20260822);
     int proximo = 0;
@@ -284,7 +275,7 @@ TEST(SlotMap, RandomOpsAgainstModel)
     for (int passo = 0; passo < 200000; ++passo)
     {
         const int op = rng() % 100;
-        if (op < 45 || vivos.empty()) // inserir
+        if (op < 45 || vivos.empty()) 
         {
             const int v = proximo++;
             const Handle<int> h = m.insert(v);
@@ -292,7 +283,7 @@ TEST(SlotMap, RandomOpsAgainstModel)
             modelo[h.bits()] = v;
             vivos.push_back(h);
         }
-        else if (op < 85) // apagar um ao calhas
+        else if (op < 85) 
         {
             const std::size_t i = rng() % vivos.size();
             const Handle<int> h = vivos[i];
@@ -303,14 +294,14 @@ TEST(SlotMap, RandomOpsAgainstModel)
             ASSERT_FALSE(m.contains(h));
             ASSERT_EQ(m.get(h), nullptr);
         }
-        else if (op < 97) // ler um ao calhas
+        else if (op < 97) 
         {
             const Handle<int> h = vivos[rng() % vivos.size()];
             const int *p = m.get(h);
             ASSERT_NE(p, nullptr);
             ASSERT_EQ(*p, modelo[h.bits()]);
         }
-        else // varrer tudo
+        else 
         {
             ASSERT_EQ(m.size(), modelo.size());
             ASSERT_EQ(m.items().size(), modelo.size());
@@ -324,7 +315,6 @@ TEST(SlotMap, RandomOpsAgainstModel)
         ASSERT_EQ(m.size(), modelo.size());
     }
 
-    // no fim, todos os handles vivos resolvem para o valor certo
     for (const Handle<int> h : vivos)
     {
         const int *p = m.get(h);

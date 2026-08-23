@@ -14,7 +14,6 @@ namespace
         int operator()(int x) { n += x; return n; }
     };
 
-    // maior que o SBO (3 ponteiros) de propósito, para forçar o caminho de heap
     struct BigCapture
     {
         char pad[64];
@@ -67,10 +66,10 @@ TEST(Function, LambdaWithCapture)
 TEST(Function, FunctorCopiedIntoSbo)
 {
     Counter c;
-    Function<int(int)> f = c; // copia o functor
+    Function<int(int)> f = c; 
     EXPECT_EQ(f(1), 1);
     EXPECT_EQ(f(2), 3);
-    EXPECT_EQ(c.n, 0); // o original não foi tocado
+    EXPECT_EQ(c.n, 0); 
 }
 
 TEST(Function, LargeCallableGoesToHeap)
@@ -99,9 +98,9 @@ TEST(Function, CopyIsIndependent)
 TEST(Function, CopyConstructsTarget)
 {
     CopyCounter::copies = 0;
-    Function<int()> a = CopyCounter(3); // move para dentro da 'a'
+    Function<int()> a = CopyCounter(3); 
     CopyCounter::copies = 0;
-    Function<int()> b = a; // clona: 1 cópia do alvo
+    Function<int()> b = a; 
     EXPECT_EQ(CopyCounter::copies, 1);
     EXPECT_EQ(b(), 3);
 }
@@ -133,8 +132,7 @@ TEST(Function, MoveOfHeapTargetStealsPointerNoCopy)
     Function<int()> b(ct::detail::move(a));
     EXPECT_EQ(b(), 9);
     EXPECT_FALSE(a);
-    // CopyCounter é pequeno o suficiente para caber no SBO, então isto testa o caminho
-    // SBO (move real do objeto); para o caminho heap ver o teste seguinte
+
 }
 
 TEST(Function, ReassignAfterMoveWorks)

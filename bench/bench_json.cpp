@@ -1,5 +1,4 @@
-// ct::Json vs nlohmann::json — parse, dump, lookup e construção.
-// Usa uma cena real do Radion se existir (ou a passada em argv[1]); senão gera uma.
+
 #include <ct/json.hpp>
 #include <nlohmann/json.hpp>
 
@@ -26,8 +25,6 @@ namespace
         return ss.str();
     }
 
-    // cena sintética no mesmo formato do editor: floats promovidos a double, que é
-    // o caso que castiga o dtoa (precisam de 15 a 17 dígitos para fazer round-trip)
     std::string generate_scene(int entities)
     {
         std::string s = "{\"format\":\"radion-scene\",\"entities\":[";
@@ -179,8 +176,6 @@ namespace
                 }
             });
 
-        // percorrer o documento todo como faz um loader: descer objetos/arrays e ler
-        // todos os números e strings (funciona para qualquer ficheiro)
         const int walks = reps * 5;
         bench::compare(
             "walk completo (loader)",
@@ -193,7 +188,6 @@ namespace
                     bench::sink += walk_nl(b);
             });
 
-        // acesso por chave repetido, como quem lê definições de um objeto
         bench::compare(
             "lookup por chave",
             [&] {
@@ -208,7 +202,7 @@ namespace
             [&] {
                 for (int w = 0; w < walks * 20; ++w)
                 {
-                    const nl &cb = b; // const: nao insere chaves em falta
+                    const nl &cb = b; 
                     bench::sink += cb.contains("format") && cb["format"].is_string() ? 1 : 0;
                     if (cb.contains("scene") && cb["scene"].contains("objects"))
                         bench::sink += cb["scene"]["objects"].size();

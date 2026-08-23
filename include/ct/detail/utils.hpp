@@ -7,10 +7,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <limits>
-#include <new> // só para o placement new; OOM aqui é fatal(), não bad_alloc
+#include <new> 
 #include <type_traits>
-
-// ---- compiler hints --------------------------------------------------------
 
 #if defined(__GNUC__) || defined(__clang__)
 #define CT_LIKELY(x) __builtin_expect(!!(x), 1)
@@ -28,8 +26,6 @@ namespace ct
 {
     namespace detail
     {
-
-        // ---- mini-<type_traits> (via intrinsics — sem incluir o da std) ------------
 
         template <typename T, T V>
         struct integral_constant
@@ -99,7 +95,6 @@ namespace ct
             using type = T;
         };
 
-        // suficiente como "decay" para SFINAE de tipos de classe
         template <typename T>
         struct bare
         {
@@ -122,9 +117,6 @@ namespace ct
         using is_trivially_destructible_t =
             integral_constant<bool, std::is_trivially_destructible<T>::value>;
 
-        // tipos em que "bits iguais" == "valores iguais": inteiros, enums e
-        // ponteiros. Floats ficam de fora de propósito (-0.0 == 0.0 com bits
-        // diferentes; NaN != NaN com os mesmos bits) e structs também (padding).
         template <typename T>
         struct is_bytewise_comparable
             : integral_constant<bool, std::is_integral<T>::value ||
@@ -133,16 +125,12 @@ namespace ct
         {
         };
 
-        // memcmp compara bytes como unsigned char → só ordena certo em tipos de
-        // 1 byte sem sinal (unsigned char, bool, char se for unsigned na ABI).
         template <typename T>
         struct is_memcmp_ordered
             : integral_constant<bool, std::is_integral<T>::value && sizeof(T) == 1 &&
                                           !std::is_signed<T>::value>
         {
         };
-
-        // ---- mini-<utility> ---------------------------------------------------------
 
         template <typename T>
         constexpr typename remove_ref<T>::type &&move(T &&t) noexcept
@@ -162,7 +150,7 @@ namespace ct
         }
 
         template <typename T>
-        T &&declval() noexcept; // só em contextos não avaliados (sem definição)
+        T &&declval() noexcept; 
 
         template <typename T>
         inline void swap_vals(T &a, T &b)
@@ -172,8 +160,6 @@ namespace ct
             b = detail::move(t);
         }
 
- 
-
         [[noreturn]] inline void fatal(const char *msg)
         {
             std::fputs(msg, stderr);
@@ -181,7 +167,6 @@ namespace ct
             std::abort();
         }
 
-        // reverse iterator mínimo — evita o <iterator> (que puxa streams)
         template <typename It>
         class ReverseIt
         {
@@ -209,10 +194,8 @@ namespace ct
             bool operator!=(const ReverseIt &o) const { return it_ != o.it_; }
         };
 
-        // ---- relocação: move src -> dst (dst não inicializado), destruindo src -----
-
         template <typename T>
-        inline void relocate_n(T *dst, T *src, std::size_t n, true_type /*trivial*/)
+        inline void relocate_n(T *dst, T *src, std::size_t n, true_type )
         {
             if (n)
                 std::memcpy(static_cast<void *>(dst), static_cast<const void *>(src),
@@ -235,10 +218,8 @@ namespace ct
             relocate_n(dst, src, n, is_trivially_copyable_t<T>{});
         }
 
-        // ---- destruição em massa ---------------------------------------------------
-
         template <typename T>
-        inline void destroy_n(T *, std::size_t, true_type /*trivially destructible*/) {}
+        inline void destroy_n(T *, std::size_t, true_type ) {}
 
         template <typename T>
         inline void destroy_n(T *p, std::size_t n, false_type)
@@ -252,8 +233,6 @@ namespace ct
         {
             destroy_n(p, n, is_trivially_destructible_t<T>{});
         }
-
-        // ---- construção em massa (dst não inicializado) ----------------------------
 
         template <typename T>
         inline void copy_construct_n(T *dst, const T *src, std::size_t n, true_type)
@@ -283,9 +262,6 @@ namespace ct
                 ::new (static_cast<void *>(dst + i)) T(value);
         }
 
-        // fill por atribuição para tipos triviais; value por cópia (sem aliasing) e
-        // noinline de propósito: garante um contexto próprio onde o GCC vectoriza
-        // sempre, mesmo quando o call site está dentro de uma função gigante
         template <typename T>
         CT_NOINLINE void fill_assign_n(T *dst, std::size_t n, T value)
         {
@@ -293,11 +269,8 @@ namespace ct
                 dst[i] = value;
         }
 
-        // fill de n elementos: o valor é copiado para um local antes do loop, senão o
-        // compilador tem de assumir aliasing com o destino (ex.: a.fill(a[0])) e
-        // recarrega-o em cada iteração — mata a vectorização
         template <typename T>
-        inline void fill_trivial_n(T *dst, std::size_t n, const T &v, true_type /*1 byte*/)
+        inline void fill_trivial_n(T *dst, std::size_t n, const T &v, true_type )
         {
             unsigned char byte;
             std::memcpy(&byte, static_cast<const void *>(&v), 1);
@@ -314,7 +287,7 @@ namespace ct
         }
 
         template <typename T>
-        inline void fill_fast_n(T *dst, std::size_t n, const T &v, true_type /*trivial*/)
+        inline void fill_fast_n(T *dst, std::size_t n, const T &v, true_type )
         {
             fill_trivial_n(dst, n, v, integral_constant<bool, sizeof(T) == 1>{});
         }
@@ -332,10 +305,8 @@ namespace ct
             fill_fast_n(dst, n, v, is_trivially_copyable_t<T>{});
         }
 
-        // ---- igualdade / ordem lexicográfica em massa ------------------------------
-
         template <typename T>
-        inline bool equal_n(const T *a, const T *b, std::size_t n, true_type /*bytewise*/)
+        inline bool equal_n(const T *a, const T *b, std::size_t n, true_type )
         {
             return n == 0 || std::memcmp(a, b, n * sizeof(T)) == 0;
         }
@@ -357,7 +328,7 @@ namespace ct
 
         template <typename T>
         inline bool lex_less_n(const T *a, std::size_t na, const T *b, std::size_t nb,
-                               true_type /*memcmp ordered*/)
+                               true_type )
         {
             const std::size_t n = na < nb ? na : nb;
             const int c = n ? std::memcmp(a, b, n) : 0;
@@ -385,9 +356,6 @@ namespace ct
             return lex_less_n(a, na, b, nb, is_memcmp_ordered<T>{});
         }
 
-        // ---- misc ------------------------------------------------------------------
-
-        // próxima potência de 2 >= n (para capacidades de hash maps)
         inline std::size_t next_pow2(std::size_t n)
         {
             if (n < 2)
@@ -440,23 +408,14 @@ namespace ct
             return result >= value;
         }
 
-    } // namespace detail
+    } 
 
-    // ---- policy de alocação default dos containers -----------------------------
-    // Interface de um allocator policy:
-    //   void*  allocate(bytes, align)                     — OOM = fatal()
-    //   void   deallocate(p, bytes)
-    //   void*  reallocate(p, old_bytes, new_bytes, align) — move bytewise (só para
-    //                                                       conteúdo trivially copyable)
-
-    // comparador default dos containers ordenados
     template <typename K>
     struct Less
     {
         bool operator()(const K &a, const K &b) const { return a < b; }
     };
 
-    // default: heap via malloc/realloc (vazio → zero bytes no container via EBO)
     struct HeapAlloc
     {
         struct Header
@@ -503,7 +462,7 @@ namespace ct
             return reinterpret_cast<void *>(aligned);
         }
 
-        void deallocate(void *p, std::size_t /*bytes*/)
+        void deallocate(void *p, std::size_t )
         {
             if (!p)
                 return;
@@ -546,4 +505,4 @@ namespace ct
         }
     };
 
-} // namespace ct
+} 

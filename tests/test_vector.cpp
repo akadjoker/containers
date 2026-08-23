@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 
-// Instrumented type: counts live instances to catch ctor/dtor leaks.
 struct Tracked {
     static int live;
     int value;
@@ -25,8 +24,6 @@ protected:
     void SetUp() override { Tracked::live = 0; }
     void TearDown() override { EXPECT_EQ(Tracked::live, 0) << "leaked instances"; }
 };
-
-// ---------- basics ----------
 
 TEST(VectorBasic, DefaultConstructedIsEmpty) {
     ct::Vector<int> v;
@@ -102,8 +99,6 @@ TEST(VectorBasic, AtAbortsOutOfRange) {
     EXPECT_DEATH(v.at(std::size_t(-1)), "fora dos limites");
 }
 
-// ---------- capacity ----------
-
 TEST(VectorCapacity, ReserveDoesNotChangeSize) {
     ct::Vector<int> v{1, 2};
     v.reserve(100);
@@ -145,8 +140,6 @@ TEST(VectorCapacity, ResizeGrowAndShrink) {
     EXPECT_EQ(v[3], 3);
 }
 
-// ---------- copy / move ----------
-
 TEST(VectorCopyMove, CopyConstruct) {
     ct::Vector<std::string> a{"a", "bb", "ccc"};
     ct::Vector<std::string> b(a);
@@ -160,7 +153,7 @@ TEST(VectorCopyMove, CopyAssign) {
     ct::Vector<int> b{9};
     b = a;
     EXPECT_EQ(a, b);
-    a = a;  // self-assignment
+    a = a;  
     EXPECT_EQ(a.size(), 3u);
 }
 
@@ -183,8 +176,6 @@ TEST(VectorCopyMove, MoveAssign) {
     EXPECT_TRUE(a.empty());
 }
 
-// ---------- insert / erase ----------
-
 TEST(VectorInsertErase, InsertMiddle) {
     ct::Vector<int> v{1, 2, 4};
     auto it = v.insert(v.begin() + 2, 3);
@@ -202,7 +193,7 @@ TEST(VectorInsertErase, InsertBeginEnd) {
 TEST(VectorInsertErase, InsertTriggersGrowth) {
     ct::Vector<int> v;
     for (int i = 0; i < 100; ++i)
-        v.insert(v.begin(), i);  // worst case: always shift everything
+        v.insert(v.begin(), i);  
     EXPECT_EQ(v.size(), 100u);
     EXPECT_EQ(v[0], 99);
     EXPECT_EQ(v[99], 0);
@@ -228,8 +219,6 @@ TEST(VectorInsertErase, EraseEmptyRangeIsNoop) {
     EXPECT_EQ(*it, 2);
     EXPECT_EQ(v.size(), 2u);
 }
-
-// ---------- non-trivial types / leak checks ----------
 
 TEST_F(TrackedTest, PushBackAndDestroy) {
     {
@@ -291,8 +280,6 @@ TEST_F(TrackedTest, CopyAndMoveSemantics) {
     EXPECT_EQ(c[7].value, 7);
 }
 
-// ---------- strings (heap-owning type) ----------
-
 TEST(VectorString, ManyStrings) {
     ct::Vector<std::string> v;
     for (int i = 0; i < 500; ++i)
@@ -302,8 +289,6 @@ TEST(VectorString, ManyStrings) {
     v.erase(v.begin());
     EXPECT_EQ(v[0], "string_1");
 }
-
-// ---------- behaves like std::vector ----------
 
 TEST(VectorVsStd, SameResultsRandomOps) {
     ct::Vector<int> a;
@@ -332,8 +317,6 @@ TEST(VectorVsStd, SameResultsRandomOps) {
     }
     ASSERT_TRUE(std::equal(a.begin(), a.end(), b.begin()));
 }
-
-// ---------- algorithms compatibility ----------
 
 TEST(VectorAlgo, SortAndReverseIterators) {
     ct::Vector<int> v{5, 3, 1, 4, 2};

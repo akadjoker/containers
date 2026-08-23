@@ -1,4 +1,4 @@
-// Velocidade da Arena vs heap (malloc/new) e Vector-na-arena vs std::vector.
+
 #include <ct/arena.hpp>
 #include <ct/vector.hpp>
 
@@ -15,16 +15,14 @@ volatile std::uint64_t bench::sink = 0;
 namespace
 {
 
-    constexpr int NALLOC = 1000000; // alocações pequenas
-    constexpr int NVEC = 2000000;   // elementos de vector
+    constexpr int NALLOC = 1000000; 
+    constexpr int NVEC = 2000000;   
 
     struct Node
     {
         int v;
         Node *next;
     };
-
-    // ---- alocação crua: 1M x 64 bytes ----
 
     std::uint64_t arena_alloc_64()
     {
@@ -53,8 +51,6 @@ namespace
             std::free(p);
         return acc;
     }
-
-    // ---- lista ligada: 500k nós ----
 
     std::uint64_t arena_list()
     {
@@ -94,8 +90,6 @@ namespace
         return s;
     }
 
-    // ---- padrão de frame: alocar, usar, reset ----
-
     std::uint64_t arena_frames()
     {
         ct::Arena a(1 << 20);
@@ -132,8 +126,6 @@ namespace
         return acc;
     }
 
-    // ---- Vector na arena vs std::vector ----
-
     std::uint64_t arena_vec_push()
     {
         ct::Arena a(1 << 20);
@@ -158,8 +150,6 @@ namespace
             v.push_back(i);
         return static_cast<std::uint64_t>(v.back()) + v.size();
     }
-
-    // ---- muitos vectors pequenos (16 ints cada) ----
 
     std::uint64_t arena_small_vecs()
     {
@@ -193,7 +183,7 @@ namespace
         return acc;
     }
 
-} // namespace
+} 
 
 int main()
 {

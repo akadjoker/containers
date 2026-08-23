@@ -6,7 +6,6 @@
 #include <memory>
 #include <string>
 
-// Instrumented type: counts live instances to catch ctor/dtor leaks.
 struct DqTracked {
     static int live;
     int value;
@@ -25,8 +24,6 @@ protected:
     void SetUp() override { DqTracked::live = 0; }
     void TearDown() override { EXPECT_EQ(DqTracked::live, 0) << "leaked instances"; }
 };
-
-// ---------- basics ----------
 
 TEST(DequeBasic, DefaultConstructedIsEmpty) {
     ct::Deque<int> d;
@@ -117,13 +114,11 @@ TEST(DequeBasic, AtOutOfRangeDies) {
     EXPECT_DEATH(d.at(std::size_t(-1)), "fora dos limites");
 }
 
-// ---------- wrap-around ----------
-
 TEST(DequeWrap, FifoSteadyStateWraps) {
     ct::Deque<int> d;
     for (int i = 0; i < 8; ++i)
         d.push_back(i);
-    // roda o head à volta do buffer várias vezes sem crescer
+
     for (int i = 8; i < 10000; ++i) {
         ASSERT_EQ(d.front(), i - 8);
         d.pop_front();
@@ -141,10 +136,10 @@ TEST(DequeWrap, GrowWhileWrappedKeepsOrder) {
     for (int i = 0; i < 5; ++i)
         d.pop_front();
     for (int i = 8; i < 13; ++i)
-        d.push_back(i); // agora wrapped (head a meio)
+        d.push_back(i); 
     std::size_t cap_before = d.capacity();
     for (int i = 13; i < 100; ++i)
-        d.push_back(i); // força vários growths com wrap
+        d.push_back(i); 
     EXPECT_GT(d.capacity(), cap_before);
     ASSERT_EQ(d.size(), 95u);
     for (int i = 0; i < 95; ++i)
@@ -163,8 +158,6 @@ TEST(DequeWrap, GrowWhileWrappedNonTrivial) {
     for (int i = 0; i < 34; ++i)
         ASSERT_EQ(d[i], "s" + std::to_string(i + 6));
 }
-
-// ---------- fuzz vs std::deque ----------
 
 TEST(DequeFuzz, RandomOpsMatchStd) {
     ct::Deque<int> cd;
@@ -207,16 +200,14 @@ TEST(DequeFuzz, RandomOpsMatchStd) {
         ASSERT_EQ(cd[i], sd[i]);
 }
 
-// ---------- copy / move ----------
-
 TEST_F(DequeTrackedTest, CopyConstruct) {
     ct::Deque<DqTracked> d;
     for (int i = 0; i < 50; ++i)
         d.push_back(DqTracked(i));
     for (int i = 0; i < 20; ++i)
-        d.pop_front(); // deixa o head a meio
+        d.pop_front(); 
     for (int i = 50; i < 70; ++i)
-        d.push_back(DqTracked(i)); // wrapped
+        d.push_back(DqTracked(i)); 
     ct::Deque<DqTracked> c(d);
     ASSERT_EQ(c.size(), d.size());
     for (std::size_t i = 0; i < d.size(); ++i)
@@ -279,8 +270,6 @@ TEST(DequeMoveOnly, UniquePtr) {
         d.pop_front();
 }
 
-// ---------- iterators / misc ----------
-
 TEST(DequeIter, ForwardAndReverse) {
     ct::Deque<int> d;
     for (int i = 0; i < 10; ++i)
@@ -288,7 +277,7 @@ TEST(DequeIter, ForwardAndReverse) {
     d.pop_front();
     d.pop_front();
     d.push_back(10);
-    d.push_back(11); // wrapped
+    d.push_back(11); 
     int expect = 2;
     for (int x : d)
         ASSERT_EQ(x, expect++);
@@ -310,7 +299,7 @@ TEST(DequeIter, ConstIteration) {
         sum += *it;
     EXPECT_EQ(sum, 6);
     ct::Deque<int> m{5};
-    ct::Deque<int>::const_iterator ci = m.begin(); // conversão iterator -> const_iterator
+    ct::Deque<int>::const_iterator ci = m.begin(); 
     EXPECT_EQ(*ci, 5);
 }
 
@@ -321,11 +310,11 @@ TEST(DequeMisc, SpansCoverElementsInOrder) {
     for (int i = 0; i < 12; ++i)
         d.pop_front();
     for (int i = 20; i < 34; ++i)
-        d.push_back(i); // wrapped
+        d.push_back(i); 
     auto a = d.first_span();
     auto b = d.second_span();
     ASSERT_EQ(a.len + b.len, d.size());
-    EXPECT_GT(b.len, 0u); // confirma que está mesmo wrapped
+    EXPECT_GT(b.len, 0u); 
     std::size_t k = 0;
     for (std::size_t i = 0; i < a.len; ++i, ++k)
         ASSERT_EQ(a.ptr[i], d[k]);
@@ -343,7 +332,7 @@ TEST(DequeMisc, ReserveAndShrink) {
     std::size_t cap = d.capacity();
     for (int i = 0; i < 100; ++i)
         d.push_back(i);
-    EXPECT_EQ(d.capacity(), cap); // sem realocação depois do reserve
+    EXPECT_EQ(d.capacity(), cap); 
     d.resize(5);
     d.shrink_to_fit();
     EXPECT_LT(d.capacity(), cap);
@@ -361,7 +350,7 @@ TEST(DequeMisc, EqualityAndSwap) {
     a.pop_front();
     b.pop_front();
     b.push_front(1);
-    b.pop_front(); // mesmo conteúdo, head diferente
+    b.pop_front(); 
     EXPECT_TRUE(a == b);
     ct::Deque<int> x{9}, y{7, 8};
     swap(x, y);

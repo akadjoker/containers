@@ -46,7 +46,6 @@ namespace
     };
     int DerivadaVirtual::vivos = 0;
 
-    // de propósito SEM destrutor virtual
     struct BaseSimples
     {
         int a = 1;
@@ -63,7 +62,7 @@ namespace
     };
     int DerivadaSimples::vivos = 0;
 
-    struct Nodo // para o teste dos ciclos
+    struct Nodo 
     {
         static int vivos;
         Rc<Nodo> forte;
@@ -85,12 +84,10 @@ namespace
     }
 }
 
-// ================= Unique =================
-
 TEST(Unique, RaiiBasics)
 {
     reset_contadores();
-    EXPECT_EQ(sizeof(Unique<Contado>), sizeof(void *)); // sem gordura
+    EXPECT_EQ(sizeof(Unique<Contado>), sizeof(void *)); 
 
     {
         Unique<Contado> u = make_unique<Contado>(7);
@@ -99,7 +96,7 @@ TEST(Unique, RaiiBasics)
         EXPECT_EQ((*u).valor, 7);
         EXPECT_EQ(Contado::vivos, 1);
     }
-    EXPECT_EQ(Contado::vivos, 0); // saiu do scope, morreu
+    EXPECT_EQ(Contado::vivos, 0); 
 
     Unique<Contado> vazio;
     EXPECT_FALSE(static_cast<bool>(vazio));
@@ -116,23 +113,23 @@ TEST(Unique, MoveSemantics)
     Contado *cru = a.get();
 
     Unique<Contado> b(std::move(a));
-    EXPECT_EQ(a.get(), nullptr); // o movido fica vazio
+    EXPECT_EQ(a.get(), nullptr); 
     EXPECT_EQ(b.get(), cru);
     EXPECT_EQ(Contado::vivos, 1);
 
     Unique<Contado> c = make_unique<Contado>(2);
     EXPECT_EQ(Contado::vivos, 2);
-    c = std::move(b); // assign larga o que tinha
+    c = std::move(b); 
     EXPECT_EQ(Contado::vivos, 1);
     EXPECT_EQ(c->valor, 1);
 
-    c = std::move(c); // self-move não pode destruir nada
+    c = std::move(c); 
     EXPECT_EQ(Contado::vivos, 1);
     EXPECT_EQ(c->valor, 1);
 
     Contado *libertado = c.release();
     EXPECT_EQ(c.get(), nullptr);
-    EXPECT_EQ(Contado::vivos, 1); // release não destrói
+    EXPECT_EQ(Contado::vivos, 1); 
     Unique<Contado>::adopt(libertado);
     EXPECT_EQ(Contado::vivos, 0);
 }
@@ -148,7 +145,7 @@ TEST(Unique, ResetAndSwap)
 
     a.reset();
     EXPECT_EQ(Contado::vivos, 1);
-    a.reset(); // duas vezes não rebenta
+    a.reset(); 
     EXPECT_EQ(a.get(), nullptr);
     b.reset();
     EXPECT_EQ(Contado::vivos, 0);
@@ -162,7 +159,7 @@ TEST(Unique, UpcastComDestrutorVirtual)
         EXPECT_EQ(DerivadaVirtual::vivos, 1);
         Unique<BaseVirtual> b(std::move(d));
         EXPECT_EQ(d.get(), nullptr);
-        EXPECT_EQ(b->quem(), 2); // continua a ser a derivada
+        EXPECT_EQ(b->quem(), 2); 
     }
     EXPECT_EQ(DerivadaVirtual::vivos, 0);
 }
@@ -171,9 +168,9 @@ TEST(Unique, DentroDeUmVector)
 {
     reset_contadores();
     {
-        ct::Vector<Unique<Contado>> v; // move-only dentro do nosso Vector
+        ct::Vector<Unique<Contado>> v; 
         for (int i = 0; i < 100; ++i)
-            v.push_back(make_unique<Contado>(i)); // cresce e realoca pelo meio
+            v.push_back(make_unique<Contado>(i)); 
         EXPECT_EQ(Contado::vivos, 100);
         EXPECT_EQ(v[42]->valor, 42);
         v.pop_back();
@@ -181,8 +178,6 @@ TEST(Unique, DentroDeUmVector)
     }
     EXPECT_EQ(Contado::vivos, 0);
 }
-
-// ================= Rc =================
 
 TEST(Rc, ContagemEDestruicao)
 {
@@ -199,7 +194,7 @@ TEST(Rc, ContagemEDestruicao)
             EXPECT_FALSE(a.unique());
             EXPECT_EQ(b->valor, 5);
             EXPECT_TRUE(a == b);
-            EXPECT_EQ(Contado::vivos, 1); // uma cópia do ponteiro, não do objeto
+            EXPECT_EQ(Contado::vivos, 1); 
         }
         EXPECT_EQ(a.use_count(), 1u);
         EXPECT_EQ(Contado::vivos, 1);
@@ -221,19 +216,19 @@ TEST(Rc, AtribuicoesIncluindoAsProprias)
     Rc<Contado> b = make_rc<Contado>(2);
     EXPECT_EQ(Contado::vivos, 2);
 
-    b = a; // larga o 2, fica com o 1
+    b = a; 
     EXPECT_EQ(Contado::vivos, 1);
     EXPECT_EQ(a.use_count(), 2u);
     EXPECT_EQ(b->valor, 1);
 
-    a = a; // auto-atribuição não pode matar o objeto
+    a = a; 
     EXPECT_EQ(a.use_count(), 2u);
     EXPECT_EQ(a->valor, 1);
     EXPECT_EQ(Contado::vivos, 1);
 
     Rc<Contado> c = std::move(a);
     EXPECT_EQ(a.get(), nullptr);
-    EXPECT_EQ(c.use_count(), 2u); // b e c
+    EXPECT_EQ(c.use_count(), 2u); 
     c.reset();
     EXPECT_EQ(b.use_count(), 1u);
     b.reset();
@@ -242,22 +237,21 @@ TEST(Rc, AtribuicoesIncluindoAsProprias)
 
 TEST(Rc, UpcastDestroiOTipoOriginalSemVirtual)
 {
-    // o bloco de controlo guarda como destruir o tipo com que foi criado, por isso
-    // isto funciona mesmo sem destrutor virtual (o unique_ptr/delete não funcionaria)
+
     DerivadaSimples::vivos = 0;
     {
         Rc<BaseSimples> b;
         {
             Rc<DerivadaSimples> d = make_rc<DerivadaSimples>();
             EXPECT_EQ(DerivadaSimples::vivos, 1);
-            b = d; // upcast
+            b = d; 
             EXPECT_EQ(b.use_count(), 2u);
             EXPECT_EQ(b->a, 1);
         }
-        EXPECT_EQ(DerivadaSimples::vivos, 1); // o b ainda o segura
+        EXPECT_EQ(DerivadaSimples::vivos, 1); 
         EXPECT_EQ(b.use_count(), 1u);
     }
-    EXPECT_EQ(DerivadaSimples::vivos, 0); // ~DerivadaSimples correu (e a String foi liberta)
+    EXPECT_EQ(DerivadaSimples::vivos, 0); 
 
     DerivadaVirtual::vivos = 0;
     {
@@ -273,7 +267,7 @@ TEST(Rc, Alinhamento)
     EXPECT_EQ(reinterpret_cast<std::uintptr_t>(a.get()) % 64u, 0u);
     Weak<Alinhado> w = a;
     a.reset();
-    EXPECT_TRUE(w.expired()); // o bloco continua acessível para o Weak
+    EXPECT_TRUE(w.expired()); 
 }
 
 TEST(Rc, DentroDeUmVector)
@@ -292,8 +286,6 @@ TEST(Rc, DentroDeUmVector)
     EXPECT_EQ(Contado::vivos, 0);
 }
 
-// ================= Weak =================
-
 TEST(Weak, ObservaSemSegurar)
 {
     reset_contadores();
@@ -306,17 +298,17 @@ TEST(Weak, ObservaSemSegurar)
         Rc<Contado> a = make_rc<Contado>(3);
         w = a;
         EXPECT_FALSE(w.expired());
-        EXPECT_EQ(w.use_count(), 1u); // o weak não conta como dono
+        EXPECT_EQ(w.use_count(), 1u); 
 
         Rc<Contado> b = w.lock();
         ASSERT_TRUE(static_cast<bool>(b));
         EXPECT_EQ(b->valor, 3);
-        EXPECT_EQ(a.use_count(), 2u); // o lock passa a ser dono enquanto vive
+        EXPECT_EQ(a.use_count(), 2u); 
     }
 
-    EXPECT_EQ(Contado::vivos, 0); // o weak não impediu a morte
+    EXPECT_EQ(Contado::vivos, 0); 
     EXPECT_TRUE(w.expired());
-    EXPECT_EQ(w.lock().get(), nullptr); // e não te dá um ponteiro pendurado
+    EXPECT_EQ(w.lock().get(), nullptr); 
     EXPECT_EQ(w.use_count(), 0u);
 }
 
@@ -331,7 +323,7 @@ TEST(Weak, CopiasMovesEReset)
     Weak<Contado> w4(std::move(w2));
     EXPECT_FALSE(w4.expired());
 
-    w1 = w1; // auto-atribuição
+    w1 = w1; 
     EXPECT_FALSE(w1.expired());
     w3.reset();
     w3.reset();
@@ -355,33 +347,33 @@ TEST(Weak, MuitosWeaksSobrevivemAoObjeto)
         for (const Weak<Contado> &w : weaks)
             EXPECT_FALSE(w.expired());
     }
-    EXPECT_EQ(Contado::vivos, 0); // o objeto morreu com os 100 weaks vivos
+    EXPECT_EQ(Contado::vivos, 0); 
     for (const Weak<Contado> &w : weaks)
         EXPECT_TRUE(w.expired());
-    weaks.clear(); // e agora é que o bloco é libertado (o ASan confirma)
+    weaks.clear(); 
 }
 
 TEST(Weak, QuebraCiclos)
 {
     Nodo::vivos = 0;
     {
-        // dois Rc a apontarem um para o outro: ninguém morre (é o preço do refcount)
+
         Rc<Nodo> a = make_rc<Nodo>();
         Rc<Nodo> b = make_rc<Nodo>();
         a->forte = b;
         b->forte = a;
         EXPECT_EQ(Nodo::vivos, 2);
     }
-    EXPECT_EQ(Nodo::vivos, 2); // ciclo: fugiram os dois, de propósito neste teste
+    EXPECT_EQ(Nodo::vivos, 2); 
     EXPECT_EQ(Nodo::vivos, 2);
 
     Nodo::vivos = 0;
     {
-        // com o de trás fraco, o ciclo desfaz-se
+
         Rc<Nodo> pai = make_rc<Nodo>();
         Rc<Nodo> filho = make_rc<Nodo>();
-        pai->forte = filho;  // pai segura o filho
-        filho->fraco = pai;  // filho só observa o pai
+        pai->forte = filho;  
+        filho->fraco = pai;  
         EXPECT_EQ(Nodo::vivos, 2);
         EXPECT_FALSE(filho->fraco.expired());
     }

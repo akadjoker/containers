@@ -1,4 +1,4 @@
- 
+
 #pragma once
 
 #include "detail/utils.hpp"
@@ -8,7 +8,7 @@ namespace ct
 
     namespace detail
     {
- 
+
         inline std::uint64_t hash_mix(std::uint64_t x)
         {
             x ^= x >> 33;
@@ -16,8 +16,8 @@ namespace ct
             x ^= x >> 33;
             return x;
         }
-    } // namespace detail
- 
+    } 
+
     template <typename K>
     struct Hash
     {
@@ -147,13 +147,10 @@ namespace ct
             return *this;
         }
 
-        // ---- consulta -------------------------------------------------------
-
         size_type size() const noexcept { return size_; }
         bool empty() const noexcept { return size_ == 0; }
         size_type capacity() const noexcept { return slots_ ? mask_ + 1 : 0; }
 
-        // devolve ponteiro para o valor, ou nullptr — o find de jogo
         V *find(const K &k) noexcept
         {
             if (!size_)
@@ -168,16 +165,12 @@ namespace ct
 
         bool contains(const K &k) const noexcept { return find(k) != nullptr; }
 
-        // valor ou fallback, sem inserir nada
         const V &get(const K &k, const V &fallback) const noexcept
         {
             const V *v = find(k);
             return v ? *v : fallback;
         }
 
-        // ---- modificação ----------------------------------------------------
-
-        // insere ou substitui; devolve referência ao valor
         template <typename KK, typename VV>
         V &put(KK &&k, VV &&v)
         {
@@ -198,7 +191,6 @@ namespace ct
             return slots_[i].value;
         }
 
-        // insere V() se não existir; devolve referência (estilo std)
         V &operator[](const K &k)
         {
             if (CT_UNLIKELY(need_grow()))
@@ -213,7 +205,6 @@ namespace ct
             return slots_[i].value;
         }
 
-        // apaga por backward-shift (sem tombstones); true se existia
         bool erase(const K &k)
         {
             if (!size_)
@@ -222,7 +213,7 @@ namespace ct
             if (!meta_[i])
                 return false;
             slots_[i].~Entry();
-            // puxar para trás as entradas deslocadas do cluster seguinte
+
             size_type j = i;
             for (;;)
             {
@@ -230,7 +221,7 @@ namespace ct
                 if (!meta_[j])
                     break;
                 size_type ideal = static_cast<size_type>(hash_of(slots_[j].key)) & mask_;
-                // se a entrada em j está deslocada para lá de i, pode descer para i
+
                 if (((j - ideal) & mask_) >= ((j - i) & mask_))
                 {
                     ::new (static_cast<void *>(&slots_[i]))
@@ -254,7 +245,6 @@ namespace ct
             }
         }
 
-        // garante espaço para n elementos sem rehash
         void reserve(size_type n)
         {
             size_type scaled = 0;
@@ -267,8 +257,6 @@ namespace ct
             if (want > capacity())
                 rehash(want);
         }
-
-        // ---- iteração (salta slots vazios) ----------------------------------
 
         class iterator
         {
@@ -317,8 +305,8 @@ namespace ct
 
     private:
         Entry *slots_;
-        std::uint8_t *meta_; // 0 = vazio, 1 = ocupado (mora no fim do bloco)
-        size_type mask_;     // capacidade-1 (potência de 2)
+        std::uint8_t *meta_; 
+        size_type mask_;     
         size_type size_;
 
         std::uint64_t hash_of(const K &k) const
@@ -335,7 +323,6 @@ namespace ct
                    size_ + 1 > capacity - capacity / 4;
         }
 
-        // slot da chave, ou primeiro vazio do cluster
         size_type probe(const K &k) const
         {
             size_type i = static_cast<size_type>(hash_of(k)) & mask_;
@@ -424,4 +411,4 @@ namespace ct
         }
     };
 
-} // namespace ct
+} 

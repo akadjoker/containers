@@ -1,23 +1,6 @@
 #pragma once
 
-// XML — subconjunto pragmático, focado em ler/escrever ficheiros tipo Tiled TMX/TSX
-// (mapas e tilesets). Sem exceções — erros de *dados* (input malformado) vêm num
-// Xml::Error; erros de *programa* (aceder a um atributo inexistente com throw)
-// simplesmente não existem: os getters devolvem sempre um valor por omissão.
-//
-// Fora de escopo, de propósito — nada disto é preciso para TMX/TSX e cada um é uma
-// fonte clássica de CVEs em parsers XML genéricos:
-//   - namespaces (xmlns)
-//   - DTD / ENTITY externas (sem expansão de entidades além das 5 predefinidas
-//     e das referências numéricas &#N; / &#xN;)
-//   - XPath / XSLT / schema validation
-// Um <!DOCTYPE ...> é tolerado e ignorado (só salta o bloco), nunca processado.
-//
-// Um nó Xml é sempre um elemento: nome, atributos, filhos e texto (concatenação de
-// todo o texto/CDATA direto — conteúdo misto não preserva a ordem relativa entre
-// texto e filhos, o que o TMX nunca precisa).
-
-#include <clocale> // localeconv: attr_double() respeita o ponto decimal do locale
+#include <clocale> 
 
 #include "detail/utils.hpp"
 #include "string.hpp"
@@ -27,12 +10,12 @@ namespace ct
 {
     namespace detail
     {
-        struct XmlParser; // definido na secção do parser, mais abaixo
+        struct XmlParser; 
     }
 
     class Xml
     {
-        friend struct detail::XmlParser; // constrói a árvore mexendo direto nos campos
+        friend struct detail::XmlParser; 
 
     public:
         struct Attribute
@@ -47,21 +30,18 @@ namespace ct
         using Children = Vector<Xml>;
         using Attributes = Vector<Attribute>;
 
-        // limite de recursão: protege o stack contra "<a><a><a>..." vindo de fora
         static constexpr std::size_t kMaxDepth = 200;
 
         struct Error
         {
-            const char *message; // literal estático; nullptr = sem erro
+            const char *message; 
             std::size_t offset;
-            std::size_t line;   // 1-based
-            std::size_t column; // 1-based
+            std::size_t line;   
+            std::size_t column; 
 
             Error() noexcept : message(nullptr), offset(0), line(0), column(0) {}
             explicit operator bool() const noexcept { return message != nullptr; }
         };
-
-        // ---- construção --------------------------------------------------
 
         Xml() noexcept : children_(nullptr) {}
         explicit Xml(String tag) : tag_(detail::move(tag)), children_(nullptr) {}
@@ -72,12 +52,8 @@ namespace ct
         Xml &operator=(Xml &&o) noexcept;
         ~Xml();
 
-        // ---- nome ----------------------------------------------------------
-
         const String &tag() const noexcept { return tag_; }
         void set_tag(String t) { tag_ = detail::move(t); }
-
-        // ---- atributos -------------------------------------------------------
 
         const Attributes &attributes() const noexcept { return attrs_; }
         Attributes &attributes() noexcept { return attrs_; }
@@ -104,21 +80,15 @@ namespace ct
         Xml &set_attr(String name, String value);
         bool erase_attr(const char *name);
 
-        // ---- texto (concatenação de todo o texto/CDATA direto) ---------------
-
         const String &text() const noexcept { return text_; }
         void set_text(String t) { text_ = detail::move(t); }
-        // aparas de espaço em branco ASCII nas pontas — útil para blocos <data> do TMX
+
         String text_trimmed() const;
 
-        // ---- filhos ------------------------------------------------------------
-
-        // sem filhos, devolve uma Children partilhada e vazia (nunca aloca para ler)
         const Children &children() const noexcept;
-        // não-const: aloca o vetor de filhos se ainda não existir
+
         Children &children() noexcept;
 
-        // primeiro filho com esse nome (ou nullptr)
         Xml *child(const char *tag) noexcept;
         const Xml *child(const char *tag) const noexcept;
 
@@ -126,8 +96,6 @@ namespace ct
 
         std::size_t size() const noexcept { return children_ ? children_->size() : 0; }
         bool empty() const noexcept { return !children_ || children_->empty(); }
-
-        // ---- parse / dump --------------------------------------------------
 
         static Xml parse(const char *text, std::size_t len, Error *err = nullptr);
         static Xml parse(const char *text, Error *err = nullptr)
@@ -139,19 +107,16 @@ namespace ct
             return parse(text.data(), text.size(), err);
         }
 
-        // indent < 0 → compacto; >= 0 → um elemento por linha com esse recuo
         String dump(int indent = -1) const;
         void dump_to(String &out, int indent = -1) const;
 
-        // como dump(), mas antepõe a declaração "<?xml version="1.0" encoding="UTF-8"?>"
-        // — o que normalmente se quer ao escrever um ficheiro completo (ex. gravar um .tmx)
         String dump_document(int indent = -1) const;
 
     private:
         String tag_;
         Attributes attrs_;
-        Children *children_; // nullptr até ao primeiro filho — Vector<Xml> não pode ser
-                              // membro direto (Xml conteria-se a si próprio por valor)
+        Children *children_; 
+
         String text_;
 
         void ensure_children() { if (!children_) children_ = new_children(); }
@@ -162,8 +127,6 @@ namespace ct
 
         void dump_impl(String &out, int indent, int level) const;
     };
-
-    // ---- implementação: atributos tipados ------------------------------------
 
     namespace detail
     {
@@ -186,7 +149,6 @@ namespace ct
             return (dp && *dp) ? *dp : '.';
         }
 
-        // strtod que respeita o LC_NUMERIC (o mesmo truque do parser JSON)
         inline double xml_strtod_locale(const char *s)
         {
             const char dp = xml_decimal_point();
@@ -207,7 +169,7 @@ namespace ct
                     buf[i] = dp;
             return std::strtod(buf, nullptr);
         }
-    } // namespace detail
+    } 
 
     inline std::int64_t Xml::attr_int(const char *name, std::int64_t def) const noexcept
     {
@@ -228,12 +190,11 @@ namespace ct
             return neg ? -static_cast<std::int64_t>(mag) : static_cast<std::int64_t>(mag);
         if (*p == '.' || *p == 'e' || *p == 'E')
         {
-            // valor com casas decimais num atributo "inteiro" (acontece em TMX
-            // gerados por outras ferramentas) — trunca em vez de rejeitar
+
             static_cast<void>(digits_start);
             return static_cast<std::int64_t>(detail::xml_strtod_locale(v->c_str()));
         }
-        return def; // lixo a seguir aos dígitos
+        return def; 
     }
 
     inline std::uint64_t Xml::attr_uint(const char *name, std::uint64_t def) const noexcept
@@ -267,9 +228,9 @@ namespace ct
         if (dp == '.')
             d = std::strtod(v->c_str(), &end);
         else
-            return detail::xml_strtod_locale(v->c_str()); // sem "sobrou lixo?" no caminho lento
+            return detail::xml_strtod_locale(v->c_str()); 
         if (end == v->c_str())
-            return def; // nada consumido
+            return def; 
         return d;
     }
 
@@ -320,8 +281,6 @@ namespace ct
             --e;
         return String(p, static_cast<std::size_t>(e - p));
     }
-
-    // ---- ciclo de vida: children_ é o único campo não trivial (ponteiro) ------
 
     inline Xml::Children *Xml::new_children()
     {
@@ -421,8 +380,6 @@ namespace ct
         return children_->back();
     }
 
-    // ---- dump ------------------------------------------------------------
-
     namespace detail
     {
         inline void xml_newline(String &out, int indent, int level)
@@ -431,7 +388,7 @@ namespace ct
                 return;
             static const char kSpaces[] =
                 "                                                                ";
-            const std::size_t kN = sizeof(kSpaces) - 1; // 64
+            const std::size_t kN = sizeof(kSpaces) - 1; 
             out.push_back('\n');
             std::size_t spaces =
                 static_cast<std::size_t>(indent) * static_cast<std::size_t>(level);
@@ -444,8 +401,6 @@ namespace ct
                 out.append(kSpaces, spaces);
         }
 
-        // texto entre tags: só & < > são obrigatórios; controlo cru (exceto \t\n\r,
-        // que o XML aceita literais em char data) vira referência numérica
         inline void xml_escape_text(String &out, const char *s, std::size_t n)
         {
             std::size_t chunk = 0;
@@ -485,8 +440,6 @@ namespace ct
                 out.append(s + n - chunk, chunk);
         }
 
-        // valor de atributo (aspas duplas): também escapa '"' e normaliza tab/CR/LF
-        // em referências numéricas, para o parse devolver o byte exato ao reler
         inline void xml_escape_attr(String &out, const char *s, std::size_t n)
         {
             std::size_t chunk = 0;
@@ -529,7 +482,7 @@ namespace ct
             if (chunk)
                 out.append(s + n - chunk, chunk);
         }
-    } // namespace detail
+    } 
 
     inline void Xml::dump_impl(String &out, int indent, int level) const
     {
@@ -584,12 +537,10 @@ namespace ct
         out.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>");
         detail::xml_newline(out, indent, 0);
         if (indent < 0)
-            out.push_back(' '); // documento continua legível mesmo em modo compacto
+            out.push_back(' '); 
         dump_impl(out, indent, 0);
         return out;
     }
-
-    // ---- parser ----------------------------------------------------------
 
     namespace detail
     {
@@ -676,7 +627,7 @@ namespace ct
             bool skip_comment()
             {
                 const char *start = cur;
-                cur += 4; // "<!--"
+                cur += 4; 
                 for (;; ++cur)
                 {
                     if (last - cur < 3)
@@ -692,7 +643,7 @@ namespace ct
             bool skip_pi()
             {
                 const char *start = cur;
-                cur += 2; // "<?"
+                cur += 2; 
                 for (;; ++cur)
                 {
                     if (last - cur < 2)
@@ -705,11 +656,10 @@ namespace ct
                 }
             }
 
-            // tolerado e descartado — nunca resolvido (ver nota de escopo no topo do ficheiro)
             bool skip_doctype()
             {
                 const char *start = cur;
-                cur += 9; // "<!DOCTYPE"
+                cur += 9; 
                 int bracket = 0;
                 for (;;)
                 {
@@ -729,7 +679,6 @@ namespace ct
                 }
             }
 
-            // prolog / comentários / DOCTYPE antes (ou depois) do elemento raiz
             bool skip_misc()
             {
                 for (;;)
@@ -771,7 +720,6 @@ namespace ct
                 return true;
             }
 
-            // cur logo a seguir ao '&'
             bool decode_entity(String &out)
             {
                 if (cur == last)
@@ -818,7 +766,7 @@ namespace ct
                 if (cur == last || *cur != ';')
                     return fail("entidade sem ';'", start);
                 const std::size_t n = static_cast<std::size_t>(cur - start);
-                ++cur; // consome ';'
+                ++cur; 
                 if (n == 3 && std::memcmp(start, "amp", 3) == 0)
                     out.push_back('&');
                 else if (n == 2 && std::memcmp(start, "lt", 2) == 0)
@@ -834,7 +782,6 @@ namespace ct
                 return true;
             }
 
-            // texto entre tags: para em '<' (sem o consumir) ou no fim do input
             bool parse_char_data(String &out)
             {
                 for (;;)
@@ -848,13 +795,12 @@ namespace ct
                         return fail("conteudo do elemento sem fecho", chunk);
                     if (*cur == '<')
                         return true;
-                    ++cur; // '&'
+                    ++cur; 
                     if (!decode_entity(out))
                         return false;
                 }
             }
 
-            // cur logo a seguir às aspas de abertura; consome as de fecho
             bool parse_attr_value(String &out, char quote)
             {
                 for (;;)
@@ -876,7 +822,7 @@ namespace ct
                             return false;
                         continue;
                     }
-                    if (c == '\t' || c == '\n' || c == '\r') // normalização de espaço (spec XML)
+                    if (c == '\t' || c == '\n' || c == '\r') 
                     {
                         out.push_back(' ');
                         ++cur;
@@ -890,12 +836,11 @@ namespace ct
                 }
             }
 
-            // cur em '<' da tag de abertura
             bool parse_element(Xml &out, std::size_t depth)
             {
                 if (depth > Xml::kMaxDepth)
                     return fail("profundidade maxima de elementos excedida", cur);
-                ++cur; // '<'
+                ++cur; 
                 if (!read_name(out.tag_))
                     return false;
 
@@ -910,7 +855,7 @@ namespace ct
                         if (cur == last || *cur != '>')
                             return fail("esperado '>' depois de '/'", cur);
                         ++cur;
-                        return true; // self-closing: sem filhos nem texto
+                        return true; 
                     }
                     if (*cur == '>')
                     {
@@ -957,8 +902,7 @@ namespace ct
                         ++cur;
                         if (close_name != out.tag_)
                             return fail("tag de fecho nao corresponde a abertura", close_at);
-                        // espaço em branco puro entre filhos é só indentação, não dado —
-                        // só fica em text_ se o elemento não tiver filhos para o justificar
+
                         if (out.children_ && xml_is_all_ws(out.text_))
                             out.text_.clear();
                         return true;
@@ -996,7 +940,7 @@ namespace ct
                 }
             }
         };
-    } // namespace detail
+    } 
 
     inline Xml Xml::parse(const char *text, std::size_t len, Error *err)
     {
@@ -1014,7 +958,7 @@ namespace ct
         }
 
         detail::XmlParser ps(text, text + len);
-        // BOM UTF-8: aparece em ficheiros gerados no Windows e não é whitespace
+
         if (len >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
             static_cast<unsigned char>(text[1]) == 0xBB &&
             static_cast<unsigned char>(text[2]) == 0xBF)
@@ -1057,4 +1001,4 @@ namespace ct
         return root;
     }
 
-} // namespace ct
+} 

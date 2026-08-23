@@ -1,4 +1,4 @@
- 
+
 #pragma once
 
 #include "detail/utils.hpp"
@@ -24,8 +24,6 @@ namespace ct
         FlatMap() = default;
         explicit FlatMap(const L &less) : L(less) {}
 
-        // ---- consulta -------------------------------------------------------
-
         size_type size() const noexcept { return entries_.size(); }
         bool empty() const noexcept { return entries_.empty(); }
 
@@ -48,8 +46,6 @@ namespace ct
             const V *v = find(k);
             return v ? *v : fallback;
         }
-
-        // ---- modificação ----------------------------------------------------
 
         template <typename KK, typename VV>
         V &put(KK &&k, VV &&v)
@@ -88,14 +84,11 @@ namespace ct
         void clear() { entries_.clear(); }
         void reserve(size_type n) { entries_.reserve(n); }
 
-        // ---- iteração (POR ORDEM de chave) ----------------------------------
-
         iterator begin() noexcept { return entries_.begin(); }
         iterator end() noexcept { return entries_.end(); }
         const_iterator begin() const noexcept { return entries_.begin(); }
         const_iterator end() const noexcept { return entries_.end(); }
 
-        // primeira entrada com key >= k (para range queries ordenadas)
         iterator lower_bound_it(const K &k) noexcept
         {
             return entries_.begin() + lower_bound(k);
@@ -113,8 +106,6 @@ namespace ct
             return !less(a, b) && !less(b, a);
         }
 
-        // índice da primeira entrada com key >= k (binary search manual —
-        // sem <algorithm>)
         size_type lower_bound(const K &k) const
         {
             size_type lo = 0, n = entries_.size();
@@ -135,4 +126,4 @@ namespace ct
         }
     };
 
-} // namespace ct
+} 

@@ -1,4 +1,4 @@
-// ct::Deque vs std::deque — pontas, FIFO, acesso e iteração.
+
 #include <ct/deque.hpp>
 
 #include <cstdint>
@@ -16,7 +16,7 @@ namespace
 
     constexpr int N = 2000000;
 
-    struct Pod32 // POD médio (partícula)
+    struct Pod32 
     {
         double a, b, c, d;
     };
@@ -48,7 +48,6 @@ namespace
         return static_cast<std::uint64_t>(d.size() + std::uint64_t(d.back().a));
     }
 
-    // fila de eventos em regime estacionário: janela pequena, milhões de passagens
     template <typename Dq>
     std::uint64_t fifo_churn_small()
     {
@@ -65,7 +64,6 @@ namespace
         return acc + d.size();
     }
 
-    // sliding window com as duas pontas (histórico de frames)
     template <typename Dq>
     std::uint64_t sliding_window()
     {
@@ -105,7 +103,6 @@ namespace
         return s;
     }
 
-    // noinline: contexto próprio onde o GCC vectoriza sempre (mesma lição do fill_assign_n)
     CT_NOINLINE std::uint64_t span_sum(const ct::Deque<int> &d, int reps)
     {
         std::uint64_t s = 0;
@@ -169,7 +166,7 @@ namespace
         return acc + d.size();
     }
 
-} // namespace
+} 
 
 int main()
 {
@@ -208,7 +205,7 @@ int main()
             seed = seed * 1664525u + 1013904223u;
             idx.push_back(static_cast<int>(seed % N));
         }
-        // head a meio do buffer nos dois, como numa fila real
+
         for (int i = 0; i < 1000; ++i)
         {
             cd.pop_front();

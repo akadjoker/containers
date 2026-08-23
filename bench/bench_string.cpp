@@ -1,5 +1,4 @@
-// ct::String vs std::string — o alvo principal é a zona 16..23 chars onde o
-// nosso SSO de 23 evita o heap e o std (SSO de 15) não.
+
 #include <ct/string.hpp>
 #include <ct/vector.hpp>
 
@@ -15,8 +14,6 @@ volatile std::uint64_t bench::sink = 0;
 namespace
 {
 
-    // ---- criação em massa ----
-
     template <typename Str>
     std::uint64_t create_len(int len, int count)
     {
@@ -31,19 +28,15 @@ namespace
         return acc;
     }
 
-    // ---- vector de strings de 18 chars (SSO nosso, heap do std) ----
-
     template <typename Vec, typename Str>
     std::uint64_t vector_of_18(int count)
     {
         Vec v;
         for (int i = 0; i < count; ++i)
             v.push_back(Str("entidade_num_18ch_", 18));
-        Vec copy(v); // deep copy: para nós é memcpy, para o std são N mallocs
+        Vec copy(v); 
         return copy.size() + static_cast<unsigned char>(copy[count / 2][0]);
     }
-
-    // ---- construir uma linha com appends ----
 
     template <typename Str>
     std::uint64_t build_lines(int count)
@@ -66,8 +59,6 @@ namespace
         return acc;
     }
 
-    // ---- push_back de chars ----
-
     template <typename Str>
     std::uint64_t push_chars(int count)
     {
@@ -76,8 +67,6 @@ namespace
             s.push_back(char('a' + (i & 15)));
         return s.size() + static_cast<unsigned char>(s[count / 2]);
     }
-
-    // ---- find de substring num texto grande ----
 
     template <typename Str>
     std::uint64_t find_in_text(const Str &text, int reps)
@@ -91,8 +80,6 @@ namespace
         return acc;
     }
 
-    // ---- sort de strings curtas ----
-
     template <typename Vec, typename Str>
     std::uint64_t sort_shorts(int count)
     {
@@ -102,7 +89,7 @@ namespace
         for (int i = 0; i < count; ++i)
         {
             seed = seed * 1664525u + 1013904223u;
-            int len = 10 + (seed % 9); // 10..18 chars
+            int len = 10 + (seed % 9); 
             for (int j = 0; j < len; ++j)
                 buf[j] = char('a' + ((seed >> (j & 7)) & 15));
             v.push_back(Str(buf, static_cast<std::size_t>(len)));
@@ -110,8 +97,6 @@ namespace
         std::sort(v.begin(), v.end());
         return v.size() + static_cast<unsigned char>(v[count / 2][0]);
     }
-
-    // ---- int -> string ----
 
     std::uint64_t ct_numbers(int count)
     {
@@ -136,8 +121,6 @@ namespace
         }
         return acc;
     }
-
-    // ---- split de CSV ----
 
     std::uint64_t ct_split(int reps)
     {
@@ -171,7 +154,7 @@ namespace
         return acc;
     }
 
-} // namespace
+} 
 
 int main()
 {

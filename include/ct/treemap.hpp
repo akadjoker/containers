@@ -26,8 +26,6 @@ namespace ct
 
         using size_type = std::size_t;
 
-        // ---- construção -----------------------------------------------------
-
         TreeMap() : pool_(), size_(0) { init_nil(); }
         explicit TreeMap(const L &less) : L(less), pool_(), size_(0) { init_nil(); }
 
@@ -44,7 +42,7 @@ namespace ct
             : L(static_cast<L &&>(o)), pool_(detail::move(o.pool_)),
               nil_(o.nil_), root_(o.root_), size_(o.size_)
         {
-            o.init_nil(); // pool nova vazia; o fica válido e vazio
+            o.init_nil(); 
             o.size_ = 0;
         }
 
@@ -73,8 +71,6 @@ namespace ct
             }
             return *this;
         }
-
-        // ---- consulta -------------------------------------------------------
 
         size_type size() const noexcept { return size_; }
         bool empty() const noexcept { return size_ == 0; }
@@ -105,8 +101,6 @@ namespace ct
             const V *v = find(k);
             return v ? *v : fallback;
         }
-
-        // ---- modificação ----------------------------------------------------
 
         template <typename KK, typename VV>
         V &put(KK &&k, VV &&v)
@@ -166,8 +160,6 @@ namespace ct
             size_ = 0;
         }
 
-        // ---- iteração (POR ORDEM de chave, in-order) ------------------------
-
         class iterator
         {
             Entry *e_;
@@ -189,7 +181,6 @@ namespace ct
         iterator begin() noexcept { return iterator(const_cast<Entry *>(leftmost()), this); }
         iterator end() noexcept { return iterator(nil_, this); }
 
-        // primeira entrada com key >= k
         iterator lower_bound_it(const K &k) noexcept
         {
             Entry *best = nil_;
@@ -207,8 +198,6 @@ namespace ct
             return iterator(best, this);
         }
 
-        // ---- debug: valida os invariantes red-black -------------------------
-
         bool validate() const
         {
             if (root_ != nil_ && is_red(root_))
@@ -218,11 +207,10 @@ namespace ct
 
     private:
         Pool<Entry> pool_;
-        Entry *nil_;  // sentinela (vive no pool → estável em moves)
+        Entry *nil_;  
         Entry *root_;
         size_type size_;
 
-        // links privados do Entry, acessíveis por sermos friend — sem casts
         static Entry *&left_ref(Entry *e) { return e->l; }
         static Entry *&right_ref(Entry *e) { return e->r; }
         static Entry *&parent_ref(Entry *e) { return e->p; }
@@ -239,7 +227,7 @@ namespace ct
 
         void init_nil()
         {
-            nil_ = pool_.allocate(); // key/value do sentinela NUNCA construídos
+            nil_ = pool_.allocate(); 
             left_ref(nil_) = nil_;
             right_ref(nil_) = nil_;
             parent_ref(nil_) = nil_;
@@ -413,7 +401,7 @@ namespace ct
                 x = right(y);
                 if (parent(y) == z)
                 {
-                    parent_ref(x) = y; // x pode ser nil_: o fixup precisa do p
+                    parent_ref(x) = y; 
                 }
                 else
                 {
@@ -515,15 +503,14 @@ namespace ct
             pool_.deallocate(n);
         }
 
-        // altura preta do subtree, ou -1 se um invariante estiver violado
         int black_height(const Entry *n) const
         {
             if (n == nil_)
                 return 0;
             if (is_red(n) && (is_red(left(n)) || is_red(right(n))))
-                return -1; // vermelho com filho vermelho
+                return -1; 
             if (left(n) != nil_ && !less(left(n)->key, n->key))
-                return -1; // ordem BST violada
+                return -1; 
             if (right(n) != nil_ && !less(n->key, right(n)->key))
                 return -1;
             int hl = black_height(left(n));
@@ -534,4 +521,4 @@ namespace ct
         }
     };
 
-} // namespace ct
+} 

@@ -48,8 +48,6 @@ namespace
     }
 }
 
-// ================= tipos e construcao =================
-
 TEST(Json, DefaultIsNullAndLayout)
 {
     Json j;
@@ -58,7 +56,7 @@ TEST(Json, DefaultIsNullAndLayout)
     EXPECT_STREQ(j.type_name(), "null");
     EXPECT_EQ(j.size(), 0u);
     EXPECT_TRUE(j.empty());
-    EXPECT_EQ(sizeof(Json), sizeof(String) + sizeof(void *)); // 24 + tag/padding
+    EXPECT_EQ(sizeof(Json), sizeof(String) + sizeof(void *)); 
 }
 
 TEST(Json, ScalarConstructors)
@@ -74,16 +72,15 @@ TEST(Json, ScalarConstructors)
     EXPECT_TRUE(Json("texto").is_string());
     EXPECT_TRUE(Json(String("texto")).is_string());
 
-    // 0 e um null pointer constant: nao pode ir parar ao ctor de const char*
     EXPECT_TRUE(Json(0).is_int());
     EXPECT_EQ(Json(0).as_int(), 0);
 
     EXPECT_TRUE(Json(42).is_number());
     EXPECT_FALSE(Json(true).is_number());
     EXPECT_EQ(Json(3.5).as_double(), 3.5);
-    EXPECT_EQ(Json(42).as_double(), 42.0); // int lido como double
+    EXPECT_EQ(Json(42).as_double(), 42.0); 
     EXPECT_STREQ(Json("abc").as_cstr(), "abc");
-    EXPECT_STREQ(Json(1).as_cstr("fallback"), "fallback"); // tipo errado -> default
+    EXPECT_STREQ(Json(1).as_cstr("fallback"), "fallback"); 
     EXPECT_EQ(Json("abc").as_int(99), 99);
     EXPECT_TRUE(Json(1).as_bool(true));
 }
@@ -97,8 +94,6 @@ TEST(Json, StringWithEmbeddedNul)
     EXPECT_EQ(back.str().size(), 3u);
     EXPECT_TRUE(back == j);
 }
-
-// ================= numeros =================
 
 TEST(Json, NumberParsingKeepsIntegerType)
 {
@@ -123,27 +118,27 @@ TEST(Json, NumberExtremes)
     const std::int64_t imax = (std::numeric_limits<std::int64_t>::max)();
     const std::uint64_t umax = (std::numeric_limits<std::uint64_t>::max)();
 
-    Json a = parse_ok("9223372036854775807"); // int64 max
+    Json a = parse_ok("9223372036854775807"); 
     EXPECT_TRUE(a.is_int());
     EXPECT_EQ(a.as_int(), imax);
 
-    Json b = parse_ok("-9223372036854775808"); // int64 min (nao e -(max))
+    Json b = parse_ok("-9223372036854775808"); 
     EXPECT_TRUE(b.is_int());
     EXPECT_EQ(b.as_int(), imin);
 
-    Json c = parse_ok("9223372036854775808"); // int64 max + 1 -> passa a uint
+    Json c = parse_ok("9223372036854775808"); 
     EXPECT_TRUE(c.is_uint());
     EXPECT_EQ(c.as_uint(), static_cast<std::uint64_t>(imax) + 1);
 
-    Json d = parse_ok("18446744073709551615"); // uint64 max
+    Json d = parse_ok("18446744073709551615"); 
     EXPECT_TRUE(d.is_uint());
     EXPECT_EQ(d.as_uint(), umax);
 
-    Json e = parse_ok("18446744073709551616"); // nao cabe em inteiro -> double
+    Json e = parse_ok("18446744073709551616"); 
     EXPECT_TRUE(e.is_real());
     EXPECT_DOUBLE_EQ(e.as_double(), 18446744073709551616.0);
 
-    Json f = parse_ok("-99999999999999999999"); // negativo demasiado grande
+    Json f = parse_ok("-99999999999999999999"); 
     EXPECT_TRUE(f.is_real());
 
     EXPECT_EQ(parse_ok("9223372036854775807").dump(), String("9223372036854775807"));
@@ -156,12 +151,12 @@ TEST(Json, DoubleRoundTripPrecision)
     const double values[] = {0.1,
                              1.0 / 3.0,
                              3.141592653589793,
-                             2.2250738585072014e-308, // menor normal
-                             1.7976931348623157e308,  // maior finito
+                             2.2250738585072014e-308, 
+                             1.7976931348623157e308,  
                              1e-7,
                              123456789.123456789,
                              -0.000001,
-                             5e-324}; // denormal minimo
+                             5e-324}; 
     for (double v : values)
     {
         Json j(v);
@@ -174,7 +169,7 @@ TEST(Json, DoubleRoundTripPrecision)
 
 TEST(Json, DoubleKeepsTypeAcrossRoundTrip)
 {
-    // 1.0 tem de sair como "1.0", senao volta como Int
+
     EXPECT_EQ(Json(1.0).dump(), String("1.0"));
     EXPECT_EQ(Json(-2.0).dump(), String("-2.0"));
     EXPECT_TRUE(parse_ok(Json(1.0).dump().c_str()).is_real());
@@ -190,22 +185,20 @@ TEST(Json, NonFiniteDumpsAsNull)
     EXPECT_EQ(Json(-inf).dump(), String("null"));
     EXPECT_EQ(Json(nan).dump(), String("null"));
 
-    // no parse, um numero fora do alcance do double e erro (o nlohmann tambem
-    // rejeita): aceita-lo daria inf, e o dump escrevia null a perder o valor
     EXPECT_STREQ(parse_err("1e400").message, "numero fora do alcance do double");
     EXPECT_STREQ(parse_err("-1e999").message, "numero fora do alcance do double");
     EXPECT_STREQ(parse_err("[1,1e400]").message, "numero fora do alcance do double");
     EXPECT_EQ(parse_ok("1.7976931348623157e308").as_double(),
-              (std::numeric_limits<double>::max)()); // o maior finito passa
+              (std::numeric_limits<double>::max)()); 
 
-    Json tiny = parse_ok("1e-400"); // underflow -> 0, isso e estavel
+    Json tiny = parse_ok("1e-400"); 
     EXPECT_EQ(tiny.as_double(), 0.0);
     EXPECT_EQ(tiny.dump(), String("0.0"));
 }
 
 TEST(Json, ManyDigitsMantissa)
 {
-    // mais de 19 digitos significativos: cai no caminho lento
+
     Json j = parse_ok("1.2345678901234567890123456789");
     EXPECT_DOUBLE_EQ(j.as_double(), 1.2345678901234567890123456789);
     Json k = parse_ok("123456789012345678901234567890");
@@ -222,7 +215,6 @@ TEST(Json, LocaleWithCommaDecimalSeparator)
     if (!got)
         GTEST_SKIP() << "sem locale de virgula decimal instalado";
 
-    // com LC_NUMERIC de virgula, um strtod/snprintf ingenuo partia-se aqui
     EXPECT_EQ(parse_ok("3.5").as_double(), 3.5);
     EXPECT_EQ(parse_ok("1.2345678901234567890123456789").as_double(),
               1.2345678901234567890123456789);
@@ -230,8 +222,6 @@ TEST(Json, LocaleWithCommaDecimalSeparator)
     EXPECT_EQ(Json(0.1).dump(), String("0.1"));
     std::setlocale(LC_NUMERIC, "C");
 }
-
-// ================= strings e escapes =================
 
 TEST(Json, StringEscapesParse)
 {
@@ -241,13 +231,13 @@ TEST(Json, StringEscapesParse)
     EXPECT_EQ(parse_ok(R"("\b\f\n\r\t")").str(), String("\b\f\n\r\t"));
     EXPECT_EQ(parse_ok(R"("")").str(), String(""));
     EXPECT_EQ(parse_ok(R"("\u0041")").str(), String("A"));
-    EXPECT_EQ(parse_ok(R"("\u00e9")").str(), String("\xc3\xa9"));     // e agudo, 2 bytes
-    EXPECT_EQ(parse_ok(R"("\u20ac")").str(), String("\xe2\x82\xac")); // euro, 3 bytes
+    EXPECT_EQ(parse_ok(R"("\u00e9")").str(), String("\xc3\xa9"));     
+    EXPECT_EQ(parse_ok(R"("\u20ac")").str(), String("\xe2\x82\xac")); 
     EXPECT_EQ(parse_ok(R"("\ud834\udd1e")").str(),
-              String("\xf0\x9d\x84\x9e")); // clave de sol, par de surrogates -> 4 bytes
+              String("\xf0\x9d\x84\x9e")); 
     EXPECT_EQ(parse_ok("\"acentua\xc3\xa7\xc3\xa3o\"").str(),
-              String("acentua\xc3\xa7\xc3\xa3o")); // UTF-8 cru passa tal e qual
-    EXPECT_EQ(parse_ok(R"("\u0000")").str().size(), 1u); // NUL embutido
+              String("acentua\xc3\xa7\xc3\xa3o")); 
+    EXPECT_EQ(parse_ok(R"("\u0000")").str().size(), 1u); 
     EXPECT_EQ(parse_ok(R"("a\u0000b")").str().size(), 3u);
 }
 
@@ -257,8 +247,8 @@ TEST(Json, StringEscapesDump)
     EXPECT_EQ(Json("a\\b").dump(), String("\"a\\\\b\""));
     EXPECT_EQ(Json("\n\t\r\b\f").dump(), String("\"\\n\\t\\r\\b\\f\""));
     EXPECT_EQ(Json("\x1f").dump(), String("\"\\u001f\""));
-    EXPECT_EQ(Json("a/b").dump(), String("\"a/b\""));           // '/' nao precisa escape
-    EXPECT_EQ(Json("\xc3\xa9").dump(), String("\"\xc3\xa9\"")); // UTF-8 fica cru
+    EXPECT_EQ(Json("a/b").dump(), String("\"a/b\""));           
+    EXPECT_EQ(Json("\xc3\xa9").dump(), String("\"\xc3\xa9\"")); 
     EXPECT_EQ(Json("").dump(), String("\"\""));
 }
 
@@ -322,7 +312,7 @@ TEST(Json, ErrorPositionLineAndColumn)
     ASSERT_TRUE(static_cast<bool>(err));
     EXPECT_EQ(err.line, 3u);
     EXPECT_EQ(err.column, 8u);
-    EXPECT_EQ(err.offset, 19u); // o "t" de tru
+    EXPECT_EQ(err.offset, 19u); 
 
     Json::Error err2;
     Json::parse("[1,2,", &err2);
@@ -335,7 +325,6 @@ TEST(Json, ErrorPositionLineAndColumn)
     EXPECT_TRUE(static_cast<bool>(err3));
     EXPECT_STREQ(err3.message, "input nulo");
 
-    // sem ponteiro de erro nao rebenta, devolve null
     EXPECT_TRUE(Json::parse("{{{").is_null());
 }
 
@@ -352,7 +341,7 @@ TEST(Json, DepthLimitProtectsTheStack)
     ASSERT_TRUE(static_cast<bool>(e2));
     EXPECT_STREQ(e2.message, "aninhamento demasiado profundo");
 
-    const std::string bomb = nest("[", "]", 100000, "1"); // nao pode estourar o stack
+    const std::string bomb = nest("[", "]", 100000, "1"); 
     Json::Error e3;
     Json::parse(bomb.c_str(), &e3);
     EXPECT_TRUE(static_cast<bool>(e3));
@@ -369,7 +358,7 @@ TEST(Json, Utf8BomIsSkipped)
     Json j = parse_ok("\xEF\xBB\xBF{\"a\":1}");
     EXPECT_TRUE(j.is_object());
     EXPECT_EQ(j["a"].as_int(), 1);
-    // BOM a meio continua a ser lixo
+
     EXPECT_TRUE(static_cast<bool>(parse_err("{\xEF\xBB\xBF\"a\":1}")));
 }
 
@@ -380,8 +369,6 @@ TEST(Json, WhitespaceHandling)
     EXPECT_EQ(j["b"].size(), 2u);
 }
 
-// ================= objetos =================
-
 TEST(Json, ObjectKeepsInsertionOrder)
 {
     Json j = parse_ok(R"({"z":1,"a":2,"m":3})");
@@ -389,7 +376,7 @@ TEST(Json, ObjectKeepsInsertionOrder)
     EXPECT_EQ(j.members()[0].key, String("z"));
     EXPECT_EQ(j.members()[1].key, String("a"));
     EXPECT_EQ(j.members()[2].key, String("m"));
-    EXPECT_EQ(j.dump(), String(R"({"z":1,"a":2,"m":3})")); // round-trip mantem a ordem
+    EXPECT_EQ(j.dump(), String(R"({"z":1,"a":2,"m":3})")); 
 }
 
 TEST(Json, ObjectLookupAndMutation)
@@ -403,7 +390,7 @@ TEST(Json, ObjectLookupAndMutation)
     EXPECT_STREQ(j.find("nome")->as_cstr(), "ct");
     EXPECT_EQ(j.find("xpto"), nullptr);
 
-    j.set("versao", 3); // set sobrepoe, nao duplica
+    j.set("versao", 3); 
     EXPECT_EQ(j.size(), 2u);
     EXPECT_EQ(j["versao"].as_int(), 3);
 
@@ -411,7 +398,7 @@ TEST(Json, ObjectLookupAndMutation)
     EXPECT_FALSE(j.erase("nome"));
     EXPECT_EQ(j.size(), 1u);
 
-    Json vazio; // null vira objeto no primeiro operator[]
+    Json vazio; 
     vazio["a"]["b"] = 5;
     EXPECT_TRUE(vazio.is_object());
     EXPECT_EQ(vazio["a"]["b"].as_int(), 5);
@@ -422,16 +409,16 @@ TEST(Json, ObjectConstLookupIsForgiving)
 {
     const Json j = parse_ok(R"({"janela":{"largura":1280}})");
     EXPECT_EQ(j["janela"]["largura"].as_int(0), 1280);
-    // encadear chaves que nao existem devolve null, com default no fim
+
     EXPECT_EQ(j["janela"]["altura"].as_int(720), 720);
     EXPECT_EQ(j["nada"]["de"]["nada"].as_int(-1), -1);
     EXPECT_TRUE(j["nada"].is_null());
-    EXPECT_EQ(j.size(), 1u); // ler nao criou nada
+    EXPECT_EQ(j.size(), 1u); 
 }
 
 TEST(Json, NonConstOperatorBracketCreatesKeys)
 {
-    // igual ao nlohmann: em nao-const, indexar cria - usa find() para so ler
+
     Json j = parse_ok(R"({"a":1})");
     EXPECT_EQ(j.size(), 1u);
     EXPECT_TRUE(j["b"].is_null());
@@ -445,12 +432,10 @@ TEST(Json, DuplicateKeysKeepBothFindReturnsFirst)
     Json j = parse_ok(R"({"a":1,"a":2})");
     EXPECT_EQ(j.size(), 2u);
     EXPECT_EQ(j["a"].as_int(), 1);
-    j.set("a", 9); // set mexe no primeiro
+    j.set("a", 9); 
     EXPECT_EQ(j.members()[0].value.as_int(), 9);
     EXPECT_EQ(j.members()[1].value.as_int(), 2);
 }
-
-// ================= arrays =================
 
 TEST(Json, ArrayOperations)
 {
@@ -473,7 +458,7 @@ TEST(Json, ArrayOperations)
     j.pop_back();
     EXPECT_EQ(j.size(), 2u);
 
-    Json vazio; // null vira array no primeiro push_back
+    Json vazio; 
     vazio.push_back(1);
     EXPECT_TRUE(vazio.is_array());
     EXPECT_EQ(vazio.dump(), String("[1]"));
@@ -499,8 +484,6 @@ TEST(Json, ArrayIterationAndNesting)
         soma += v.as_int();
     EXPECT_EQ(soma, 3);
 }
-
-// ================= dump =================
 
 TEST(Json, DumpCompactAndPretty)
 {

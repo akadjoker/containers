@@ -6,7 +6,6 @@
 namespace ct
 {
 
- 
     template <typename T, typename Container = Vector<T>>
     class Stack
     {
@@ -72,4 +71,4 @@ namespace ct
         a.swap(b);
     }
 
-} // namespace ct
+} 

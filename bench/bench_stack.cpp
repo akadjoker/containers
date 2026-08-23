@@ -1,4 +1,4 @@
-// ct::Stack vs std::stack (default = deque) e vs std::stack sobre std::vector.
+
 #include <ct/stack.hpp>
 
 #include <cstdint>
@@ -34,7 +34,6 @@ namespace
         return acc;
     }
 
-    // padrão DFS/flood-fill: cresce e encolhe, profundidade oscila
     template <typename St>
     std::uint64_t dfs_churn()
     {
@@ -68,7 +67,6 @@ namespace
         return acc;
     }
 
-    // pilha rasa reutilizada muitas vezes (matrizes/estados de render por frame)
     template <typename St>
     std::uint64_t shallow_cycles()
     {
@@ -85,7 +83,7 @@ namespace
         return acc;
     }
 
-} // namespace
+} 
 
 int main()
 {

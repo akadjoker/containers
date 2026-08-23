@@ -1,13 +1,8 @@
-// ct::HashSet<K> — set open-addressing, C++14
-//
-// A mesma receita do ct::HashMap (probing linear contíguo, erase por
-// backward-shift, capacidade em potência de 2) mas só com chaves — para
-// os casos "já vi este id?", "está selecionado?", visibilidade, dedup.
-// Chaves: inteiros, ponteiros, ct::String, ou tipo teu com hash().
+
 #pragma once
 
 #include "detail/utils.hpp"
-#include "hashmap.hpp" // reutiliza ct::Hash<K>
+#include "hashmap.hpp" 
 
 namespace ct
 {
@@ -98,8 +93,6 @@ namespace ct
             return *this;
         }
 
-        // ---- consulta -------------------------------------------------------
-
         size_type size() const noexcept { return size_; }
         bool empty() const noexcept { return size_ == 0; }
         size_type capacity() const noexcept { return slots_ ? mask_ + 1 : 0; }
@@ -111,9 +104,6 @@ namespace ct
             return meta_[probe(k)] != 0;
         }
 
-        // ---- modificação ----------------------------------------------------
-
-        // true se inseriu, false se já existia
         template <typename KK>
         bool insert(KK &&k)
         {
@@ -128,7 +118,6 @@ namespace ct
             return true;
         }
 
-        // apaga por backward-shift; true se existia
         bool erase(const K &k)
         {
             if (!size_)
@@ -179,8 +168,6 @@ namespace ct
                 rehash(want);
         }
 
-        // ---- iteração (const: mudar uma chave partia o set) -----------------
-
         class iterator
         {
             const K *e_;
@@ -228,7 +215,7 @@ namespace ct
 
     private:
         K *slots_;
-        std::uint8_t *meta_; // 0 = vazio, 1 = ocupado
+        std::uint8_t *meta_; 
         size_type mask_;
         size_type size_;
 
@@ -332,4 +319,4 @@ namespace ct
         }
     };
 
-} // namespace ct
+} 

@@ -26,8 +26,6 @@ namespace
     }
 }
 
-// ================= elemento básico =================
-
 TEST(Xml, DefaultIsEmpty)
 {
     Xml x;
@@ -65,8 +63,6 @@ TEST(Xml, WhitespaceIsTrimmedFromWhitespaceOnlyToken)
     EXPECT_EQ(x.tag(), "root");
 }
 
-// ================= atributos =================
-
 TEST(Xml, AttributesDoubleAndSingleQuotes)
 {
     Xml x = parse_ok("<root a=\"1\" b='2'/>");
@@ -87,7 +83,7 @@ TEST(Xml, AttributeEntitiesAndNumericRefs)
 
 TEST(Xml, AttributeWhitespaceNormalization)
 {
-    // tab/CR/LF cru dentro do valor vira espaço (normalização da spec XML)
+
     Xml x = parse_ok("<root a=\"x\ty\nz\"/>");
     EXPECT_STREQ(x.attr_cstr("a"), "x y z");
 }
@@ -103,7 +99,7 @@ TEST(Xml, TypedAttributeGetters)
     EXPECT_TRUE(x.attr_bool("tt"));
     EXPECT_FALSE(x.attr_bool("fa"));
     EXPECT_FALSE(x.attr_bool("ff"));
-    EXPECT_EQ(x.attr_int("trunc"), 7); // trunca em vez de rejeitar
+    EXPECT_EQ(x.attr_int("trunc"), 7); 
     EXPECT_EQ(x.attr_int("nope", -1), -1);
     EXPECT_EQ(x.attr_uint("nope", 9u), 9u);
     EXPECT_DOUBLE_EQ(x.attr_double("nope", 1.5), 1.5);
@@ -124,8 +120,6 @@ TEST(Xml, SetAttrOverwritesAndAdds)
     EXPECT_FALSE(x.erase_attr("a"));
 }
 
-// ================= texto / CDATA =================
-
 TEST(Xml, TextContent)
 {
     Xml x = parse_ok("<root>ola mundo</root>");
@@ -135,13 +129,13 @@ TEST(Xml, TextContent)
 TEST(Xml, TextEntities)
 {
     Xml x = parse_ok("<root>a&amp;b &lt;tag&gt; &#9731;</root>");
-    EXPECT_EQ(x.text(), "a&b <tag> \xE2\x98\x83"); // U+2603 SNOWMAN em utf-8
+    EXPECT_EQ(x.text(), "a&b <tag> \xE2\x98\x83"); 
 }
 
 TEST(Xml, Cdata)
 {
     Xml x = parse_ok("<data><![CDATA[1,2,<3>,&4]]></data>");
-    EXPECT_EQ(x.text(), "1,2,<3>,&4"); // cru, sem decode de entidades
+    EXPECT_EQ(x.text(), "1,2,<3>,&4"); 
 }
 
 TEST(Xml, CdataConcatenatesWithSurroundingText)
@@ -159,18 +153,16 @@ TEST(Xml, TextTrimmed)
 TEST(Xml, InsignificantWhitespaceBetweenChildrenIsDropped)
 {
     Xml x = parse_ok("<root>\n  <a/>\n  <b/>\n</root>");
-    EXPECT_TRUE(x.text().empty()); // só indentação, e o elemento tem filhos
+    EXPECT_TRUE(x.text().empty()); 
     EXPECT_EQ(x.size(), 2u);
 }
 
 TEST(Xml, WhitespaceOnlyLeafKeepsText)
 {
-    // sem filhos: não há "indentação a apagar", o espaço é o conteúdo
+
     Xml x = parse_ok("<sep>   </sep>");
     EXPECT_EQ(x.text(), "   ");
 }
-
-// ================= filhos =================
 
 TEST(Xml, ChildrenAndLookup)
 {
@@ -179,7 +171,7 @@ TEST(Xml, ChildrenAndLookup)
     Xml *ts = x.child("tileset");
     ASSERT_NE(ts, nullptr);
     EXPECT_STREQ(ts->attr_cstr("id"), "1");
-    Xml *layer = x.child("layer"); // o primeiro
+    Xml *layer = x.child("layer"); 
     ASSERT_NE(layer, nullptr);
     EXPECT_STREQ(layer->attr_cstr("name"), "chao");
     EXPECT_EQ(x.child("nope"), nullptr);
@@ -206,8 +198,6 @@ TEST(Xml, NestedTraversal)
     ASSERT_NE(data, nullptr);
     EXPECT_EQ(data->text(), "1,2,3,4");
 }
-
-// ================= comentários / prolog / doctype =================
 
 TEST(Xml, PrologAndCommentsAreSkipped)
 {
@@ -246,8 +236,6 @@ TEST(Xml, Utf8Bom)
     Xml x = parse_ok(with_bom);
     EXPECT_EQ(x.tag(), "root");
 }
-
-// ================= erros =================
 
 TEST(Xml, ErrorEmptyInput)
 {
@@ -306,7 +294,7 @@ TEST(Xml, ErrorNullInput)
 
 TEST(Xml, ErrorLineAndColumn)
 {
-    Xml::Error e = parse_err("<a>\n  <b>\n</a>"); // fecho errado na 3a linha
+    Xml::Error e = parse_err("<a>\n  <b>\n</a>"); 
     EXPECT_GE(e.line, 1u);
     EXPECT_GE(e.column, 1u);
 }
@@ -321,8 +309,6 @@ TEST(Xml, ErrorDepthLimit)
     EXPECT_TRUE(static_cast<bool>(e));
 }
 
-// ================= dump =================
-
 TEST(Xml, DumpSelfClosingWhenEmpty)
 {
     Xml x("root");
@@ -336,7 +322,7 @@ TEST(Xml, DumpEscapesAttributesAndText)
     x.set_attr("a", "x&y<z>\"q");
     x.set_text("a&b<c>");
     ct::String out = x.dump();
-    // usar == / != (não EXPECT_EQ/NE) evita ODR-use do static constexpr npos
+
     EXPECT_TRUE(out.find("&amp;") != ct::String::npos);
     EXPECT_TRUE(out.find("&lt;") != ct::String::npos);
     EXPECT_TRUE(out.find("&quot;") != ct::String::npos);
@@ -386,8 +372,6 @@ TEST(Xml, DumpAttributeSpecialWhitespaceRoundTrips)
     EXPECT_STREQ(reparsed.attr_cstr("a"), "line1\nline2\ttab");
 }
 
-// ================= cópia / movimento =================
-
 TEST(Xml, CopyIsDeep)
 {
     Xml a("root");
@@ -416,7 +400,7 @@ TEST(Xml, MoveLeavesSourceValidAndEmpty)
     a.add_child(Xml("child1"));
     Xml b(ct::detail::move(a));
     EXPECT_EQ(b.size(), 1u);
-    EXPECT_EQ(a.size(), 0u); // estado válido (vazio), não lixo
+    EXPECT_EQ(a.size(), 0u); 
     EXPECT_TRUE(a.empty());
 }
 
@@ -428,11 +412,9 @@ TEST(Xml, MoveAssignLeavesSourceValid)
     b = ct::detail::move(a);
     EXPECT_EQ(b.size(), 1u);
     EXPECT_TRUE(a.empty());
-    a.add_child(Xml("still works")); // reutilizável depois do move
+    a.add_child(Xml("still works")); 
     EXPECT_EQ(a.size(), 1u);
 }
-
-// ================= String::parse overloads =================
 
 TEST(Xml, ParseFromCtString)
 {

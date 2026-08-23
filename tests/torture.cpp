@@ -1,8 +1,4 @@
-// Teste de tortura: operações aleatórias em TODOS os containers ct contra
-// referências da std, com verificação contínua de conteúdo e invariantes.
-// Pensado para correr sob ASan+UBSan com várias seeds.
-//
-//   ./ct_torture <seed> <iteracoes>
+
 #include <ct/arena.hpp>
 #include <ct/array.hpp>
 #include <ct/flatmap.hpp>
@@ -41,8 +37,6 @@ namespace
             ++failures;                                                      \
         }                                                                    \
     } while (0)
-
-    // ---- Vector<int> + Vector<String> vs std::vector ----
 
     void torture_vector(int iters)
     {
@@ -106,7 +100,7 @@ namespace
             {
                 ct::Vector<int> copy(v);
                 CHECK(copy.size() == ref.size(), "vector copy size");
-                v = copy; // roundtrip
+                v = copy; 
                 break;
             }
             case 10:
@@ -135,7 +129,7 @@ namespace
         for (int i = 0; i < iters; ++i)
         {
             unsigned op = rng() % 8;
-            unsigned len = rng() % 40; // atravessa o limite SSO 23
+            unsigned len = rng() % 40; 
             std::string s;
             for (unsigned j = 0; j < len; ++j)
                 s.push_back(char('a' + rng() % 26));
@@ -186,8 +180,6 @@ namespace
         }
     }
 
-    // ---- String vs std::string ----
-
     void torture_string(int iters)
     {
         ct::String s;
@@ -221,7 +213,7 @@ namespace
                 ref.append(buf, n);
                 break;
             }
-            case 5: // self-append: o caso perigoso
+            case 5: 
                 if (ref.size() < 5000)
                 {
                     s += s;
@@ -266,8 +258,6 @@ namespace
             }
         }
     }
-
-    // ---- os 3 maps em simultâneo vs std ----
 
     void torture_maps(int iters)
     {
@@ -322,7 +312,7 @@ namespace
             if (i % 2048 == 0)
                 CHECK(tm.validate(), "treemap invariantes RB");
         }
-        // varrimento final: os ordenados têm de bater com o std::map exatamente
+
         auto it = ref.begin();
         for (auto &e : tm)
         {
@@ -336,8 +326,6 @@ namespace
             ++it;
         }
     }
-
-    // ---- Pool + Arena ----
 
     void torture_pool_arena(int iters)
     {
@@ -371,8 +359,7 @@ namespace
         for (Obj *o : alive)
             CHECK(o->stamp != 0, "pool stamps finais");
 
-        // arena com vectors por "frame"
-        ct::Arena arena(1024); // pequena de propósito: força multi-bloco + fusões
+        ct::Arena arena(1024); 
         for (int frame = 0; frame < iters / 100 + 1; ++frame)
         {
             ct::Vector<int, ct::ArenaAlloc> a{ct::ArenaAlloc(arena)};
@@ -388,20 +375,18 @@ namespace
                 CHECK(a[j] == j, "arena vec a");
                 CHECK(b[j] == -j, "arena vec b");
             }
-            // vectors morrem aqui, antes do reset
+
             a.clear();
             b.clear();
             arena.reset();
         }
     }
 
-    // ---- sort ----
-
     void torture_sort(int iters)
     {
         for (int r = 0; r < iters / 500 + 1; ++r)
         {
-            std::size_t n = rng() % 600; // atravessa os thresholds 24 e 128
+            std::size_t n = rng() % 600; 
             ct::Vector<int> v;
             std::vector<int> ref;
             unsigned mode = rng() % 4;
@@ -419,7 +404,6 @@ namespace
             for (std::size_t i = 0; i < n; ++i)
                 CHECK(v[i] == ref[i], "sort resultado");
 
-            // floats também
             ct::Vector<float> fv;
             std::vector<float> fref;
             for (std::size_t i = 0; i < n; ++i)
@@ -435,7 +419,7 @@ namespace
         }
     }
 
-} // namespace
+} 
 
 int main(int argc, char **argv)
 {

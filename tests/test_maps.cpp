@@ -28,14 +28,11 @@ namespace
     };
     int MTracked::live = 0;
 
-    // hash péssimo de propósito: força clusters e colisões
     struct BadHash
     {
         std::uint64_t operator()(int k) const { return static_cast<std::uint64_t>(k % 4); }
     };
-} // namespace
-
-// ================= HashMap =================
+} 
 
 TEST(HashMap, InsertFindBasic)
 {
@@ -60,7 +57,7 @@ TEST(HashMap, PutReplaces)
     m.put(7, 2);
     EXPECT_EQ(m.size(), 1u);
     EXPECT_EQ(*m.find(7), 2);
-    m[7] += 10; // operator[] em existente não substitui
+    m[7] += 10; 
     EXPECT_EQ(*m.find(7), 12);
 }
 
@@ -98,7 +95,7 @@ TEST(HashMap, EraseBackwardShift)
 
 TEST(HashMap, CollisionHeavyFuzz)
 {
-    // hash % 4: praticamente tudo colide — testa probing + backward shift
+
     ct::HashMap<int, int, BadHash> m;
     std::unordered_map<int, int> ref;
     unsigned seed = 55;
@@ -215,8 +212,6 @@ TEST(HashMap, ReserveAvoidsRehash)
     EXPECT_EQ(m.capacity(), cap) << "reserve devia evitar rehash";
 }
 
-// ================= FlatMap =================
-
 TEST(FlatMap, InsertFindBasic)
 {
     ct::FlatMap<int, int> m;
@@ -282,7 +277,7 @@ TEST(FlatMap, FuzzVsStdMap)
         }
         ASSERT_EQ(m.size(), ref.size());
     }
-    // no fim: mesma sequência ordenada
+
     auto it = ref.begin();
     for (auto &e : m)
     {
@@ -312,10 +307,10 @@ TEST(FlatMap, LowerBoundRangeQuery)
     ct::FlatMap<int, int> m;
     for (int k : {10, 20, 30, 40, 50})
         m.put(k, k);
-    auto it = m.lower_bound_it(25); // primeira >= 25
+    auto it = m.lower_bound_it(25); 
     ASSERT_NE(it, m.end());
     EXPECT_EQ(it->key, 30);
-    // range scan ordenado de >= 25
+
     int sum = 0;
     for (; it != m.end(); ++it)
         sum += it->key;
@@ -347,8 +342,6 @@ TEST(FlatMap, NoLeaks)
     EXPECT_EQ(MTracked::live, 0);
 }
 
-// ================= TreeMap (red-black) =================
-
 TEST(TreeMap, InsertFindBasic)
 {
     ct::TreeMap<int, int> m;
@@ -362,7 +355,7 @@ TEST(TreeMap, InsertFindBasic)
     EXPECT_EQ(m.find(2), nullptr);
     EXPECT_EQ(m.get(1, -1), 10);
     EXPECT_EQ(m.get(9, -1), -1);
-    m.put(5, 99); // substitui
+    m.put(5, 99); 
     EXPECT_EQ(*m.find(5), 99);
     EXPECT_EQ(m.size(), 3u);
     EXPECT_TRUE(m.validate());
@@ -389,7 +382,7 @@ TEST(TreeMap, IterationIsOrdered)
 
 TEST(TreeMap, SequentialInsertStaysBalanced)
 {
-    // inserção ordenada: uma BST ingénua degenera em lista; a RB não pode
+
     ct::TreeMap<int, int> m;
     for (int i = 0; i < 100000; ++i)
         m.put(i, i);
@@ -490,7 +483,7 @@ TEST(TreeMap, CopyAndMove)
     EXPECT_EQ(c.size(), sz);
     EXPECT_TRUE(c.validate());
     EXPECT_TRUE(a.empty());
-    a.put(1, 1); // o movido-de continua utilizável
+    a.put(1, 1); 
     EXPECT_EQ(a.size(), 1u);
 }
 
@@ -510,8 +503,6 @@ TEST(TreeMap, NoLeaks)
     }
     EXPECT_EQ(MTracked::live, 0);
 }
-
-// ================= HashSet =================
 
 #include <unordered_set>
 

@@ -12,7 +12,6 @@
 namespace
 {
 
-    // tipo instrumentado (nome diferente do de test_vector.cpp para evitar ODR)
     struct ATracked
     {
         static int live;
@@ -36,15 +35,13 @@ namespace
         return (reinterpret_cast<std::uintptr_t>(p) & (align - 1)) == 0;
     }
 
-} // namespace
-
-// ---------- alocação crua ----------
+} 
 
 TEST(Arena, RespectsAlignment)
 {
     ct::Arena a(1024);
     const std::size_t aligns[] = {1, 2, 4, 8, 16, 32, 64};
-    // tamanhos ímpares de propósito para desalinhar o cursor
+
     for (int round = 0; round < 50; ++round)
         for (std::size_t al : aligns)
         {
@@ -55,16 +52,16 @@ TEST(Arena, RespectsAlignment)
 
 TEST(Arena, AllocationsDoNotOverlap)
 {
-    ct::Arena a(256); // pequeno para forçar vários blocos
+    ct::Arena a(256); 
     std::vector<std::pair<unsigned char *, std::size_t>> allocs;
     for (int i = 0; i < 2000; ++i)
     {
         std::size_t n = 1 + (i * 7919) % 97;
         unsigned char *p = static_cast<unsigned char *>(a.allocate(n, 1));
-        std::memset(p, i & 0xFF, n); // escreve padrão único
+        std::memset(p, i & 0xFF, n); 
         allocs.emplace_back(p, n);
     }
-    // se algo se sobrepôs, os padrões foram corrompidos
+
     for (int i = 0; i < 2000; ++i)
     {
         unsigned char *p = allocs[i].first;
@@ -78,10 +75,10 @@ TEST(Arena, TryExpandOnLastAllocation)
 {
     ct::Arena a(1024);
     void *p = a.allocate(64, 8);
-    EXPECT_TRUE(a.try_expand(p, 64, 128)); // é a última → cresce in-place
+    EXPECT_TRUE(a.try_expand(p, 64, 128)); 
     EXPECT_TRUE(a.try_expand(p, 128, 256));
 
-    void *q = a.allocate(8, 8); // outra alocação pelo meio
+    void *q = a.allocate(8, 8); 
     EXPECT_FALSE(a.try_expand(p, 256, 512)) << "p já não é a última alocação";
     EXPECT_TRUE(a.try_expand(q, 8, 16));
 }
@@ -91,7 +88,7 @@ TEST(Arena, TryExpandFailsWhenBlockFull)
     ct::Arena a(128);
     void *p = a.allocate(64, 8);
     EXPECT_FALSE(a.try_expand(p, 64, 1 << 20)) << "não cabe no bloco";
-    // mas reallocate resolve, movendo para um bloco novo e preservando o conteúdo
+
     std::memset(p, 0xAB, 64);
     void *q = a.reallocate(p, 64, 1 << 20, 8);
     ASSERT_NE(q, nullptr);
@@ -103,10 +100,10 @@ TEST(Arena, TryExpandFailsWhenBlockFull)
 TEST(Arena, LargeAllocationBiggerThanBlock)
 {
     ct::Arena a(64);
-    void *p = a.allocate(1 << 20, 16); // 1 MB numa arena de 64 B
+    void *p = a.allocate(1 << 20, 16); 
     ASSERT_NE(p, nullptr);
     EXPECT_TRUE(a.owns(p));
-    std::memset(p, 0xCD, 1 << 20); // tem de ser tudo escrevível
+    std::memset(p, 0xCD, 1 << 20); 
 }
 
 TEST(Arena, OwnsRejectsForeignPointers)
@@ -125,14 +122,12 @@ TEST(Arena, ResetReusesMemory)
 {
     ct::Arena a(256);
     for (int i = 0; i < 100; ++i)
-        a.allocate(64, 8); // força vários blocos
+        a.allocate(64, 8); 
     EXPECT_GT(a.bytes_used(), 0u);
 
     a.reset();
     EXPECT_EQ(a.bytes_used(), 0u);
 
-    // a reserva converge: ao fim de poucos ciclos alloc+reset (crescimento
-    // geométrico dos blocos), repetir a mesma carga deixa de reservar mais
     for (int cycle = 0; cycle < 3; ++cycle)
     {
         for (int i = 0; i < 100; ++i)
@@ -181,7 +176,7 @@ TEST(Arena, CreateConstructsObject)
 TEST(Arena, AllocateArrayAligned)
 {
     ct::Arena a;
-    a.allocate(1, 1); // desalinha o cursor
+    a.allocate(1, 1); 
     double *d = a.allocate_array<double>(10);
     EXPECT_TRUE(is_aligned(d, alignof(double)));
     for (int i = 0; i < 10; ++i)
@@ -198,7 +193,7 @@ TEST(Arena, StressRandomSizesAndAligns)
     {
         seed = seed * 1664525u + 1013904223u;
         std::size_t n = 1 + (seed % 300);
-        std::size_t al = std::size_t(1) << (seed >> 16) % 7; // 1..64
+        std::size_t al = std::size_t(1) << (seed >> 16) % 7; 
         unsigned char *p = static_cast<unsigned char *>(a.allocate(n, al));
         ASSERT_TRUE(is_aligned(p, al));
         std::memset(p, i & 0xFF, n);
@@ -209,8 +204,6 @@ TEST(Arena, StressRandomSizesAndAligns)
             ASSERT_EQ(allocs[i].first[j], static_cast<unsigned char>(i & 0xFF));
     EXPECT_LE(a.bytes_used(), a.bytes_reserved());
 }
-
-// ---------- Vector numa Arena ----------
 
 using AVec = ct::Vector<int, ct::ArenaAlloc>;
 
@@ -228,20 +221,19 @@ TEST(ArenaVector, PushBackGrowth)
 
 TEST(ArenaVector, GrowthIsInPlaceWhenAlone)
 {
-    // sendo o único utilizador da arena, o try_expand nunca falha dentro do
-    // bloco → o data() não muda durante o crescimento
+
     ct::Arena arena(1 << 20);
     AVec v{ct::ArenaAlloc(arena)};
     v.push_back(0);
     const int *p0 = v.data();
-    for (int i = 1; i < 10000; ++i) // 40 KB, cabe no bloco de 1 MB
+    for (int i = 1; i < 10000; ++i) 
         v.push_back(i);
     EXPECT_EQ(v.data(), p0) << "devia ter crescido in-place na arena";
 }
 
 TEST(ArenaVector, TwoVectorsInterleaved)
 {
-    // alocações alternadas impedem o in-place → força o caminho de cópia
+
     ct::Arena arena(1024);
     AVec a{ct::ArenaAlloc(arena)};
     AVec b{ct::ArenaAlloc(arena)};
@@ -271,7 +263,7 @@ TEST(ArenaVector, NonTrivialTypeNoLeaks)
         v.resize(10);
         EXPECT_EQ(ATracked::live, 10);
     }
-    // o Vector chama os destrutores mesmo com deallocate no-op
+
     EXPECT_EQ(ATracked::live, 0);
 }
 
@@ -294,7 +286,7 @@ TEST(ArenaVector, CopyAndMove)
     for (int i = 0; i < 100; ++i)
         a.push_back(i);
 
-    AVec b(a); // cópia fica na mesma arena
+    AVec b(a); 
     EXPECT_TRUE(arena.owns(b.data()));
     EXPECT_EQ(a, b);
     b[0] = 999;
@@ -346,7 +338,7 @@ TEST(ArenaVector, FuzzVsStd)
 
 TEST(ArenaVector, MixedWithHeapVector)
 {
-    // comparar Vector arena vs Vector heap com operator== heterogéneo
+
     ct::Arena arena;
     ct::Vector<int, ct::ArenaAlloc> a{ct::ArenaAlloc(arena)};
     ct::Vector<int> h;

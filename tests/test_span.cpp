@@ -11,8 +11,6 @@
 using ct::Span;
 using ct::StringView;
 
-// ================= Span =================
-
 TEST(Span, ConstructionFromEverything)
 {
     static_assert(sizeof(Span<int>) == 2 * sizeof(void *), "ponteiro + tamanho");
@@ -30,7 +28,7 @@ TEST(Span, ConstructionFromEverything)
 
     Span<int> b(arr, 2);
     EXPECT_EQ(b.size(), 2u);
-    Span<int> c(arr, arr + 3); // par de ponteiros
+    Span<int> c(arr, arr + 3); 
     EXPECT_EQ(c.size(), 3u);
 
     ct::Vector<int> v{1, 2, 3, 4, 5};
@@ -53,11 +51,11 @@ TEST(Span, ConstConversions)
 {
     ct::Vector<int> v{1, 2, 3};
     Span<int> mut(v);
-    Span<const int> a(mut); // Span<T> -> Span<const T>
+    Span<const int> a(mut); 
     EXPECT_EQ(a.size(), 3u);
 
     const ct::Vector<int> &cv = v;
-    Span<const int> b(cv); // container const -> Span<const T>
+    Span<const int> b(cv); 
     EXPECT_EQ(b.data(), v.data());
 
     static_assert(std::is_same<decltype(a[0]), const int &>::value, "acesso const");
@@ -76,7 +74,6 @@ TEST(Span, WritesThroughToTheContainer)
     EXPECT_EQ(v[1], 3);
     EXPECT_EQ(v[2], 78);
 
-    // um span const de dados mutaveis nao deixa escrever (so compila em leitura)
     Span<const int> cs(v);
     EXPECT_EQ(cs[0], 100);
 }
@@ -94,9 +91,8 @@ TEST(Span, Subviews)
     EXPECT_EQ(s.subspan(1, 3).size(), 3u);
     EXPECT_EQ(s.subspan(1, 3)[0], 1);
 
-    // n maior que o resto corta no fim, nao rebenta
     EXPECT_EQ(s.subspan(4, 100).size(), 2u);
-    // offset no limite da um span vazio
+
     EXPECT_TRUE(s.subspan(6).empty());
     EXPECT_TRUE(s.first(0).empty());
     EXPECT_TRUE(s.last(0).empty());
@@ -139,8 +135,6 @@ TEST(Span, IterationAndBytes)
     EXPECT_EQ(bytes.data(), reinterpret_cast<const unsigned char *>(v.data()));
 }
 
-// ================= StringView =================
-
 TEST(StringView, Construction)
 {
     static_assert(sizeof(StringView) == 2 * sizeof(void *), "ponteiro + tamanho");
@@ -148,7 +142,7 @@ TEST(StringView, Construction)
     StringView vazia;
     EXPECT_TRUE(vazia.empty());
     EXPECT_EQ(vazia.size(), 0u);
-    EXPECT_NE(vazia.data(), nullptr); // aponta para "" — data() nunca e nulo
+    EXPECT_NE(vazia.data(), nullptr); 
 
     StringView nula(static_cast<const char *>(nullptr));
     EXPECT_TRUE(nula.empty());
@@ -158,20 +152,20 @@ TEST(StringView, Construction)
     EXPECT_EQ(a.size(), 3u);
     EXPECT_EQ(a, StringView("ola"));
 
-    StringView b("a\0b", 3); // com NUL no meio
+    StringView b("a\0b", 3); 
     EXPECT_EQ(b.size(), 3u);
     EXPECT_EQ(b[1], '\0');
 
     ct::String s("do ct::String");
     StringView c(s);
     EXPECT_EQ(c.size(), s.size());
-    EXPECT_EQ(c.data(), s.data()); // sem copia
+    EXPECT_EQ(c.data(), s.data()); 
 
     std::string ss("do std::string");
     StringView d(ss);
     EXPECT_EQ(d.size(), ss.size());
 
-    ct::String volta(c); // StringView -> String
+    ct::String volta(c); 
     EXPECT_EQ(volta, s);
 }
 
@@ -193,15 +187,15 @@ TEST(StringView, SubstrAndTrim)
     StringView s("0123456789");
     EXPECT_EQ(s.substr(3), StringView("3456789"));
     EXPECT_EQ(s.substr(3, 2), StringView("34"));
-    EXPECT_EQ(s.substr(8, 100), StringView("89")); // n maior corta no fim
-    EXPECT_TRUE(s.substr(10).empty());             // pos no limite
+    EXPECT_EQ(s.substr(8, 100), StringView("89")); 
+    EXPECT_TRUE(s.substr(10).empty());             
     EXPECT_DEATH(s.substr(11), "pos fora dos limites");
 
     StringView t = s;
     t.remove_prefix(3);
     t.remove_suffix(4);
     EXPECT_EQ(t, StringView("345"));
-    t.remove_prefix(100); // corta, nao rebenta
+    t.remove_prefix(100); 
     EXPECT_TRUE(t.empty());
 
     EXPECT_EQ(StringView("  \t ola \n ").trimmed(), StringView("ola"));
@@ -218,7 +212,7 @@ TEST(StringView, SplitOnce)
     EXPECT_EQ(h, StringView("chave"));
     EXPECT_EQ(t, StringView("valor"));
 
-    EXPECT_TRUE(StringView("a=b=c").split_once('=', h, t)); // parte no primeiro
+    EXPECT_TRUE(StringView("a=b=c").split_once('=', h, t)); 
     EXPECT_EQ(h, StringView("a"));
     EXPECT_EQ(t, StringView("b=c"));
 
@@ -234,7 +228,6 @@ TEST(StringView, SplitOnce)
     EXPECT_EQ(h, StringView("chave"));
     EXPECT_TRUE(t.empty());
 
-    // parsear um ini inteiro sem alocar nada
     StringView ini("largura=1280\naltura=720\nvsync=1\n");
     int linhas = 0, soma = 0;
     StringView resto = ini;
@@ -268,9 +261,9 @@ TEST(StringView, Search)
     EXPECT_EQ(s.find(StringView("abra")), 0u);
     EXPECT_EQ(s.find(StringView("abra"), 1), 7u);
     EXPECT_EQ(s.find(StringView("xyz")), StringView::npos);
-    EXPECT_EQ(s.find(StringView("")), 0u);          // agulha vazia
+    EXPECT_EQ(s.find(StringView("")), 0u);          
     EXPECT_EQ(s.find(StringView(""), 5), 5u);
-    EXPECT_EQ(s.find(StringView("abracadabras")), StringView::npos); // maior que o palheiro
+    EXPECT_EQ(s.find(StringView("abracadabras")), StringView::npos); 
 
     EXPECT_TRUE(s.contains('d'));
     EXPECT_TRUE(s.contains(StringView("cada")));
@@ -287,7 +280,7 @@ TEST(StringView, Comparisons)
     EXPECT_TRUE(StringView("abc") == StringView("abc"));
     EXPECT_TRUE(StringView("abc") != StringView("abd"));
     EXPECT_TRUE(StringView("abc") < StringView("abd"));
-    EXPECT_TRUE(StringView("abc") < StringView("abcd")); // prefixo e menor
+    EXPECT_TRUE(StringView("abc") < StringView("abcd")); 
     EXPECT_TRUE(StringView("abcd") > StringView("abc"));
     EXPECT_TRUE(StringView("abc") <= StringView("abc"));
     EXPECT_TRUE(StringView("abc") >= StringView("abc"));
@@ -297,11 +290,9 @@ TEST(StringView, Comparisons)
     EXPECT_LT(StringView("a").compare(StringView("b")), 0);
     EXPECT_GT(StringView("b").compare(StringView("a")), 0);
 
-    // com NUL no meio compara os bytes todos, nao para no NUL
     EXPECT_TRUE(StringView("a\0b", 3) != StringView("a\0c", 3));
     EXPECT_TRUE(StringView("a\0b", 3) == StringView("a\0b", 3));
 
-    // comparar com const char* e com ct::String sem ambiguidades
     EXPECT_TRUE(StringView("abc") == "abc");
     EXPECT_TRUE("abc" == StringView("abc"));
     EXPECT_TRUE(StringView("abc") != "abd");

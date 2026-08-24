@@ -277,6 +277,16 @@ namespace ct
 
         String &append(const String &s) { return append(s.data(), s.size()); }
         String &append(const char *s) { return append(s, std::strlen(s)); }
+        String &append(size_type n, char c)
+        {
+            if (n == 0)
+                return *this;
+            const size_type current = size();
+            reserve_for_append(n);
+            std::memset(data() + current, c, n);
+            set_size(current + n);
+            return *this;
+        }
 
         String &operator+=(const String &s) { return append(s); }
         String &operator+=(const char *s) { return append(s); }
@@ -284,6 +294,88 @@ namespace ct
         {
             push_back(c);
             return *this;
+        }
+
+        String &insert(size_type pos, const String &s)
+        {
+            return insert(pos, s.data(), s.size());
+        }
+
+        String &insert(size_type pos, const char *s)
+        {
+            return insert(pos, s, s ? std::strlen(s) : 0);
+        }
+
+        String &insert(size_type pos, const char *s, size_type n)
+        {
+            if (pos > size())
+                detail::fatal("ct::String::insert: pos fora dos limites");
+            if (n == 0)
+                return *this;
+            if (!s)
+                detail::fatal("ct::String::insert: origem invalida");
+
+            const size_type current = size();
+            size_type total = 0;
+            if (!detail::checked_add(current, n, total) || total > max_size())
+                detail::fatal("ct::String: tamanho invalido");
+
+            const size_type source_offset =
+                is_inside(s) ? static_cast<size_type>(s - data()) : npos;
+            if (total > capacity())
+                grow_to(total);
+
+            const char *source = s;
+            if (source_offset != npos)
+            {
+                source = data() + source_offset;
+                if (source_offset >= pos)
+                    source += n;
+            }
+
+            std::memmove(data() + pos + n, data() + pos, current - pos);
+            std::memmove(data() + pos, source, n);
+            set_size(total);
+            return *this;
+        }
+
+        String &insert(size_type pos, size_type n, char c)
+        {
+            if (pos > size())
+                detail::fatal("ct::String::insert: pos fora dos limites");
+            if (n == 0)
+                return *this;
+
+            const size_type current = size();
+            reserve_for_append(n);
+            std::memmove(data() + pos + n, data() + pos, current - pos);
+            std::memset(data() + pos, c, n);
+            set_size(current + n);
+            return *this;
+        }
+
+        String &erase(size_type pos = 0, size_type n = npos)
+        {
+            const size_type current = size();
+            if (pos > current)
+                detail::fatal("ct::String::erase: pos fora dos limites");
+            const size_type removed = n < current - pos ? n : current - pos;
+            if (removed)
+            {
+                std::memmove(data() + pos, data() + pos + removed,
+                             current - pos - removed);
+                set_size(current - removed);
+            }
+            return *this;
+        }
+
+        iterator erase(iterator first, iterator last)
+        {
+            if (first < begin() || first > end() || last < first || last > end())
+                detail::fatal("ct::String::erase: iterador fora dos limites");
+            const size_type pos = static_cast<size_type>(first - begin());
+            erase(pos, static_cast<size_type>(last - first));
+            return begin() + pos;
         }
 
         String &append_number(long long v)
@@ -384,6 +476,27 @@ namespace ct
             return npos;
         }
 
+        size_type find_first_not_of(const char *set, size_type pos = 0) const
+        {
+            if (!set)
+                detail::fatal("ct::String::find_first_not_of: conjunto invalido");
+            for (size_type i = pos; i < size(); ++i)
+                if (!std::strchr(set, data()[i]))
+                    return i;
+            return npos;
+        }
+
+        size_type find_last_of(const char *set, size_type pos = npos) const
+        {
+            if (!set)
+                detail::fatal("ct::String::find_last_of: conjunto invalido");
+            const size_type last = pos < size() ? pos : size();
+            for (size_type i = last; i > 0; --i)
+                if (std::strchr(set, data()[i - 1]))
+                    return i - 1;
+            return npos;
+        }
+
         bool contains(char c) const { return find(c) != npos; }
         bool contains(const char *s) const { return find(s) != npos; }
         bool contains(const String &s) const { return find(s) != npos; }
@@ -453,6 +566,29 @@ namespace ct
                 return result;
             return size() < o.size() ? -1 : (size() > o.size() ? 1 : 0);
         }
+
+        int compare(size_type pos, size_type n, const String &o) const
+        {
+            if (pos > size())
+                detail::fatal("ct::String::compare: pos fora dos limites");
+            const size_type available = size() - pos;
+            const size_type compared = n < available ? n : available;
+            const size_type common = compared < o.size() ? compared : o.size();
+            const int result = common ? std::memcmp(data() + pos, o.data(), common) : 0;
+            if (result)
+                return result;
+            return compared < o.size() ? -1 : (compared > o.size() ? 1 : 0);
+        }
+
+        int compare(size_type pos, size_type n, const char *s) const
+        {
+            if (!s)
+                detail::fatal("ct::String::compare: origem invalida");
+            return compare(pos, n, String(s));
+        }
+
+        int to_int() const { return static_cast<int>(std::strtol(c_str(), nullptr, 10)); }
+        float to_float() const { return std::strtof(c_str(), nullptr); }
 
         template <typename S>
         S to() const

@@ -363,9 +363,12 @@ TEST(Weak, QuebraCiclos)
         a->forte = b;
         b->forte = a;
         EXPECT_EQ(Nodo::vivos, 2);
+        EXPECT_EQ(a.use_count(), 2u);
+        EXPECT_EQ(b.use_count(), 2u);
+        a->forte.reset();
+        b->forte.reset();
     }
-    EXPECT_EQ(Nodo::vivos, 2); 
-    EXPECT_EQ(Nodo::vivos, 2);
+    EXPECT_EQ(Nodo::vivos, 0);
 
     Nodo::vivos = 0;
     {

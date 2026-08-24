@@ -578,7 +578,8 @@ TEST(Json, DeepCopyAndMove)
     EXPECT_TRUE(d.is_int());
 
     Json e = parse_ok("[1,2]");
-    e = e; // self-assign
+    Json *self = &e;
+    e = *self;
     EXPECT_EQ(e.size(), 2u);
 
     Json f = parse_ok(R"("str")");

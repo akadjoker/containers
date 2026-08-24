@@ -451,7 +451,9 @@ TEST(TreeMap, FuzzVsStdMapWithValidation)
         }
         ASSERT_EQ(m.size(), ref.size());
         if (i % 1000 == 0)
+        {
             ASSERT_TRUE(m.validate()) << "invariantes RB violados na op " << i;
+        }
     }
     EXPECT_TRUE(m.validate());
     auto it = ref.begin();

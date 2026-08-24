@@ -103,7 +103,7 @@ TEST(Unique, RaiiBasics)
     EXPECT_EQ(vazio.get(), nullptr);
     EXPECT_TRUE(vazio == nullptr);
     EXPECT_DEATH(*vazio, "ponteiro vazio");
-    EXPECT_DEATH(vazio->valor, "ponteiro vazio");
+    EXPECT_DEATH((void)vazio->valor, "ponteiro vazio");
 }
 
 TEST(Unique, MoveSemantics)
@@ -123,7 +123,8 @@ TEST(Unique, MoveSemantics)
     EXPECT_EQ(Contado::vivos, 1);
     EXPECT_EQ(c->valor, 1);
 
-    c = std::move(c); 
+    ct::Unique<Contado> *self = &c;
+    c = std::move(*self);
     EXPECT_EQ(Contado::vivos, 1);
     EXPECT_EQ(c->valor, 1);
 
@@ -206,7 +207,7 @@ TEST(Rc, ContagemEDestruicao)
     EXPECT_EQ(vazio.use_count(), 0u);
     EXPECT_TRUE(vazio == nullptr);
     EXPECT_DEATH(*vazio, "ponteiro vazio");
-    EXPECT_DEATH(vazio->valor, "ponteiro vazio");
+    EXPECT_DEATH((void)vazio->valor, "ponteiro vazio");
 }
 
 TEST(Rc, AtribuicoesIncluindoAsProprias)
@@ -221,7 +222,8 @@ TEST(Rc, AtribuicoesIncluindoAsProprias)
     EXPECT_EQ(a.use_count(), 2u);
     EXPECT_EQ(b->valor, 1);
 
-    a = a; 
+    Rc<Contado> *self = &a;
+    a = *self;
     EXPECT_EQ(a.use_count(), 2u);
     EXPECT_EQ(a->valor, 1);
     EXPECT_EQ(Contado::vivos, 1);
@@ -323,7 +325,8 @@ TEST(Weak, CopiasMovesEReset)
     Weak<Contado> w4(std::move(w2));
     EXPECT_FALSE(w4.expired());
 
-    w1 = w1; 
+    Weak<Contado> *self = &w1;
+    w1 = *self;
     EXPECT_FALSE(w1.expired());
     w3.reset();
     w3.reset();

@@ -161,7 +161,8 @@ TEST(VectorCopyMove, CopyAssign) {
     ct::Vector<int> b{9};
     b = a;
     EXPECT_EQ(a, b);
-    a = a;  
+    ct::Vector<int> *self = &a;
+    a = *self;
     EXPECT_EQ(a.size(), 3u);
 }
 

@@ -12,7 +12,10 @@ endif()
 add_library(ct INTERFACE)
 target_include_directories(ct INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# ---- GoogleTest ----
+if(POLICY CMP0135)
+  cmake_policy(SET CMP0135 NEW)
+endif()
+
 include(FetchContent)
 FetchContent_Declare(googletest
   URL https://github.com/google/googletest/archive/refs/tags/v1.14.0.zip)
@@ -38,10 +41,44 @@ add_executable(ct_tests
   tests/test_ptr.cpp
   tests/test_xml.cpp
   tests/test_function.cpp
-  tests/test_variant.cpp)
+  tests/test_variant.cpp
+  tests/test_limits.cpp)
 target_link_libraries(ct_tests PRIVATE ct gtest_main)
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
+
+set(CT_PUBLIC_HEADERS
+  ct/arena.hpp
+  ct/array.hpp
+  ct/deque.hpp
+  ct/flatmap.hpp
+  ct/function.hpp
+  ct/hashmap.hpp
+  ct/hashset.hpp
+  ct/json.hpp
+  ct/pool.hpp
+  ct/ptr.hpp
+  ct/queue.hpp
+  ct/slotmap.hpp
+  ct/sort.hpp
+  ct/span.hpp
+  ct/stack.hpp
+  ct/string.hpp
+  ct/treemap.hpp
+  ct/variant.hpp
+  ct/vector.hpp
+  ct/xml.hpp)
+
+set(CT_HEADER_TARGETS)
+foreach(header IN LISTS CT_PUBLIC_HEADERS)
+  string(MAKE_C_IDENTIFIER "${header}" target_suffix)
+  set(target "ct_header_${target_suffix}")
+  add_library(${target} OBJECT tests/header_standalone.cpp)
+  target_link_libraries(${target} PRIVATE ct)
+  target_compile_definitions(${target} PRIVATE CT_HEADER="${header}")
+  list(APPEND CT_HEADER_TARGETS ${target})
+endforeach()
+add_custom_target(ct_headers DEPENDS ${CT_HEADER_TARGETS})
 
 # ---- Benchmarks ----
 add_executable(ct_bench

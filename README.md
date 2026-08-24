@@ -236,6 +236,6 @@ and still iterates dense.
 
 `ct_tests` covers every container above; `ct_torture` fuzzes the containers with random
 operations. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the full
-suite in Debug and under ASan/UBSan on every push and PR, plus `ct_torture` with three
-seeds. No benchmarks run there — those numbers only make sense on a fixed machine, not
-on shared CI runners.
+suite with GCC and Clang in strict Debug mode, compiles each public header standalone,
+then runs ASan/UBSan plus `ct_torture` with three seeds. No benchmarks run there — those
+numbers only make sense on a fixed machine, not on shared CI runners.

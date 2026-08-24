@@ -34,7 +34,7 @@ jobs:
             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
           cmake --build build-sanitize --target ct_tests ct_torture -j"$(nproc)"
           ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
-            ctest --test-dir build-sanitize --output-on-failure
+            ./build-sanitize/ct_tests
           for seed in 1 17 12345; do
             ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 \
               ./build-sanitize/ct_torture "$seed" 10000

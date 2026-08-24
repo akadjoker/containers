@@ -175,12 +175,10 @@ namespace ct
         V &put(KK &&k, VV &&v)
         {
             if (CT_UNLIKELY(need_grow()))
-                grow();
+                return put_slow(detail::forward<KK>(k), detail::forward<VV>(v));
             size_type i = probe(k);
             if (meta_[i])
-            {
                 slots_[i].value = detail::forward<VV>(v);
-            }
             else
             {
                 ::new (static_cast<void *>(&slots_[i]))
@@ -194,7 +192,7 @@ namespace ct
         V &operator[](const K &k)
         {
             if (CT_UNLIKELY(need_grow()))
-                grow();
+                return index_slow(k);
             size_type i = probe(k);
             if (!meta_[i])
             {
@@ -309,6 +307,46 @@ namespace ct
         size_type mask_;     
         size_type size_;
 
+        template <typename KK, typename VV>
+        CT_NOINLINE V &put_slow(KK &&k, VV &&v)
+        {
+            if (slots_)
+            {
+                size_type i = probe(k);
+                if (meta_[i])
+                {
+                    slots_[i].value = detail::forward<VV>(v);
+                    return slots_[i].value;
+                }
+            }
+            K stable_key(detail::forward<KK>(k));
+            V stable_value(detail::forward<VV>(v));
+            grow();
+            size_type i = probe(stable_key);
+            ::new (static_cast<void *>(&slots_[i]))
+                Entry{detail::move(stable_key), detail::move(stable_value)};
+            meta_[i] = 1;
+            ++size_;
+            return slots_[i].value;
+        }
+
+        CT_NOINLINE V &index_slow(const K &k)
+        {
+            if (slots_)
+            {
+                size_type i = probe(k);
+                if (meta_[i])
+                    return slots_[i].value;
+            }
+            K stable_key(k);
+            grow();
+            size_type i = probe(stable_key);
+            ::new (static_cast<void *>(&slots_[i])) Entry{detail::move(stable_key), V()};
+            meta_[i] = 1;
+            ++size_;
+            return slots_[i].value;
+        }
+
         std::uint64_t hash_of(const K &k) const
         {
             return (*static_cast<const H *>(this))(k);
@@ -411,4 +449,4 @@ namespace ct
         }
     };
 
-} 
+}

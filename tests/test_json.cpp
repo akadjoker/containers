@@ -405,6 +405,25 @@ TEST(Json, ObjectLookupAndMutation)
     EXPECT_EQ(vazio.dump(), String(R"({"a":{"b":5}})"));
 }
 
+TEST(Json, StringKeysWithEmbeddedNulKeepTheirFullLength)
+{
+    const String key("a\0b", 3);
+    Json j = Json::object();
+    j.set(String(key), 1);
+    EXPECT_TRUE(j.contains(key));
+    ASSERT_NE(j.find(key), nullptr);
+    EXPECT_EQ(j[key].as_int(), 1);
+
+    // Atualizar pelo mesmo String nao pode procurar apenas ate ao primeiro NUL.
+    j[key] = 2;
+    j.set(String(key), 3);
+    EXPECT_EQ(j.size(), 1u);
+    EXPECT_EQ(j[key].as_int(), 3);
+
+    const Json &constant = j;
+    EXPECT_EQ(constant[key].as_int(), 3);
+}
+
 TEST(Json, ObjectConstLookupIsForgiving)
 {
     const Json j = parse_ok(R"({"janela":{"largura":1280}})");

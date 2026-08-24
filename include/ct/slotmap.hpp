@@ -156,9 +156,9 @@ namespace ct
         }
 
         iterator begin() noexcept { return dense_.data(); }
-        iterator end() noexcept { return dense_.data() + dense_.size(); }
+        iterator end() noexcept { return dense_.end(); }
         const_iterator begin() const noexcept { return dense_.data(); }
-        const_iterator end() const noexcept { return dense_.data() + dense_.size(); }
+        const_iterator end() const noexcept { return dense_.end(); }
 
         handle_type handle_at(size_type i) const
         {

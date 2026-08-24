@@ -298,7 +298,14 @@ namespace ct
         reference emplace_back(Args &&...args)
         {
             if (CT_UNLIKELY(size_ == cap_))
+            {
+                T stable(detail::forward<Args>(args)...);
                 grow();
+                T *p = ::new (static_cast<void *>(data_ + ((head_ + size_) & (cap_ - 1))))
+                    T(detail::move(stable));
+                ++size_;
+                return *p;
+            }
             T *p = ::new (static_cast<void *>(data_ + ((head_ + size_) & (cap_ - 1))))
                 T(detail::forward<Args>(args)...);
             ++size_;
@@ -333,7 +340,14 @@ namespace ct
         reference emplace_front(Args &&...args)
         {
             if (CT_UNLIKELY(size_ == cap_))
+            {
+                T stable(detail::forward<Args>(args)...);
                 grow();
+                head_ = (head_ - 1) & (cap_ - 1);
+                T *p = ::new (static_cast<void *>(data_ + head_)) T(detail::move(stable));
+                ++size_;
+                return *p;
+            }
             head_ = (head_ - 1) & (cap_ - 1);
             T *p = ::new (static_cast<void *>(data_ + head_)) T(detail::forward<Args>(args)...);
             ++size_;
@@ -582,4 +596,4 @@ namespace ct
         a.swap(b);
     }
 
-} 
+}

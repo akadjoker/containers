@@ -258,7 +258,13 @@ namespace ct
         reference emplace_back(Args &&...args)
         {
             if (CT_UNLIKELY(end_ == cap_))
+            {
+                T stable(detail::forward<Args>(args)...);
                 grow();
+                T *p = ::new (static_cast<void *>(end_)) T(detail::move(stable));
+                ++end_;
+                return *p;
+            }
             T *p = ::new (static_cast<void *>(end_)) T(detail::forward<Args>(args)...);
             ++end_;
             return *p;
@@ -336,6 +342,13 @@ namespace ct
         iterator emplace(const_iterator pos, Args &&...args)
         {
             size_type idx = data_ ? static_cast<size_type>(pos - data_) : 0;
+            if (end_ != cap_ && idx == size())
+            {
+                T *p = ::new (static_cast<void *>(end_)) T(detail::forward<Args>(args)...);
+                ++end_;
+                return p;
+            }
+            T stable(detail::forward<Args>(args)...);
             if (CT_UNLIKELY(end_ == cap_))
                 grow();
             if (idx < size())
@@ -343,7 +356,7 @@ namespace ct
 
                 open_gap(idx, trivial_copy{});
             }
-            ::new (static_cast<void *>(data_ + idx)) T(detail::forward<Args>(args)...);
+            ::new (static_cast<void *>(data_ + idx)) T(detail::move(stable));
             ++end_;
             return data_ + idx;
         }
@@ -363,7 +376,7 @@ namespace ct
                 close_gap(i, n, trivial_copy{});
                 end_ -= n;
             }
-            return data_ + i;
+            return i ? data_ + i : data_;
         }
 
         void swap(Vector &other) noexcept
@@ -407,7 +420,7 @@ namespace ct
         void copy_construct_from(const T *src, size_type n)
         {
             detail::copy_construct_n(data_, src, n);
-            end_ = data_ + n;
+            end_ = n ? data_ + n : data_;
         }
 
         void open_gap(size_type idx, detail::true_type)
@@ -527,4 +540,4 @@ namespace ct
         a.swap(b);
     }
 
-} 
+}

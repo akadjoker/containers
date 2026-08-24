@@ -101,6 +101,18 @@ TEST(SlotMap, NullHandleIsNeverValid)
     EXPECT_FALSE(m.contains(Handle<int>(0, 2))); 
 }
 
+TEST(SlotMap, EmptyIterationUsesNullIteratorsSafely)
+{
+    SlotMap<int> m;
+    EXPECT_EQ(m.begin(), nullptr);
+    EXPECT_EQ(m.begin(), m.end());
+    for (int value : m)
+        FAIL() << "SlotMap vazio nao devia iterar" << value;
+
+    m.clear();
+    EXPECT_EQ(m.begin(), m.end());
+}
+
 TEST(SlotMap, SwapRemoveKeepsEverythingResolvable)
 {
     SlotMap<int> m;

@@ -148,6 +148,14 @@ TEST(VectorCopyMove, CopyConstruct) {
     EXPECT_EQ(a[0], "a");
 }
 
+TEST(VectorCopyMove, EmptyCopyKeepsNullIterators) {
+    const ct::Vector<int> source;
+    ct::Vector<int> copy(source);
+    EXPECT_TRUE(copy.empty());
+    EXPECT_EQ(copy.data(), nullptr);
+    EXPECT_EQ(copy.begin(), copy.end());
+}
+
 TEST(VectorCopyMove, CopyAssign) {
     ct::Vector<int> a{1, 2, 3};
     ct::Vector<int> b{9};
@@ -197,6 +205,28 @@ TEST(VectorInsertErase, InsertTriggersGrowth) {
     EXPECT_EQ(v.size(), 100u);
     EXPECT_EQ(v[0], 99);
     EXPECT_EQ(v[99], 0);
+}
+
+TEST(VectorInsertErase, EmplaceWithElementReferenceSurvivesRelocation) {
+    ct::Vector<std::string> v;
+    v.reserve(8);
+    for (int i = 0; i < 8; ++i)
+        v.push_back("value_" + std::to_string(i));
+
+    const std::string first = v.front();
+    v.emplace_back(v.front());
+    EXPECT_EQ(v.back(), first);
+
+    // O argumento tambem pode referir um elemento que sera deslocado ao abrir o gap.
+    v.shrink_to_fit();
+    v.emplace(v.begin() + 2, v.back());
+    EXPECT_EQ(v[2], first);
+
+    // Mesmo sem realocar, abrir o gap move e destroi a cauda original.
+    v.reserve(32);
+    const std::string middle = v.back();
+    v.emplace(v.begin() + 1, v.back());
+    EXPECT_EQ(v[1], middle);
 }
 
 TEST(VectorInsertErase, EraseSingle) {

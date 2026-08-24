@@ -115,6 +115,19 @@ TEST(Span, BoundsAndEmptyAreFatal)
     EXPECT_DEATH(vazio.at(0), "fora dos limites");
 }
 
+TEST(Span, EmptySubviewsDoNotDoNullPointerArithmetic)
+{
+    Span<int> vazio;
+    EXPECT_EQ(vazio.end(), nullptr);
+    EXPECT_EQ(vazio.last(0).data(), nullptr);
+    EXPECT_EQ(vazio.subspan(0).data(), nullptr);
+
+    // Tambem e uma forma valida de representar um intervalo vazio.
+    Span<int> de_ponteiros(nullptr, nullptr);
+    EXPECT_TRUE(de_ponteiros.empty());
+    EXPECT_EQ(de_ponteiros.begin(), de_ponteiros.end());
+}
+
 TEST(Span, IterationAndBytes)
 {
     ct::Vector<int> v{1, 2, 3, 4};

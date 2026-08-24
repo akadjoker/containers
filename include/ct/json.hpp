@@ -547,16 +547,19 @@ namespace ct
 
         Json *find(const char *key) noexcept;
         const Json *find(const char *key) const noexcept;
+        Json *find(const String &key) noexcept;
+        const Json *find(const String &key) const noexcept;
         bool contains(const char *key) const noexcept { return find(key) != nullptr; }
+        bool contains(const String &key) const noexcept { return find(key) != nullptr; }
 
         // não-const: cria a chave (e transforma null em objeto). Atenção: pode
         // realocar o Vector interno e invalidar referências obtidas antes.
         Json &operator[](const char *key);
-        Json &operator[](const String &key) { return (*this)[key.c_str()]; }
+        Json &operator[](const String &key);
         // const: chave em falta devolve um null partilhado, para encadear
         // cfg["janela"]["largura"].as_int(1280) sem rebentar
         const Json &operator[](const char *key) const;
-        const Json &operator[](const String &key) const { return (*this)[key.c_str()]; }
+        const Json &operator[](const String &key) const;
 
         Json &set(String key, Json value);
         bool erase(const char *key);
@@ -953,6 +956,22 @@ namespace ct
         return const_cast<Json *>(this)->find(key);
     }
 
+    inline Json *Json::find(const String &key) noexcept
+    {
+        if (type_ != Obj)
+            return nullptr;
+        Object &members = *v_.o;
+        for (std::size_t i = 0; i < members.size(); ++i)
+            if (members[i].key == key)
+                return &members[i].value;
+        return nullptr;
+    }
+
+    inline const Json *Json::find(const String &key) const noexcept
+    {
+        return const_cast<Json *>(this)->find(key);
+    }
+
     inline Json &Json::operator[](const char *key)
     {
         if (type_ == Null)
@@ -965,7 +984,25 @@ namespace ct
         return v_.o->back().value;
     }
 
+    inline Json &Json::operator[](const String &key)
+    {
+        if (type_ == Null)
+            *this = Json::object();
+        if (CT_UNLIKELY(type_ != Obj))
+            detail::fatal("ct::Json: indexar por chave um valor que nao e um objeto");
+        if (Json *found = find(key))
+            return *found;
+        v_.o->emplace_back(String(key), Json());
+        return v_.o->back().value;
+    }
+
     inline const Json &Json::operator[](const char *key) const
+    {
+        const Json *found = find(key);
+        return found ? *found : null_value();
+    }
+
+    inline const Json &Json::operator[](const String &key) const
     {
         const Json *found = find(key);
         return found ? *found : null_value();
@@ -977,7 +1014,7 @@ namespace ct
             *this = Json::object();
         if (CT_UNLIKELY(type_ != Obj))
             detail::fatal("ct::Json::set: o valor nao e um objeto");
-        if (Json *found = find(key.c_str()))
+        if (Json *found = find(key))
         {
             *found = detail::move(value);
             return *found;

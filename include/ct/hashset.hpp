@@ -108,7 +108,7 @@ namespace ct
         bool insert(KK &&k)
         {
             if (CT_UNLIKELY(need_grow()))
-                grow();
+                return insert_slow(detail::forward<KK>(k));
             size_type i = probe(k);
             if (meta_[i])
                 return false;
@@ -218,6 +218,24 @@ namespace ct
         std::uint8_t *meta_; 
         size_type mask_;
         size_type size_;
+
+        template <typename KK>
+        CT_NOINLINE bool insert_slow(KK &&k)
+        {
+            if (slots_)
+            {
+                size_type i = probe(k);
+                if (meta_[i])
+                    return false;
+            }
+            K stable_key(detail::forward<KK>(k));
+            grow();
+            size_type i = probe(stable_key);
+            ::new (static_cast<void *>(&slots_[i])) K(detail::move(stable_key));
+            meta_[i] = 1;
+            ++size_;
+            return true;
+        }
 
         std::uint64_t hash_of(const K &k) const
         {

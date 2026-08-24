@@ -159,6 +159,21 @@ TEST(DequeWrap, GrowWhileWrappedNonTrivial) {
         ASSERT_EQ(d[i], "s" + std::to_string(i + 6));
 }
 
+TEST(DequeWrap, EmplaceWithElementReferenceSurvivesGrowth) {
+    ct::Deque<std::string> d;
+    d.reserve(8);
+    for (int i = 0; i < 8; ++i)
+        d.push_back("value_" + std::to_string(i));
+
+    const std::string front = d.front();
+    d.emplace_back(d.front());
+    EXPECT_EQ(d.back(), front);
+
+    d.shrink_to_fit();
+    d.emplace_front(d.back());
+    EXPECT_EQ(d.front(), front);
+}
+
 TEST(DequeFuzz, RandomOpsMatchStd) {
     ct::Deque<int> cd;
     std::deque<int> sd;

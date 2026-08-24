@@ -212,6 +212,32 @@ TEST(HashMap, ReserveAvoidsRehash)
     EXPECT_EQ(m.capacity(), cap) << "reserve devia evitar rehash";
 }
 
+TEST(HashMap, PutWithEntryReferencesDoesNotRehashOrDangle)
+{
+    ct::HashMap<ct::String, ct::String> m;
+    for (int i = 0; i < 12; ++i)
+        m.put(ct::String("key_") + ct::String::number(i),
+              ct::String("value_") + ct::String::number(i));
+
+    auto &entry = *m.begin();
+    const ct::String key = entry.key;
+    const ct::String value = entry.value;
+    const std::size_t capacity = m.capacity();
+    m.put(entry.key, entry.value);
+
+    EXPECT_EQ(m.size(), 12u);
+    EXPECT_EQ(m.capacity(), capacity);
+    ASSERT_NE(m.find(key), nullptr);
+    EXPECT_EQ(*m.find(key), value);
+
+    auto &same_entry = *m.begin();
+    const ct::String same_key = same_entry.key;
+    ct::String &found = m[same_entry.key];
+    EXPECT_EQ(m.size(), 12u);
+    EXPECT_EQ(m.capacity(), capacity);
+    EXPECT_EQ(found, *m.find(same_key));
+}
+
 TEST(FlatMap, InsertFindBasic)
 {
     ct::FlatMap<int, int> m;
@@ -579,4 +605,18 @@ TEST(HashSet, ClearAndReserve)
     s.clear();
     EXPECT_TRUE(s.empty());
     EXPECT_TRUE(s.insert(1));
+}
+
+TEST(HashSet, InsertWithInternalKeyDoesNotRehash)
+{
+    ct::HashSet<ct::String> s;
+    for (int i = 0; i < 12; ++i)
+        EXPECT_TRUE(s.insert(ct::String("key_") + ct::String::number(i)));
+
+    const ct::String key = *s.begin();
+    const std::size_t capacity = s.capacity();
+    EXPECT_FALSE(s.insert(*s.begin()));
+    EXPECT_EQ(s.size(), 12u);
+    EXPECT_EQ(s.capacity(), capacity);
+    EXPECT_TRUE(s.contains(key));
 }

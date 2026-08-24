@@ -23,7 +23,7 @@ namespace ct
         constexpr Span() noexcept : data_(nullptr), size_(0) {}
         constexpr Span(T *p, size_type n) noexcept : data_(p), size_(n) {}
         Span(T *first, T *last) noexcept
-            : data_(first), size_(static_cast<size_type>(last - first))
+            : data_(first), size_(first == last ? 0 : static_cast<size_type>(last - first))
         {
         }
 
@@ -80,7 +80,7 @@ namespace ct
         }
 
         constexpr iterator begin() const noexcept { return data_; }
-        constexpr iterator end() const noexcept { return data_ + size_; }
+        constexpr iterator end() const noexcept { return size_ ? data_ + size_ : data_; }
         reverse_iterator rbegin() const noexcept { return reverse_iterator(end()); }
         reverse_iterator rend() const noexcept { return reverse_iterator(begin()); }
 
@@ -95,7 +95,7 @@ namespace ct
         {
             if (CT_UNLIKELY(n > size_))
                 detail::fatal("ct::Span::last: pedaco maior que o span");
-            return Span(data_ + (size_ - n), n);
+            return Span(n == size_ ? data_ : data_ + (size_ - n), n);
         }
 
         Span subspan(size_type offset, size_type n = npos) const
@@ -103,7 +103,7 @@ namespace ct
             if (CT_UNLIKELY(offset > size_))
                 detail::fatal("ct::Span::subspan: offset fora dos limites");
             const size_type resto = size_ - offset;
-            return Span(data_ + offset, n < resto ? n : resto);
+            return Span(offset ? data_ + offset : data_, n < resto ? n : resto);
         }
 
     private:

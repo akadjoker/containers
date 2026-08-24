@@ -1,140 +1,144 @@
-# ct — fast containers (C++14, header-only)
- 
+# ct — header-only C++14 containers for games
 
-## Estado
+Small containers for C++14 game code. No exceptions, no RTTI, single-threaded,
+header-only. They lean on things the STL can't assume: that the element type
+is trivial, that the work is per-frame, that a dangling pointer is worse than
+a `fatal()`. Wherever a trade-off was made, it's written down next to the code
+instead of being hidden.
 
-| Container  | Notas |
+## What's in the box
+
+| Container | Notes |
 |---|---|
-| `ct::Vector<T, Alloc>`  | realloc/memcpy para tipos triviais, resize sem inicialização, allocator policy via EBO |
-| `ct::Arena` + `ArenaAlloc`  | bump por blocos, try_expand (crescimento in-place), reset() recicla por frame |
-| `ct::Pool<T>`  | free list tipada p/ objetos de jogo; API crua sem ctors; |
-| `ct::String`  | 24 B com SSO de 23 (std: 32 B, SSO 15); find/split/trim/number/hash; x15-20 na zona 16-23 chars |
-| `ct::HashMap<K,V>`  | open-addressing linear, erase backward-shift; x2-13 vs unordered_map |
-| `ct::HashSet<K>`  | mesma técnica; x5.4 vs unordered_set |
-| `ct::FlatMap<K,V>`  | ordenado (Vector + binary search); iteração x40-50 vs std::map |
-| `ct::TreeMap<K,V>`  | red-black tree com nós no Pool; insert x1.4, churn x1.2 vs std::map |
-| `ct::Deque<T, Alloc>`  | ring buffer pow2 (wrap = AND); pontas x1.9-2.4, FIFO x2, acesso x1.8 vs std::deque; spans lineares p/ iteração vectorizada (x2.6-3) |
-| `ct::Stack<T>`  | adaptor LIFO sobre Vector, overhead zero; x1.2-3.3 vs std::stack (default deque), x1.2-2.9 vs vector-backed |
-| `ct::Queue<T>`  | adaptor FIFO sobre Deque; x1.2-2.1 vs std::queue; com reserve() e clear() |
-| `ct::Array<T,N>`  | array fixo (sizeof == N*sizeof(T), trivial/standard-layout); acesso constexpr, at() com fatal, fill via memset, ==/< via memcmp só onde é seguro |
-| `ct::Span<T>` / `ct::StringView`  | vistas sem dono (2 palavras); ligam Vector/Array/String/arrays C sem copiar; `split_once`/`trimmed` parseiam configs sem alocar |
-| `ct::Unique<T>` / `Rc<T>` / `Weak<T>`  | RAII sem atomics; `make_rc` faz uma só alocação com o bloco colado ao objeto; copiar x2.6 vs `shared_ptr` |
-| `ct::SlotMap<T>` + `Handle<T>`  | handles com geração sobre array denso; handle morto é detetado em vez de dar ponteiro pendurado; iteração x15.8 e lookup x1.9 vs unordered_map |
-| `ct::Json`  | RFC 8259 completo sobre String+Vector; parse x2.5-3.4 e lookup x9.7 vs nlohmann; 32 B por valor; 0,14 s de compilação vs 0,93 s |
-| `ct::Xml`  | subconjunto pragmático p/ ler/escrever XML tipo Tiled TMX/TSX; sem namespaces/DTD/XPath (fora de escopo, de propósito); parse + dump(indent) |
-| `ct::Function<R(Args...)>`  | callback type-erased tipo std::function; SBO de 3 ponteiros sem alocar, só alvos grandes vão ao heap; copiável se o alvo for |
-| `ct::Variant<Ts...>`  | união com tag, conjunto fechado de tipos; sem alocar (armazenamento = o maior dos Ts); get/get_if/is/visit |
-| `ct::sort`  | radix O(n) p/ números (x2.5-4.5 vs std::sort) + introsort genérico (x1.15) |
+| `ct::Vector<T, Alloc>` | `realloc`/`memcpy` for trivial types, `resize` without initialization, allocator policy via EBO |
+| `ct::Arena` + `ArenaAlloc` | block bump allocator, `try_expand` (in-place growth), `reset()` recycles per frame |
+| `ct::Pool<T>` | typed free list for game objects; raw API, no ctors |
+| `ct::String` | 24 B with 23-byte SSO (`std::string`: 32 B, SSO 15); find/split/trim/number/hash; x15-20 in the 16-23 char range |
+| `ct::HashMap<K,V>` | open addressing, linear probing, backward-shift erase; x2-13 vs `unordered_map` |
+| `ct::HashSet<K>` | same technique; x5.4 vs `unordered_set` |
+| `ct::FlatMap<K,V>` | sorted (`Vector` + binary search); x40-50 iteration vs `std::map` |
+| `ct::TreeMap<K,V>` | red-black tree, nodes live in a `Pool`; x1.4 insert, x1.2 churn vs `std::map` |
+| `ct::Deque<T, Alloc>` | power-of-two ring buffer (wrap = AND); x1.9-2.4 at the ends, x2 FIFO, x1.8 access vs `std::deque`; linear spans for vectorized iteration (x2.6-3) |
+| `ct::Stack<T>` | LIFO adaptor over `Vector`, zero overhead; x1.2-3.3 vs `std::stack` (deque-backed), x1.2-2.9 vs vector-backed |
+| `ct::Queue<T>` | FIFO adaptor over `Deque`; x1.2-2.1 vs `std::queue`; comes with `reserve()` and `clear()` |
+| `ct::Array<T,N>` | fixed array (`sizeof == N*sizeof(T)`, trivial/standard-layout); constexpr access, `at()` is `fatal()`, `fill` via memset, `==`/`<` via memcmp where it's safe |
+| `ct::Span<T>` / `ct::StringView` | non-owning views (two words); bind `Vector`/`Array`/`String`/C arrays without copying; `split_once`/`trimmed` parse configs without allocating |
+| `ct::Unique<T>` / `Rc<T>` / `Weak<T>` | RAII without atomics; `make_rc` does a single allocation with the control block glued to the object; x2.6 copy vs `shared_ptr` |
+| `ct::SlotMap<T>` + `Handle<T>` | generational handles over a dense array; a dead handle is detected instead of leaving a dangling pointer; x15.8 iteration and x1.9 lookup vs `unordered_map` |
+| `ct::Json` | full RFC 8259 on `String`+`Vector`; x2.5-3.4 parse and x9.7 lookup vs nlohmann; 32 B per value; 0.14 s compile vs 0.93 s |
+| `ct::Xml` | pragmatic subset for reading/writing Tiled TMX/TSX-style XML; no namespaces/DTD/XPath (out of scope on purpose); parse + `dump(indent)` |
+| `ct::Function<R(Args...)>` | type-erased callback like `std::function`; 3-pointer SBO without allocating, only big targets go to the heap; copyable if the target is |
+| `ct::Variant<Ts...>` | tagged union, closed set of types; no allocation (storage is the largest of `Ts`); get/get_if/is/visit |
+| `ct::sort` | O(n) radix for numbers (x2.5-4.5 vs `std::sort`) + generic introsort (x1.15) |
 
-Regra  para jogos: **Arena** para o que morre no fim do frame
-(`reset()` recicla tudo, memória estabiliza no pico de um frame);
-**Pool** para o que nasce/morre a meio do jogo (free individual via free list).
+Rule of thumb for games: **Arena** for what dies at the end of the frame
+(`reset()` recycles everything, memory settles at the peak of one frame);
+**Pool** for what is born and dies mid-game (individual free via the free list).
 
 ## Build
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
-cd build && ctest            # testes
+cd build && ctest            # tests
 ./ct_bench                   # benchmarks vs std
 ```
 
-## Notas de performance do Deque
+## Deque
 
-- Ring buffer contíguo (capacidade potência de 2, wrap com AND) em vez do
-  map-de-blocos da std::deque — sem dupla indireção nem divisões.
-- Trade-off deliberado: crescer **invalida ponteiros/iteradores** (a std::deque
-  garante estabilidade nas pontas). Usa `reserve()` se precisares.
-- Sem insert/erase no meio — é uma fila/janela, não um vector.
-- Para loops quentes, `first_span()`/`second_span()` dão os (até) dois segmentos
-  lineares — iterar por span vectoriza (x2.6-3 vs range-for da std::deque).
+- Contiguous ring buffer (power-of-two capacity, wrap with AND) instead of
+  `std::deque`'s block map — no double indirection, no divisions.
+- Deliberate trade-off: growing **invalidates pointers/iterators** (`std::deque`
+  keeps the ends stable). Call `reserve()` if you need stability.
+- No `insert`/`erase` in the middle — it's a queue/window, not a vector.
+- For hot loops, `first_span()`/`second_span()` hand you the (up to) two linear
+  segments — iterating by span vectorizes (x2.6-3 vs range-for over `std::deque`).
 
-## Notas de performance do Vector
+## Vector
 
-- Tipos trivialmente copiáveis crescem com `realloc` (pode crescer in-place) e
-  relocalizam com `memcpy` → 5–9x mais rápido que `std::vector` em `push_back`
-  sem reserve.
-- `resize(n)` em tipos triviais **não inicializa** os elementos novos — usa
-  `resize(n, T())` se precisares de zeros.
-- Não usar `noinline` no caminho de crescimento: deixa o GCC manter `cap_` em
-  registo no loop quente (lição aprendida ao ler o assembly).
+- Trivially copyable types grow with `realloc` (can grow in place) and relocate
+  with `memcpy` → 5-9x faster than `std::vector` for `push_back` without `reserve`.
+- `resize(n)` on trivial types does **not** initialize the new elements — use
+  `resize(n, T())` if you want zeros.
+- Don't mark the growth path `noinline`: leaving it inline lets GCC keep `cap_`
+  in a register across the hot loop (learned the hard way, reading the asm).
 
-## Notas do ct::Json
+## Json
 
-Valor de 32 bytes (`String` inline com SSO de 23 evita o malloc na maioria das chaves
-e strings curtas; arrays e objetos são um ponteiro para um `Vector`). Sem exceções:
-input malformado devolve `Json::Error` com mensagem, linha e coluna; usar o tipo errado
-(pedir `items()` a um número) é `fatal()`.
+32-byte value: a `String` with 23-byte SSO inline (most keys and short strings never
+malloc), arrays and objects are a pointer to a `Vector`. No exceptions — malformed
+input returns `Json::Error` with a message, line and column; using the wrong type
+(asking `items()` on a number) is `fatal()`.
 
-- Objetos guardam a **ordem de inserção** (`Vector` de membros + procura linear) — o
-  round-trip devolve o ficheiro pela mesma ordem, ao contrário do `std::map` do nlohmann,
-  que reordena as chaves. Chaves repetidas ficam ambas; `find()` dá a primeira.
-- Parse com limite de profundidade (`kMaxDepth`, 200) — um ficheiro com `[[[[[...` de
-  fora não estoura o stack.
-- Números: inteiros ficam `Int`/`Uint` (int64/uint64, sem perder precisão em ids grandes)
-  e só passam a `double` se não couberem. `1.0` sai como `"1.0"` para o tipo sobreviver
-  ao round-trip. Um número fora do alcance do double (`1e999`) é **erro de parse**, não
-  infinito — aceitá-lo faria o dump escrever `null` e perder o valor em silêncio.
-- **Não validamos UTF-8**: bytes inválidos (ficheiros antigos em latin-1) passam tal e
-  qual, onde o nlohmann rejeita o ficheiro inteiro. Deliberado — não se perde um ficheiro
-  de assets por causa de um `ç` mal codificado.
-- dtoa próprio: gera os dígitos por escalamento em `long double` e **verifica o
-  round-trip** antes de aceitar, com fallback para `snprintf`. Testado em 3,2 M de
-  doubles aleatórios sem uma única falha. Independente do locale (o `strtod`/`snprintf`
-  do sistema partem-se com `LC_NUMERIC` de vírgula decimal; este não).
+- Objects keep **insertion order** (a `Vector` of members plus a linear search), so a
+  round-trip returns the file in the same order — unlike nlohmann's `std::map`, which
+  reorders keys. Duplicate keys both survive; `find()` returns the first.
+- Parse depth is capped (`kMaxDepth`, 200) — a file of `[[[[[...` from outside can't
+  blow the stack.
+- Numbers: integers stay `Int`/`Uint` (int64/uint64, no precision loss on large ids)
+  and only become `double` when they don't fit. `1.0` dumps as `"1.0"` so the type
+  survives a round-trip. A number out of double range (`1e999`) is a **parse error**,
+  not infinity — accepting it would make `dump` write `null` and silently drop the value.
+- **UTF-8 is not validated**: invalid bytes (old latin-1 files) pass through as-is,
+  where nlohmann rejects the whole file. On purpose — we'd rather not lose an asset
+  file over one mis-encoded `ç`.
+- Own dtoa: digits are generated by scaling in `long double` and **round-trip is
+  verified** before accepting, with a fallback to `snprintf`. Tested over 3.2 M random
+  doubles without a single failure. Locale-independent (the system's `strtod`/`snprintf`
+  break under `LC_NUMERIC` with a decimal comma; this one doesn't).
 
-Validação: **397 ficheiros JSON reais** (7,1 MB, 166 740 nós) comparados nó a nó com o
-nlohmann — zero diferenças de valor, zero round-trips falhados. Mais 240 mil inputs de
-lixo e mutações de ficheiros reais sob ASan/UBSan sem um crash nem um leak, e 3,2 M de
-doubles aleatórios sem uma falha de round-trip.
+Validation: **397 real JSON files** (7.1 MB, 166 740 nodes) compared node-by-node
+against nlohmann — zero value differences, zero failed round-trips. Another 240k of
+garbage inputs and mutations of real files under ASan/UBSan, no crash, no leak. And
+3.2 M random doubles with no round-trip failure.
 
-Medido contra o `nlohmann::json` 3.11.3 em cenas reais do Radion (`ct_bench_json`):
+Measured against `nlohmann::json` 3.11.3 on real Radion scenes (`ct_bench_json`):
 
 | | ct | nlohmann | |
 |---|---|---|---|
-| parse (31 KB) | 15,9 ms | 53,3 ms | **x3.34** |
-| walk completo | 3,6 ms | 9,7 ms | **x2.66** |
-| lookup por chave | 0,49 ms | 4,77 ms | **x9.74** |
-| construir do zero | 8,5 ms | 17,2 ms | **x2.02** |
-| dump compacto | 13,2 ms | 10,2 ms | x0.77 |
-| dump(4) | 15,7 ms | 13,1 ms | x0.84 |
+| parse (31 KB) | 15.9 ms | 53.3 ms | **x3.34** |
+| full walk | 3.6 ms | 9.7 ms | **x2.66** |
+| lookup by key | 0.49 ms | 4.77 ms | **x9.74** |
+| build from scratch | 8.5 ms | 17.2 ms | **x2.02** |
+| compact dump | 13.2 ms | 10.2 ms | x0.77 |
+| dump(4) | 15.7 ms | 13.1 ms | x0.84 |
 
-O dump ainda perde porque o nlohmann traz o grisu2 para formatar doubles (o nosso
-serializador em si é ~1,9x mais rápido; a diferença toda está no dtoa). Em compilação:
-`ct/json.hpp` são 16 298 linhas pré-processadas e 0,14 s por TU, contra 98 564 linhas
-e 0,93 s do `nlohmann/json.hpp`.
+Dump still loses because nlohmann ships grisu2 to format doubles (our serializer
+itself is ~1.9x faster — the whole gap is the dtoa). Compile time: `ct/json.hpp` is
+16 298 preprocessed lines and 0.14 s per TU, vs 98 564 lines and 0.93 s for
+`nlohmann/json.hpp`.
 
-## Notas do ct::Xml
+## Xml
 
-Nó = sempre um elemento (nome, atributos, filhos, texto). Sem exceções, como o `Json`:
-`Xml::Error` para input malformado, defaults nos getters para o resto.
+A node is always an element (name, attributes, children, text). No exceptions, same
+as `Json`: `Xml::Error` for malformed input, getters default for everything else.
 
-- Escopo deliberadamente pequeno — feito para mapas do [Tiled](https://www.mapeditor.org/)
-  (`.tmx`/`.tsx`), não um parser XML genérico. Fora de escopo: namespaces, DTD/entidades
-  externas (só as 5 predefinidas — `&amp; &lt; &gt; &quot; &apos;` — mais referências
-  numéricas `&#N;`/`&#xN;`), XPath/XSLT/validação de schema. Um `<!DOCTYPE>` é tolerado e
-  ignorado, nunca processado.
-- `CDATA` entra cru (sem decode de entidades) — é o caminho comum para dados de tile em
-  base64/csv. Texto e CDATA concatenam-se em `text()`; espaço em branco puro entre filhos
-  (só indentação) é descartado automaticamente, mas um elemento sem filhos preserva-o tal
-  e qual (`text_trimmed()` apara as pontas quando isso não importa, como no `<data>`).
-- `dump(indent)` seguem a mesma convenção do `Json::dump` (`< 0` compacto, `>= 0` um
-  elemento por linha); `dump_document()` antepõe a declaração `<?xml ...?>`.
-- Mesma técnica do `Json` para o problema de conter-se a si próprio: `children_` é um
-  `Vector<Xml>*` alocado à parte (preguiçoso — só no primeiro filho), não um valor direto.
-- Validado com 48 testes GTest e 200 mil mutações aleatórias de ficheiros TMX-like sob
-  ASan/UBSan, sem crash nem leak.
+- Deliberately small scope — it exists for [Tiled](https://www.mapeditor.org/) maps
+  (`.tmx`/`.tsx`), not as a generic XML parser. Out of scope: namespaces, DTD/external
+  entities (only the 5 predefined — `&amp; &lt; &gt; &quot; &apos;` — plus numeric refs
+  `&#N;`/`&#xN;`), XPath/XSLT/schema validation. A `<!DOCTYPE>` is tolerated and ignored,
+  never processed.
+- `CDATA` comes in raw (no entity decode) — that's the common path for tile data in
+  base64/csv. Text and CDATA concatenate in `text()`; whitespace-only text between
+  children (just indentation) is dropped automatically, but a childless element keeps
+  it as-is (`text_trimmed()` trims the ends where it doesn't matter, like in `<data>`).
+- `dump(indent)` follows `Json::dump`'s convention (`< 0` compact, `>= 0` one element
+  per line); `dump_document()` prepends the `<?xml ...?>` declaration.
+- Same trick as `Json` for the self-reference problem: `children_` is a separately
+  allocated `Vector<Xml>*` (lazily — only on the first child), not a direct value.
+- Validated with 48 GTest tests plus 200k random mutations of TMX-like files under
+  ASan/UBSan — no crash, no leak.
 
-## Notas do ct::Function e ct::Variant
+## Function and Variant
 
-Dois primitivos genéricos, não específicos de nenhum formato de ficheiro — a diferença
-entre eles é a pergunta que respondem:
+Two generic primitives, not tied to any file format. The difference is the question
+they answer:
 
-- **`Function<R(Args...)>`** guarda **qualquer coisa chamável** com essa assinatura
-  (função livre, lambda, functor, `std::bind`) atrás de type erasure — conjunto aberto,
-  o `Function` não sabe nem quer saber o tipo concreto por baixo.
-- **`Variant<Ts...>`** guarda **um valor de um conjunto fechado** de tipos conhecidos em
-  compile-time — nunca aloca, o armazenamento é só o maior dos `Ts...` embutido.
+- **`Function<R(Args...)>`** stores **anything callable** with that signature (free
+  function, lambda, functor, `std::bind`) behind type erasure — open set, the
+  `Function` neither knows nor cares what the concrete type is.
+- **`Variant<Ts...>`** stores **one value from a closed set** of compile-time-known
+  types — it never allocates, storage is just the largest of `Ts...` inline.
 
 ```cpp
 ct::Function<int(int,int)> f = [](int a, int b) { return a + b; };
@@ -143,86 +147,95 @@ f(2, 3); // 5
 ct::Variant<int, double, ct::String> v = 42;
 v.is<int>();       // true
 v = ct::String("x");
-v.visit(Printer{}); // dispatch para o operator() certo, por tipo ativo
+v.visit(Printer{}); // dispatches to the right operator() for the active type
 ```
 
-- `Function` copia o alvo por SBO de 3 ponteiros (24 B) — cobre a maioria das lambdas de
-  callback ("captura `this` + um par de valores"); só as maiores vão ao heap. Copiar uma
-  `Function` exige que o alvo guardado também seja copiável (como o `std::function`).
-  Chamar uma `Function` vazia é `fatal()`, não `std::bad_function_call`.
-- `Variant` usa recursão sobre `Ts...` para destruir/copiar/mover o alternativo ativo —
-  não há vtable por índice, e a lista costuma ter poucos tipos. `get<T>()` errado é
-  `fatal()`; `get_if<T>()` devolve `nullptr` para o caminho em que isso é normal.
-- Ambos guardam o valor via `reinterpret_cast` de um buffer de bytes — o mesmo truque que
-  o `std::function`/`std::variant` da própria std usam por baixo (legal por `basic.life`).
+- `Function` copies the target through a 3-pointer SBO (24 B) — covers most callback
+  lambdas ("capture `this` plus a couple of values"); only the larger ones hit the heap.
+  Copying a `Function` requires the stored target to be copyable too (same as
+  `std::function`). Calling an empty `Function` is `fatal()`, not `std::bad_function_call`.
+- `Variant` recurses over `Ts...` to destroy/copy/move the active alternative — no
+  per-index vtable, and the list is usually short. A wrong `get<T>()` is `fatal()`;
+  `get_if<T>()` returns `nullptr` for the path where that's normal.
+- Both store the value via `reinterpret_cast` over a byte buffer — the same trick
+  `std::function`/`std::variant` use under the hood (legal by `basic.life`).
 
-## Notas do ct::SlotMap
+## SlotMap
 
-O problema que resolve: guardar `Body*` ou `Entity*` e ficar com um ponteiro pendurado
-quando o objeto morre. Aqui guarda-se um `Handle<T>` (8 bytes, tipado — não se troca o de
-uma entidade pelo de um corpo) e o mapa deteta handles mortos:
+The problem it solves: you hold a `Body*` or `Entity*` and it dangles when the object
+dies. Here you hold a `Handle<T>` (8 bytes, typed — you can't swap an entity's for a
+body's) and the map detects dead handles:
 
 ```cpp
 ct::SlotMap<Body> bodies;
 auto h = bodies.insert(Body{...});
 bodies.erase(h);
-bodies.get(h);          // nullptr, e não lixo — o slot foi reutilizado com nova geração
-for (Body &b : bodies.items()) b.integrate(dt);   // denso e contíguo
+bodies.get(h);          // nullptr, not garbage — the slot was reused with a new generation
+for (Body &b : bodies.items()) b.integrate(dt);   // dense and contiguous
 ```
 
-- Os objetos ficam num array **denso** (`erase` tapa o buraco com o último), por isso
-  iterar é igual a iterar um `Vector` — nada de saltos de cache como num map de nós.
-- A geração é ímpar quando o slot está vivo e par quando está livre, e sobe a cada
-  `erase`: um handle antigo nunca volta a bater certo, mesmo depois de o slot ser
-  reutilizado. `Handle{}` (geração 0) nunca é válido.
-- **Os endereços não são estáveis** — o handle é que é. Não guardes `T*` entre frames,
-  e não apagues durante uma passagem por `items()` (recolhe handles, apaga depois).
-- `operator[]` é `fatal()` se o handle for inválido; `get()` devolve `nullptr` para o
-  caminho em que a morte do objeto é normal.
+- Objects sit in a **dense** array (`erase` back-fills the hole with the last one), so
+  iterating is like iterating a `Vector` — none of the cache misses of a node map.
+- The generation is odd while a slot is alive, even when free, and bumps on every
+  `erase`: an old handle never matches again, even after the slot is reused.
+  `Handle{}` (generation 0) is never valid.
+- **Addresses are not stable** — the handle is. Don't keep `T*` across frames, and don't
+  erase while iterating `items()` (collect handles, erase after).
+- `operator[]` is `fatal()` on an invalid handle; `get()` returns `nullptr` for the
+  path where object death is normal.
 
-Com 100 000 corpos de 32 B (`ct_bench_slotmap`):
+With 100 000 32-byte bodies (`ct_bench_slotmap`):
 
 | | ct::SlotMap | std::unordered_map | |
 |---|---|---|---|
-| iterar e integrar | 5,7 ms | 90,3 ms | **x15.8** |
-| lookup por handle | 10,0 ms | 18,7 ms | **x1.87** |
-| apagar metade e repor | 5,4 ms | 27,7 ms | **x5.09** |
+| iterate + integrate | 5.7 ms | 90.3 ms | **x15.8** |
+| lookup by handle | 10.0 ms | 18.7 ms | **x1.87** |
+| erase half, refill | 5.4 ms | 27.7 ms | **x5.09** |
 
-Contra um `Vector` a seco, iterar por `items()` custa o mesmo (x1.03 — é literalmente o
-mesmo array), e o acesso por handle custa **x0.41** face a indexar um índice cru: duas
-leituras dependentes mais a verificação da geração. É esse o preço de não ter ponteiros
-pendurados.
+Against a bare `Vector`, iterating `items()` costs the same (x1.03 — it literally is
+the same array), and handle access costs **x0.41** vs indexing a raw index: two
+dependent reads plus the generation check. That's the price of not having dangling
+pointers.
 
-## Notas dos ponteiros RAII
+## RAII pointers
 
 ```cpp
-ct::Unique<Textura> t = ct::make_unique<Textura>("chao.png");  // 8 B, um dono
-ct::Rc<Mesh> m = ct::make_rc<Mesh>(...);                       // vários donos
-ct::Weak<Mesh> obs = m;                                        // observa sem segurar
-if (ct::Rc<Mesh> vivo = obs.lock()) desenhar(*vivo);           // ou vem vazio
+ct::Unique<Texture> t = ct::make_unique<Texture>("floor.png");  // 8 B, one owner
+ct::Rc<Mesh> m = ct::make_rc<Mesh>(...);                       // several owners
+ct::Weak<Mesh> obs = m;                                        // observes, doesn't hold
+if (ct::Rc<Mesh> alive = obs.lock()) draw(*alive);             // or it comes back empty
 ```
 
-Contadores **normais, não atómicos** — é single-thread por desenho, como o resto da lib.
-Um `Rc` nunca pode atravessar threads (duas cópias em simultâneo corrompem a contagem).
+Counters are **plain, non-atomic** — rendering is single-threaded, like the rest of the
+lib. An `Rc` must never cross threads (two concurrent copies corrupt the count).
 
-- `make_rc` faz **uma** alocação: `[Ctrl][padding][T]`, com o contador na mesma linha de
-  cache do objeto. O `Ctrl` são 16 B (dois `uint32` + um ponteiro de operação), contra os
-  24-32 B do bloco da std com vtable de deleter.
-- O bloco sabe destruir **o tipo com que foi criado**: `Rc<Base> b = make_rc<Derivada>()`
-  corre `~Derivada` mesmo sem destrutor virtual (com `unique_ptr`/`delete` isso é UB).
-- `Rc` tem 16 B (ponteiro + bloco) para poder fazer upcast. Daria para 8 B calculando o
-  bloco a partir do objeto, mas aí `Rc<Derivada>` → `Rc<Base>` deixava de compilar, e a
-  cópia não fica mais rápida por isso — o ganho está no contador, não no tamanho.
-- Ciclos de `Rc` continuam a fugir, como em qualquer refcount: o de trás tem de ser `Weak`.
+- `make_rc` does **one** allocation: `[Ctrl][padding][T]`, with the counter on the same
+  cache line as the object. `Ctrl` is 16 B (two `uint32` + an operation pointer), vs the
+  24-32 B std block with its deleter vtable.
+- The block knows how to destroy **the type it was created with**: `Rc<Base> b =
+  make_rc<Derived>()` runs `~Derived` even without a virtual destructor (with
+  `unique_ptr`/`delete` that's UB).
+- `Rc` is 16 B (pointer + block) to allow upcasting. It could be 8 B by deriving the
+  block from the object, but then `Rc<Derived>` → `Rc<Base>` would stop compiling — and
+  copying wouldn't get any faster anyway; the win is in the counter, not the size.
+- `Rc` cycles still leak, as with any refcount: the back edge must be `Weak`.
 
-Quando usar o quê, por ordem de preferência: **Arena** (morre no fim do frame) → **Pool**
-ou **Unique** (um dono) → **SlotMap + Handle** (entidades/corpos, com deteção de morte) →
-**Rc/Weak** só para posse mesmo partilhada com tempo de vida dinâmico (assets referenciados
-por N entidades). Um `Handle` de 8 B faz o trabalho de um `weak_ptr` sem bloco de controlo
-nem refcount, e ainda itera denso.
+Pick order: **Arena** (dies at end of frame) → **Pool** or **Unique** (one owner) →
+**SlotMap + Handle** (entities/bodies, with death detection) → **Rc/Weak** only for
+genuinely shared ownership with a dynamic lifetime (assets referenced by N entities).
+An 8-byte `Handle` does the job of a `weak_ptr` without a control block or refcount,
+and still iterates dense.
 
-| 2 M de operações | ct | std | |
+| 2 M operations | ct | std | |
 |---|---|---|---|
-| copiar (refcount) | 20,0 ms | 52,4 ms | **x2.62** |
-| make + destruir | 23,9 ms | 27,4 ms | x1.14 |
-| `Unique` make + destruir | 19,4 ms | 23,9 ms | x1.23 |
+| copy (refcount) | 20.0 ms | 52.4 ms | **x2.62** |
+| make + destroy | 23.9 ms | 27.4 ms | x1.14 |
+| `Unique` make + destroy | 19.4 ms | 23.9 ms | x1.23 |
+
+## Tests
+
+`ct_tests` covers every container above; `ct_torture` fuzzes the containers with random
+operations. CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs the full
+suite in Debug and under ASan/UBSan on every push and PR, plus `ct_torture` with three
+seeds. No benchmarks run there — those numbers only make sense on a fixed machine, not
+on shared CI runners.

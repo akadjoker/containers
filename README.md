@@ -29,6 +29,7 @@ instead of being hidden.
 | `ct::Xml` | pragmatic subset for reading/writing Tiled TMX/TSX-style XML; no namespaces/DTD/XPath (out of scope on purpose); parse + `dump(indent)` |
 | `ct::Function<R(Args...)>` | type-erased callback like `std::function`; 3-pointer SBO without allocating, only big targets go to the heap; copyable if the target is |
 | `ct::Variant<Ts...>` | tagged union, closed set of types; no allocation (storage is the largest of `Ts`); get/get_if/is/visit |
+| `ct::RectPacker` | multi-page, power-of-two texture-atlas packing with MaxRects; uses `ct::Vector` throughout |
 | `ct::sort` | O(n) radix for numbers (x2.5-4.5 vs `std::sort`) + generic introsort (x1.15) |
 
 Rule of thumb for games: **Arena** for what dies at the end of the frame
@@ -42,6 +43,22 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 cd build && ctest            # tests
 ./ct_bench                   # benchmarks vs std
+```
+
+## RectPacker
+
+`ct::RectPacker` is a single-header MaxRects atlas packer. Define
+`CT_RECTPACKER_IMPLEMENTATION` in exactly one `.cpp` before including it; all other
+files only include `ct/rectpacker.hpp`.
+
+```cpp
+// atlas_packer.cpp
+#define CT_RECTPACKER_IMPLEMENTATION
+#include <ct/rectpacker.hpp>
+
+ct::Vector<ct::RectPacker::Input> sprites = {{101, 32, 16}, {102, 20, 20}};
+ct::Vector<ct::RectPacker::Page> pages =
+    ct::RectPacker::pack_pages(sprites, 2048, 2048, 1);
 ```
 
 ## Deque

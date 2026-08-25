@@ -42,7 +42,8 @@ add_executable(ct_tests
   tests/test_xml.cpp
   tests/test_function.cpp
   tests/test_variant.cpp
-  tests/test_limits.cpp)
+  tests/test_limits.cpp
+  tests/test_rectpacker.cpp)
 target_link_libraries(ct_tests PRIVATE ct gtest_main)
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
@@ -59,6 +60,7 @@ set(CT_PUBLIC_HEADERS
   ct/pool.hpp
   ct/ptr.hpp
   ct/queue.hpp
+  ct/rectpacker.hpp
   ct/slotmap.hpp
   ct/sort.hpp
   ct/span.hpp

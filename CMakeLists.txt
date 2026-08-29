@@ -35,7 +35,6 @@ add_executable(ct_tests
   tests/test_deque.cpp
   tests/test_stack.cpp
   tests/test_queue.cpp
-  tests/test_json.cpp
   tests/test_span.cpp
   tests/test_slotmap.cpp
   tests/test_ptr.cpp
@@ -56,7 +55,6 @@ set(CT_PUBLIC_HEADERS
   ct/function.hpp
   ct/hashmap.hpp
   ct/hashset.hpp
-  ct/json.hpp
   ct/pool.hpp
   ct/ptr.hpp
   ct/queue.hpp
@@ -107,11 +105,6 @@ add_executable(ct_bench_map
   bench/bench_map.cpp)
 target_link_libraries(ct_bench_map PRIVATE ct)
 target_compile_options(ct_bench_map PRIVATE -O3 -march=native)
-
-add_executable(ct_bench_json
-  bench/bench_json.cpp)
-target_link_libraries(ct_bench_json PRIVATE ct)
-target_compile_options(ct_bench_json PRIVATE -O3 -march=native)
 
 add_executable(ct_bench_slotmap
   bench/bench_slotmap.cpp)

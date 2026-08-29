@@ -174,6 +174,34 @@ TEST(StringAppend, SelfAppendIsSafe)
     EXPECT_TRUE(h.ends_with("perigoso!"));
 }
 
+TEST(StringEdit, AppendInsertAndErase)
+{
+    String s("abcd");
+    s.append(2, '!');
+    EXPECT_TRUE(s == "abcd!!");
+    s.insert(2, 3, '-');
+    EXPECT_TRUE(s == "ab---cd!!");
+    s.erase(2, 3);
+    EXPECT_TRUE(s == "abcd!!");
+    s.erase(s.begin() + 4, s.end());
+    EXPECT_TRUE(s == "abcd");
+}
+
+TEST(StringEdit, InsertAliasesItsOwnStorage)
+{
+    String complete("abcd");
+    complete.insert(1, complete);
+    EXPECT_TRUE(complete == "aabcdbcd");
+
+    String tail("abcd");
+    tail.insert(1, tail.data() + 1, 3);
+    EXPECT_TRUE(tail == "abcdbcd");
+
+    String overlap("abcd");
+    overlap.insert(2, overlap.data() + 1, 3);
+    EXPECT_TRUE(overlap == "abbcdcd");
+}
+
 TEST(StringAppend, OperatorPlus)
 {
     String a("foo");
@@ -254,6 +282,17 @@ TEST(StringFind, StartsEndsContains)
     EXPECT_FALSE(String("gz").ends_with(".tar.gz")); 
 }
 
+TEST(StringFind, NotOfAndLastOf)
+{
+    EXPECT_EQ(String("  texto").find_first_not_of(" "), 2u);
+    EXPECT_TRUE(String("   ").find_first_not_of(" ") == String::npos);
+    EXPECT_EQ(String("file.json").find_last_of("."), 4u);
+    EXPECT_EQ(String("a.b.c").find_last_of(".", 3), 1u);
+    EXPECT_TRUE(String("abc").find_last_of(".") == String::npos);
+}
+
+// ---------- fatias / utils ----------
+
 TEST(StringSlice, Substr)
 {
     String s("hello world");
@@ -302,6 +341,15 @@ TEST(StringCompare, Operators)
     EXPECT_TRUE(String("abc") == "abc");
     EXPECT_TRUE("abc" == String("abc"));
     EXPECT_TRUE(String("ab\0c", 4) != String("ab\0d", 4)) << "binário com NUL interno";
+}
+
+TEST(StringCompare, SlicesAndConversions)
+{
+    String s("prefix-value");
+    EXPECT_EQ(s.compare(0, 6, "prefix"), 0);
+    EXPECT_LT(s.compare(7, 5, String("zebra")), 0);
+    EXPECT_EQ(String("42").to_int(), 42);
+    EXPECT_FLOAT_EQ(String("3.5").to_float(), 3.5f);
 }
 
 TEST(StringCompare, SortMatchesStd)

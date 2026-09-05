@@ -203,6 +203,20 @@ namespace ct
             return slots_[i].value;
         }
 
+        /* Removes k and, when it was present, moves its value into out. Saves
+           the caller a second probe when the removed value is still needed. */
+        bool erase(const K &k, V &out)
+        {
+            if (!size_)
+                return false;
+            size_type i = probe(k);
+            if (!meta_[i])
+                return false;
+            out = detail::move(slots_[i].value);
+            erase_at(i);
+            return true;
+        }
+
         bool erase(const K &k)
         {
             if (!size_)
@@ -210,6 +224,12 @@ namespace ct
             size_type i = probe(k);
             if (!meta_[i])
                 return false;
+            erase_at(i);
+            return true;
+        }
+
+        void erase_at(size_type i)
+        {
             slots_[i].~Entry();
 
             size_type j = i;
@@ -230,7 +250,6 @@ namespace ct
             }
             meta_[i] = 0;
             --size_;
-            return true;
         }
 
         void clear()

@@ -622,3 +622,73 @@ TEST(Sort, PlainCArray)
     for (int i = 1; i < 300; ++i)
         ASSERT_LE(a[i - 1], a[i]);
 }
+
+namespace
+{
+    struct Rec
+    {
+        int key;
+        int seq;
+    };
+    bool rec_less(const Rec &a, const Rec &b) { return a.key < b.key; }
+}
+
+TEST(StableSort, KeepsOrderOfEqualKeysAllSizes)
+{
+    for (std::size_t n : {0u, 1u, 2u, 23u, 24u, 25u, 47u, 48u, 49u, 97u, 1000u, 4097u, 100000u})
+    {
+        std::vector<Rec> ref;
+        ct::Vector<Rec> v;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            Rec r{static_cast<int>(rng() % 16), static_cast<int>(i)};
+            ref.push_back(r);
+            v.push_back(r);
+        }
+        std::stable_sort(ref.begin(), ref.end(), rec_less);
+        ct::stable_sort(v.begin(), v.end(), rec_less);
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            ASSERT_EQ(v[i].key, ref[i].key) << "n=" << n << " i=" << i;
+            ASSERT_EQ(v[i].seq, ref[i].seq) << "n=" << n << " i=" << i;
+        }
+    }
+}
+
+TEST(StableSort, MatchesStdOnPatterns)
+{
+    for (std::size_t n : {3u, 24u, 25u, 128u, 129u, 1000u, 65536u})
+    {
+        std::vector<int> ref;
+        ct::Vector<int> v;
+        for (std::size_t i = 0; i < n; ++i)
+        {
+            int x = (n & 1) ? static_cast<int>(rng()) : static_cast<int>(n - i);
+            ref.push_back(x);
+            v.push_back(x);
+        }
+        std::stable_sort(ref.begin(), ref.end());
+        ct::stable_sort(v.begin(), v.end());
+        for (std::size_t i = 0; i < n; ++i)
+            ASSERT_EQ(v[i], ref[i]) << "n=" << n << " i=" << i;
+    }
+}
+
+TEST(StableSort, NonTrivialElements)
+{
+    ct::Vector<ct::String> v;
+    std::vector<std::string> ref;
+    for (int i = 0; i < 3000; ++i)
+    {
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%03u-%d-a-rather-long-string-to-leave-the-sso", rng() % 50, i);
+        v.push_back(ct::String(buf));
+        ref.push_back(buf);
+    }
+    auto by_prefix = [](const ct::String &a, const ct::String &b) { return std::memcmp(a.c_str(), b.c_str(), 3) < 0; };
+    auto by_prefix_std = [](const std::string &a, const std::string &b) { return std::memcmp(a.c_str(), b.c_str(), 3) < 0; };
+    ct::stable_sort(v.begin(), v.end(), by_prefix);
+    std::stable_sort(ref.begin(), ref.end(), by_prefix_std);
+    for (std::size_t i = 0; i < ref.size(); ++i)
+        ASSERT_STREQ(v[i].c_str(), ref[i].c_str()) << "i=" << i;
+}

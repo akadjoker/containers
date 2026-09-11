@@ -238,6 +238,67 @@ TEST(HashMap, PutWithEntryReferencesDoesNotRehashOrDangle)
     EXPECT_EQ(found, *m.find(same_key));
 }
 
+TEST(HashMap, ConstIterationFromConstContext)
+{
+    ct::HashMap<int, int> m;
+    for (int i = 0; i < 8; ++i)
+        m.put(i, i * 10);
+
+    const ct::HashMap<int, int> &cm = m;
+    int sum = 0;
+    std::size_t visited = 0;
+    for (const auto &entry : cm)
+    {
+        sum += entry.value;
+        ++visited;
+    }
+    EXPECT_EQ(visited, m.size());
+    EXPECT_EQ(sum, 280);
+}
+
+TEST(HashMap, ConstIterationOnEmptyMapVisitsNothing)
+{
+    const ct::HashMap<int, int> m;
+    EXPECT_TRUE(m.begin() == m.end());
+    std::size_t visited = 0;
+    for (const auto &entry : m)
+    {
+        (void)entry;
+        ++visited;
+    }
+    EXPECT_EQ(visited, 0u);
+}
+
+TEST(HashMap, ConstIterationSkipsErasedSlots)
+{
+    ct::HashMap<int, int> m;
+    for (int i = 0; i < 8; ++i)
+        m.put(i, 1);
+    EXPECT_TRUE(m.erase(3));
+    EXPECT_TRUE(m.erase(5));
+
+    const ct::HashMap<int, int> &cm = m;
+    std::size_t visited = 0;
+    for (const auto &entry : cm)
+    {
+        (void)entry;
+        ++visited;
+    }
+    EXPECT_EQ(visited, 6u);
+    EXPECT_EQ(visited, m.size());
+}
+
+TEST(HashMap, IteratorConvertsToConstIterator)
+{
+    ct::HashMap<int, int> m;
+    m.put(1, 42);
+
+    ct::HashMap<int, int>::const_iterator ci = m.begin();
+    EXPECT_EQ(ci->value, 42);
+    EXPECT_TRUE(ci != m.cend());
+    EXPECT_TRUE(m.cbegin() != m.cend());
+}
+
 TEST(FlatMap, InsertFindBasic)
 {
     ct::FlatMap<int, int> m;

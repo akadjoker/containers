@@ -203,6 +203,20 @@ namespace ct
             return slots_[i].value;
         }
 
+        /* Removes k and, when it was present, moves its value into out. Saves
+           the caller a second probe when the removed value is still needed. */
+        bool erase(const K &k, V &out)
+        {
+            if (!size_)
+                return false;
+            size_type i = probe(k);
+            if (!meta_[i])
+                return false;
+            out = detail::move(slots_[i].value);
+            erase_at(i);
+            return true;
+        }
+
         bool erase(const K &k)
         {
             if (!size_)
@@ -210,6 +224,12 @@ namespace ct
             size_type i = probe(k);
             if (!meta_[i])
                 return false;
+            erase_at(i);
+            return true;
+        }
+
+        void erase_at(size_type i)
+        {
             slots_[i].~Entry();
 
             size_type j = i;
@@ -230,7 +250,6 @@ namespace ct
             }
             meta_[i] = 0;
             --size_;
-            return true;
         }
 
         void clear()
@@ -256,6 +275,41 @@ namespace ct
                 rehash(want);
         }
 
+        class const_iterator
+        {
+            const Entry *e_;
+            const std::uint8_t *m_;
+            const std::uint8_t *mend_;
+
+        public:
+            const_iterator(const Entry *e, const std::uint8_t *m, const std::uint8_t *mend)
+                : e_(e), m_(m), mend_(mend)
+            {
+                skip();
+            }
+            const Entry &operator*() const { return *e_; }
+            const Entry *operator->() const { return e_; }
+            const_iterator &operator++()
+            {
+                ++e_;
+                ++m_;
+                skip();
+                return *this;
+            }
+            bool operator==(const const_iterator &o) const { return m_ == o.m_; }
+            bool operator!=(const const_iterator &o) const { return m_ != o.m_; }
+
+        private:
+            void skip()
+            {
+                while (m_ != mend_ && !*m_)
+                {
+                    ++m_;
+                    ++e_;
+                }
+            }
+        };
+
         class iterator
         {
             Entry *e_;
@@ -280,6 +334,8 @@ namespace ct
             bool operator==(const iterator &o) const { return m_ == o.m_; }
             bool operator!=(const iterator &o) const { return m_ != o.m_; }
 
+            operator const_iterator() const { return const_iterator(e_, m_, mend_); }
+
         private:
             void skip()
             {
@@ -300,6 +356,17 @@ namespace ct
             std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
             return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
         }
+        const_iterator begin() const noexcept
+        {
+            return const_iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr);
+        }
+        const_iterator end() const noexcept
+        {
+            const std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
+            return const_iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
+        }
+        const_iterator cbegin() const noexcept { return begin(); }
+        const_iterator cend() const noexcept { return end(); }
 
     private:
         Entry *slots_;

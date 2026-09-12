@@ -43,7 +43,8 @@ add_executable(ct_tests
   tests/test_function.cpp
   tests/test_variant.cpp
   tests/test_limits.cpp
-  tests/test_rectpacker.cpp)
+  tests/test_rectpacker.cpp
+  tests/test_regex.cpp)
 target_link_libraries(ct_tests PRIVATE ct gtest_main)
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
@@ -61,6 +62,7 @@ set(CT_PUBLIC_HEADERS
   ct/ptr.hpp
   ct/queue.hpp
   ct/rectpacker.hpp
+  ct/regex.hpp
   ct/slotmap.hpp
   ct/sort.hpp
   ct/span.hpp
@@ -121,6 +123,11 @@ add_executable(ct_bench_sort
   bench/bench_sort.cpp)
 target_link_libraries(ct_bench_sort PRIVATE ct)
 target_compile_options(ct_bench_sort PRIVATE -O3 -march=native)
+
+add_executable(ct_bench_regex
+  bench/bench_regex.cpp)
+target_link_libraries(ct_bench_regex PRIVATE ct)
+target_compile_options(ct_bench_regex PRIVATE -O3 -march=native)
 
 add_executable(ct_bench_deque
   bench/bench_deque.cpp)

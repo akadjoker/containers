@@ -1,9 +1,20 @@
 #include <ct/xml.hpp>
+#include <ct/xml_stream.hpp>
 
 #include <gtest/gtest.h>
 
 using ct::String;
 using ct::Xml;
+
+TEST(Xml, ParsesStream)
+{
+    ct::MemoryStream stream("<root><item/></root>", 20);
+    Xml::Error error;
+    Xml value = ct::parse_xml(stream, &error);
+    EXPECT_FALSE(error);
+    EXPECT_EQ(value.tag(), "root");
+    EXPECT_EQ(value.size(), 1u);
+}
 
 namespace
 {

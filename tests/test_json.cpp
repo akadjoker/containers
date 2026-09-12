@@ -1,4 +1,5 @@
 #include <ct/json.hpp>
+#include <ct/json_stream.hpp>
 
 #include <gtest/gtest.h>
 
@@ -14,6 +15,15 @@
 #include <string>
 
 using ct::Json;
+
+TEST(Json, ParsesStream)
+{
+    ct::MemoryStream stream("{\"answer\":42}", 13);
+    Json::Error error;
+    Json value = ct::parse_json(stream, &error);
+    EXPECT_FALSE(error);
+    EXPECT_EQ(value["answer"].as_int(), 42);
+}
 using ct::String;
 
 namespace

@@ -57,6 +57,8 @@ add_executable(ct_tests
   tests/test_regex.cpp
   tests/test_thread.cpp
   tests/test_stream.cpp
+  tests/test_binary.cpp
+  tests/test_text.cpp
   tests/test_socket.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 include(GoogleTest)
@@ -65,19 +67,23 @@ gtest_discover_tests(ct_tests)
 set(CT_PUBLIC_HEADERS
   ct/arena.hpp
   ct/array.hpp
+  ct/binary.hpp
   ct/deque.hpp
   ct/flatmap.hpp
   ct/function.hpp
   ct/hashmap.hpp
   ct/hashset.hpp
   ct/json.hpp
+  ct/json_stream.hpp
   ct/pool.hpp
   ct/ptr.hpp
   ct/queue.hpp
   ct/rectpacker.hpp
   ct/regex.hpp
   ct/socket.hpp
+  ct/socket_stream.hpp
   ct/stream.hpp
+  ct/text.hpp
   ct/slotmap.hpp
   ct/sort.hpp
   ct/span.hpp
@@ -88,7 +94,8 @@ set(CT_PUBLIC_HEADERS
   ct/treemap.hpp
   ct/variant.hpp
   ct/vector.hpp
-  ct/xml.hpp)
+  ct/xml.hpp
+  ct/xml_stream.hpp)
 
 set(CT_HEADER_TARGETS)
 foreach(header IN LISTS CT_PUBLIC_HEADERS)

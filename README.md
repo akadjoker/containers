@@ -81,6 +81,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [http.hpp](include/ct/http.hpp) | `HttpRequest`, `HttpResponse`, `HttpParser` | Incremental HTTP/1.0 and HTTP/1.1 protocol layer |
 | [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP client |
 | [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
+| [ini.hpp](include/ct/ini.hpp) | `Ini` | INI settings parser/serializer with typed getters and file IO |
 
 ## IO
 

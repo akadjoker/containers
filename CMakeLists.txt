@@ -12,6 +12,10 @@ endif()
 add_library(ct INTERFACE)
 target_include_directories(ct INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
+find_package(Threads REQUIRED)
+add_library(ct_threads INTERFACE)
+target_link_libraries(ct_threads INTERFACE ct Threads::Threads)
+
 if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
@@ -44,8 +48,9 @@ add_executable(ct_tests
   tests/test_variant.cpp
   tests/test_limits.cpp
   tests/test_rectpacker.cpp
-  tests/test_regex.cpp)
-target_link_libraries(ct_tests PRIVATE ct gtest_main)
+  tests/test_regex.cpp
+  tests/test_thread.cpp)
+target_link_libraries(ct_tests PRIVATE ct ct_threads gtest_main)
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
 
@@ -68,6 +73,8 @@ set(CT_PUBLIC_HEADERS
   ct/span.hpp
   ct/stack.hpp
   ct/string.hpp
+  ct/thread.hpp
+  ct/threadpool.hpp
   ct/treemap.hpp
   ct/variant.hpp
   ct/vector.hpp

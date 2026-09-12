@@ -13,7 +13,10 @@ target_link_libraries(your_target PRIVATE ct)
 ```
 
 `ct` is a CMake `INTERFACE` target that just adds `include/` to your include
-path. There's nothing to build or link - include what you need:
+path. There's nothing to build or link - include what you need. The only
+exception is threading: [thread.hpp](include/ct/thread.hpp) and
+[threadpool.hpp](include/ct/threadpool.hpp) need pthreads on POSIX, so link
+`ct_threads` instead of `ct` in targets that use them.
 
 ```cpp
 #include <ct/vector.hpp>
@@ -65,6 +68,32 @@ itself (GoogleTest is fetched only to build the test suite).
 | [xml.hpp](include/ct/xml.hpp) | `Xml` | Self-contained XML parser |
 | [rectpacker.hpp](include/ct/rectpacker.hpp) | `RectPacker` | 2D rectangle bin packing (texture/atlas packing) |
 | [regex.hpp](include/ct/regex.hpp) | `Regex`, `Match` | Regular expressions with Python `re` semantics (see below) |
+| [thread.hpp](include/ct/thread.hpp) | `Thread`, `Mutex`, `LockGuard`, `CondVar`, `Atomic` | Cross-platform threading primitives (pthreads / Win32), no `<thread>` |
+| [threadpool.hpp](include/ct/threadpool.hpp) | `ThreadPool` | Fixed worker pool with `submit`, `wait_all` and `parallel_for` |
+
+## Threads
+
+`thread.hpp` wraps pthreads on POSIX (Linux, macOS, Android, Emscripten with
+`-pthread`) and `_beginthreadex` / `SRWLOCK` / `CONDITION_VARIABLE` on
+Windows. `Atomic<T>` uses the GCC/Clang `__atomic` builtins or MSVC
+`Interlocked*`, for 32/64-bit integers and pointers. A `Thread` joins in its
+destructor; `join`/`detach` on a non-joinable thread and a failed thread
+creation call `abort()` like every other invalid use in the library.
+
+```cpp
+#include <ct/threadpool.hpp>
+
+ct::ThreadPool pool;                       // hardware_concurrency() - 1 workers
+pool.submit([] { work(); });
+pool.wait_all();                           // the caller runs jobs too while waiting
+
+pool.parallel_for(0, bodies.size(), [&](std::size_t i) { integrate(bodies[i]); });
+```
+
+`parallel_for` splits the range into `4 x (workers + 1)` chunks (or `chunk`
+elements each), the calling thread helps run them, and it is safe to call
+from inside a job. [tests/test_thread.cpp](tests/test_thread.cpp) runs clean
+under ThreadSanitizer.
 
 ## Regex
 

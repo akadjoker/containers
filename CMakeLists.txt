@@ -16,6 +16,12 @@ find_package(Threads REQUIRED)
 add_library(ct_threads INTERFACE)
 target_link_libraries(ct_threads INTERFACE ct Threads::Threads)
 
+add_library(ct_sockets INTERFACE)
+target_link_libraries(ct_sockets INTERFACE ct_threads)
+if(WIN32)
+  target_link_libraries(ct_sockets INTERFACE ws2_32)
+endif()
+
 if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
@@ -49,8 +55,10 @@ add_executable(ct_tests
   tests/test_limits.cpp
   tests/test_rectpacker.cpp
   tests/test_regex.cpp
-  tests/test_thread.cpp)
-target_link_libraries(ct_tests PRIVATE ct ct_threads gtest_main)
+  tests/test_thread.cpp
+  tests/test_stream.cpp
+  tests/test_socket.cpp)
+target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
 
@@ -68,6 +76,8 @@ set(CT_PUBLIC_HEADERS
   ct/queue.hpp
   ct/rectpacker.hpp
   ct/regex.hpp
+  ct/socket.hpp
+  ct/stream.hpp
   ct/slotmap.hpp
   ct/sort.hpp
   ct/span.hpp

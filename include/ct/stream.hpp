@@ -113,7 +113,9 @@ namespace ct
         }
         std::int64_t size() const override
         {
-            if (!file_) return -1; std::int64_t here = tell(); if (here < 0) return -1;
+            if (!file_) return -1;
+            std::int64_t here = tell();
+            if (here < 0) return -1;
             FileStream *self = const_cast<FileStream *>(this); if (!self->seek(0, Seek::End)) return -1;
             std::int64_t result = tell(); self->seek(here, Seek::Set); return result;
         }
@@ -137,7 +139,10 @@ namespace ct
         explicit MemoryStream(Vector<std::uint8_t> own) noexcept : own_(detail::move(own)), view_(nullptr), view_size_(0), pos_(0), writable_(true), open_(true) {}
         std::size_t read(void *dst, std::size_t n) override
         {
-            if (!open_) return 0; std::size_t total = data_size(); if (pos_ >= total) return 0; n = n < total - pos_ ? n : total - pos_;
+            if (!open_) return 0;
+            std::size_t total = data_size();
+            if (pos_ >= total) return 0;
+            n = n < total - pos_ ? n : total - pos_;
             std::memcpy(dst, data_ptr() + pos_, n); pos_ += n; return n;
         }
         std::size_t write(const void *src, std::size_t n) override

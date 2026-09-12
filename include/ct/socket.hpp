@@ -155,6 +155,13 @@ namespace ct
         }
         NetError last_error() const noexcept { return error_; }
         bool would_block() const noexcept { return detail::would_block(error_.code); }
+        Address local_address() const noexcept
+        {
+            Address address;
+            address.len_ = sizeof(address.storage_);
+            if (!valid() || getsockname(fd_, reinterpret_cast<sockaddr *>(&address.storage_), &address.len_) != 0) address.len_ = 0;
+            return address;
+        }
 
     protected:
         explicit Socket(detail::SocketHandle fd) noexcept : fd_(fd), error_{"", 0} {}

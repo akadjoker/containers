@@ -31,10 +31,11 @@ TEST(Socket, AddressParseAndResolve)
 TEST(Socket, TcpLoopbackAndPoller)
 {
     Address address;
-    ASSERT_TRUE(Address::parse("127.0.0.1", 39092, address));
+    ASSERT_TRUE(Address::parse("127.0.0.1", 0, address));
     TcpListener listener;
     if (!listener.bind(address)) GTEST_SKIP() << "TCP port unavailable";
     ASSERT_TRUE(listener.listen());
+    address = listener.local_address();
     std::thread server([&] {
         TcpStream incoming;
         EXPECT_TRUE(listener.accept(incoming));
@@ -58,9 +59,10 @@ TEST(Socket, TcpLoopbackAndPoller)
 TEST(Socket, UdpLoopback)
 {
     Address address;
-    ASSERT_TRUE(Address::parse("127.0.0.1", 39091, address));
+    ASSERT_TRUE(Address::parse("127.0.0.1", 0, address));
     UdpSocket receiver;
     if (!receiver.bind(address)) GTEST_SKIP() << "UDP port unavailable";
+    address = receiver.local_address();
     UdpSocket sender;
     Address source;
     ASSERT_TRUE(Address::parse("127.0.0.1", 0, source));

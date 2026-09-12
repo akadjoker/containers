@@ -21,7 +21,8 @@ namespace ct
         bool read_word(String &out)
         {
             out.clear(); int c; while ((c = get()) != -1 && std::isspace(static_cast<unsigned char>(c))) {}
-            if (c == -1) return false; do { out.append(1, static_cast<char>(c)); c = get(); } while (c != -1 && !std::isspace(static_cast<unsigned char>(c)));
+            if (c == -1) return false;
+            do { out.append(1, static_cast<char>(c)); c = get(); } while (c != -1 && !std::isspace(static_cast<unsigned char>(c)));
             return true;
         }
         bool read_int(long long &out) { String word; if (!read_word(word)) return false; char *end = nullptr; out = std::strtoll(word.c_str(), &end, 10); return end && *end == '\0'; }
@@ -34,7 +35,9 @@ namespace ct
         int raw_get() { if (begin_ == end_ && !fill()) return -1; return static_cast<unsigned char>(buffer_[begin_++]); }
         void init()
         {
-            if (initialized_) return; initialized_ = true; int bytes[3]; unsigned n = 0;
+            if (initialized_) return;
+            initialized_ = true;
+            int bytes[3]; unsigned n = 0;
             for (; n < 3; ++n) { bytes[n] = raw_get(); if (bytes[n] == -1) break; }
             if (n == 3 && bytes[0] == 0xef && bytes[1] == 0xbb && bytes[2] == 0xbf) return;
             for (unsigned i = 0; i < n; ++i) pending_[pending_end_++] = bytes[i];

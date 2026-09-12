@@ -59,6 +59,7 @@ add_executable(ct_tests
   tests/test_stream.cpp
   tests/test_binary.cpp
   tests/test_text.cpp
+  tests/test_http.cpp
   tests/test_socket.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 include(GoogleTest)
@@ -73,6 +74,9 @@ set(CT_PUBLIC_HEADERS
   ct/function.hpp
   ct/hashmap.hpp
   ct/hashset.hpp
+  ct/http.hpp
+  ct/http_client.hpp
+  ct/http_server.hpp
   ct/json.hpp
   ct/json_stream.hpp
   ct/pool.hpp

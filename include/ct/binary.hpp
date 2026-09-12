@@ -67,7 +67,8 @@ namespace ct
         template <typename T> void scalar(T value)
         {
             using U = typename std::make_unsigned<T>::type; U raw = 0; std::memcpy(&raw, &value, sizeof(raw)); std::uint8_t bytes_[sizeof(T)];
-            for (std::size_t i = 0; i < sizeof(T); ++i) bytes_[i] = static_cast<std::uint8_t>(raw >> (i * 8)); bytes(bytes_, sizeof(bytes_));
+            for (std::size_t i = 0; i < sizeof(T); ++i) bytes_[i] = static_cast<std::uint8_t>(raw >> (i * 8));
+            bytes(bytes_, sizeof(bytes_));
         }
         Stream &stream_; bool ok_;
     };

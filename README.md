@@ -16,7 +16,8 @@ target_link_libraries(your_target PRIVATE ct)
 path. There's nothing to build or link - include what you need. The only
 exception is threading: [thread.hpp](include/ct/thread.hpp) and
 [threadpool.hpp](include/ct/threadpool.hpp) need pthreads on POSIX, so link
-`ct_threads` instead of `ct` in targets that use them.
+`ct_threads` instead of `ct` in targets that use them. Network users link
+`ct_sockets`, which adds `ct_threads` and Winsock (`ws2_32`) on Windows.
 
 ```cpp
 #include <ct/vector.hpp>
@@ -70,6 +71,73 @@ itself (GoogleTest is fetched only to build the test suite).
 | [regex.hpp](include/ct/regex.hpp) | `Regex`, `Match` | Regular expressions with Python `re` semantics (see below) |
 | [thread.hpp](include/ct/thread.hpp) | `Thread`, `Mutex`, `LockGuard`, `CondVar`, `Atomic` | Cross-platform threading primitives (pthreads / Win32), no `<thread>` |
 | [threadpool.hpp](include/ct/threadpool.hpp) | `ThreadPool` | Fixed worker pool with `submit`, `wait_all` and `parallel_for` |
+| [stream.hpp](include/ct/stream.hpp) | `Stream`, `FileStream`, `MemoryStream`, `SubStream`, `File` | Generic byte streams for files, memory and bounded views |
+| [binary.hpp](include/ct/binary.hpp) | `BinaryReader`, `BinaryWriter` | Little-endian binary serialization |
+| [text.hpp](include/ct/text.hpp) | `TextReader`, `TextWriter` | Buffered text input and output |
+| [json_stream.hpp](include/ct/json_stream.hpp) | `parse_json` | Optional JSON adapter for `Stream` |
+| [xml_stream.hpp](include/ct/xml_stream.hpp) | `parse_xml` | Optional XML adapter for `Stream` |
+| [socket.hpp](include/ct/socket.hpp) | `Address`, `TcpListener`, `TcpStream`, `UdpSocket`, `Poller` | Cross-platform IPv4/IPv6 sockets |
+| [socket_stream.hpp](include/ct/socket_stream.hpp) | `SocketStream` | Blocking TCP adapter for `Stream` |
+| [http.hpp](include/ct/http.hpp) | `HttpRequest`, `HttpResponse`, `HttpParser` | Incremental HTTP/1.0 and HTTP/1.1 protocol layer |
+| [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP client |
+| [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
+
+## IO
+
+`Stream` is the common byte interface for files, owned or borrowed memory,
+and bounded slices of another stream. Binary serialization is always
+little-endian. Text readers and writers buffer in 4 KB chunks. JSON and XML
+remain independent of IO unless their optional adapter header is included.
+
+```cpp
+#include <ct/binary.hpp>
+
+ct::MemoryStream memory;
+ct::BinaryWriter writer(memory);
+writer.u32(42);
+writer.string("player");
+
+memory.seek(0, ct::Seek::Set);
+ct::BinaryReader reader(memory);
+unsigned id = reader.u32();
+ct::String name;
+reader.string(name);
+```
+
+## Network and HTTP
+
+`socket.hpp` wraps BSD sockets and Winsock with the same move-only API. TCP
+and UDP are blocking by default; `set_nonblocking` plus `Poller` supports
+event loops. `SocketStream` is intended only for blocking sequential IO.
+
+HTTP is split so protocol-only code does not include socket APIs. The parser
+accepts fragmented requests/responses, `Content-Length`, chunked bodies and
+pipelined messages. HTTPS/TLS is not included.
+
+```cpp
+#include <ct/http_client.hpp>
+#include <ct/http_server.hpp>
+
+ct::HttpServer server;
+server.route("GET", "/users/:id",
+    [](const ct::HttpRequest &request, ct::HttpResponse &response) {
+        response.text(request.param("id"));
+    });
+server.serve_files("/assets", "data/assets");
+
+ct::Address address;
+ct::Address::parse("127.0.0.1", 8080, address);
+server.listen(address);
+server.run();
+
+ct::HttpResponse response;
+ct::HttpClient::get("http://127.0.0.1:8080/users/42", response);
+```
+
+`HttpServer::run()` owns the polling loop and blocks until another thread
+calls `stop()`. Alternatively, call `poll(timeout_ms)` from an existing game
+or editor loop. Route handlers currently run in the polling thread, so long
+jobs should be handed to an application worker pool.
 
 ## Threads
 

@@ -10,7 +10,7 @@ namespace ct
         String text;
         if (!stream.read_all(text))
         {
-            if (err) { *err = Json::Error(); err->message = stream.error() ? stream.error() : "erro a ler stream"; err->line = 1; err->column = 1; }
+            if (err) { *err = Json::Error(); err->message = stream.error() ? stream.error() : " failed to read stream"; err->line = 1; err->column = 1; }
             return Json();
         }
         return Json::parse(text, err);

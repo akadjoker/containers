@@ -82,6 +82,7 @@ set(CT_PUBLIC_HEADERS
   ct/json.hpp
   ct/json_stream.hpp
   ct/pool.hpp
+  ct/priority_queue.hpp
   ct/ptr.hpp
   ct/queue.hpp
   ct/rectpacker.hpp

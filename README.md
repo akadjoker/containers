@@ -51,6 +51,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [deque.hpp](include/ct/deque.hpp) | `Deque` | Power-of-two ring-buffer double-ended queue |
 | [stack.hpp](include/ct/stack.hpp) | `Stack` | LIFO adaptor over `Deque` |
 | [queue.hpp](include/ct/queue.hpp) | `Queue` | FIFO adaptor over `Deque` |
+| [priority_queue.hpp](include/ct/priority_queue.hpp) | `PriorityQueue` | Binary heap adaptor over `Vector` |
 | [string.hpp](include/ct/string.hpp) | `String` | Small-string-optimized string, `std::string` replacement |
 | [span.hpp](include/ct/span.hpp) | `Span`, `StringView` | Non-owning views over contiguous data |
 | [array.hpp](include/ct/array.hpp) | `Array` | Fixed-size array, `std::array` replacement |

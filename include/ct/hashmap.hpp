@@ -377,7 +377,7 @@ namespace ct
         template <typename KK, typename VV>
         CT_NOINLINE V &put_slow(KK &&k, VV &&v)
         {
-            if (slots_)
+            if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
                 size_type i = probe(k);
                 if (meta_[i])
@@ -399,7 +399,7 @@ namespace ct
 
         CT_NOINLINE V &index_slow(const K &k)
         {
-            if (slots_)
+            if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
                 size_type i = probe(k);
                 if (meta_[i])
@@ -424,7 +424,13 @@ namespace ct
             if (!slots_)
                 return true;
             const size_type capacity = mask_ + 1;
+            /* A table must NEVER be 100% full: probe() stops only at the key
+               or at an empty slot, so a full table and a missing key spin
+               forever. For capacity 2 (reserve(1), e.g. a copy of a 1-entry
+               map) `capacity - capacity / 4` IS the whole table, which let
+               the second insert fill it and the third hang. */
             return size_ == (std::numeric_limits<size_type>::max)() ||
+                   size_ + 1 >= capacity ||
                    size_ + 1 > capacity - capacity / 4;
         }
 

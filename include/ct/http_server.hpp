@@ -259,6 +259,7 @@ namespace ct
             if (detail::http_iequal(ext, "jpg") || detail::http_iequal(ext, "jpeg")) return "image/jpeg";
             if (detail::http_iequal(ext, "svg")) return "image/svg+xml";
             if (detail::http_iequal(ext, "txt")) return "text/plain; charset=utf-8";
+            if (detail::http_iequal(ext, "wasm")) return "application/wasm";
             return "application/octet-stream";
         }
 

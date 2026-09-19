@@ -177,8 +177,30 @@ namespace ct
     class TcpListener : public Socket
     {
     public:
+        // SO_REUSEADDR is set right after open(), before the ::bind() call
+        // it actually affects - a listening socket this process (or an
+        // earlier run of it) just closed leaves its local (addr, port)
+        // pair in TIME_WAIT for a while, and without the option set before
+        // bind() a server restarted on the same port fails with
+        // EADDRINUSE for as long as that lasts. This is what every
+        // "restart a dev server on the same port" caller wants by
+        // default - set_reuse_addr() stays public for anything unusual
+        // that must NOT have it (there isn't one in this codebase today).
         bool bind(const Address &a, NetError *err = nullptr) noexcept
-        { if (!a.valid() || !open(SOCK_STREAM, a.is_v6() ? AF_INET6 : AF_INET) || !checked(::bind(fd_, reinterpret_cast<const sockaddr *>(&a.storage_), a.len_))) { if (err) *err = error_; return false; } return true; }
+        {
+            if (!a.valid() || !open(SOCK_STREAM, a.is_v6() ? AF_INET6 : AF_INET))
+            {
+                if (err) *err = error_;
+                return false;
+            }
+            set_reuse_addr();
+            if (!checked(::bind(fd_, reinterpret_cast<const sockaddr *>(&a.storage_), a.len_)))
+            {
+                if (err) *err = error_;
+                return false;
+            }
+            return true;
+        }
         bool listen(int backlog = 64) noexcept { return checked(::listen(fd_, backlog)); }
         bool accept(TcpStream &out, Address *peer = nullptr) noexcept;
     };

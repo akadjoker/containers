@@ -87,7 +87,9 @@ TEST(HashMap, EraseBackwardShift)
     for (int i = 0; i < 1000; ++i)
     {
         if (i % 2)
+        {
             ASSERT_NE(m.find(i), nullptr) << i;
+        }
         else
             ASSERT_EQ(m.find(i), nullptr) << i;
     }
@@ -118,7 +120,9 @@ TEST(HashMap, CollisionHeavyFuzz)
             int *v = m.find(k);
             auto it = ref.find(k);
             if (it == ref.end())
+            {
                 ASSERT_EQ(v, nullptr);
+            }
             else
             {
                 ASSERT_NE(v, nullptr);
@@ -355,7 +359,9 @@ TEST(FlatMap, FuzzVsStdMap)
             int *v = m.find(k);
             auto it = ref.find(k);
             if (it == ref.end())
+            {
                 ASSERT_EQ(v, nullptr);
+            }
             else
             {
                 ASSERT_NE(v, nullptr);
@@ -503,7 +509,9 @@ TEST(TreeMap, FuzzVsStdMapWithValidation)
             int *v = m.find(k);
             auto it = ref.find(k);
             if (it == ref.end())
+            {
                 ASSERT_EQ(v, nullptr);
+            }
             else
             {
                 ASSERT_NE(v, nullptr);
@@ -622,7 +630,9 @@ TEST(HashSet, GrowthAndFuzzVsStd)
         int k = static_cast<int>(seed % 2000);
         int op = (seed >> 8) % 3;
         if (op == 0)
+        {
             ASSERT_EQ(s.insert(k), ref.insert(k).second);
+        }
         else if (op == 1)
             ASSERT_EQ(s.erase(k), ref.erase(k) > 0);
         else

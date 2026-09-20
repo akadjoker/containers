@@ -78,7 +78,9 @@ namespace
             bool ok = re.search(text, &m, pos);
             EXPECT_EQ(ok, c.ok == 1);
             if (ok && c.ok)
+            {
                 EXPECT_EQ(span_string(m), c.spans);
+            }
         }
         else if (std::strcmp(c.kind, "match") == 0 || std::strcmp(c.kind, "match1") == 0)
         {
@@ -86,14 +88,18 @@ namespace
             bool ok = re.match(text, &m, pos);
             EXPECT_EQ(ok, c.ok == 1);
             if (ok && c.ok)
+            {
                 EXPECT_EQ(span_string(m), c.spans);
+            }
         }
         else if (std::strcmp(c.kind, "fullmatch") == 0)
         {
             bool ok = re.fullmatch(text, &m);
             EXPECT_EQ(ok, c.ok == 1);
             if (ok && c.ok)
+            {
                 EXPECT_EQ(span_string(m), c.spans);
+            }
         }
         else if (std::strcmp(c.kind, "findall") == 0)
         {

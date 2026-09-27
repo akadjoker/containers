@@ -61,7 +61,8 @@ add_executable(ct_tests
   tests/test_text.cpp
   tests/test_http.cpp
   tests/test_socket.cpp
-  tests/test_ini.cpp)
+  tests/test_ini.cpp
+  tests/test_soup.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
@@ -89,6 +90,7 @@ set(CT_PUBLIC_HEADERS
   ct/regex.hpp
   ct/socket.hpp
   ct/socket_stream.hpp
+  ct/soup.hpp
   ct/stream.hpp
   ct/text.hpp
   ct/slotmap.hpp

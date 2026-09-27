@@ -68,6 +68,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [sort.hpp](include/ct/sort.hpp) | `insertion_sort`, `heap_sort`, `intro_sort`, `radix_sort` | Sorting algorithms |
 | [json.hpp](include/ct/json.hpp) | `Json` | Self-contained JSON parser/serializer |
 | [xml.hpp](include/ct/xml.hpp) | `Xml` | Self-contained XML parser |
+| [soup.hpp](include/ct/soup.hpp) | `Soup`, `Node` | Tolerant HTML parser with CSS selectors (see below) |
 | [rectpacker.hpp](include/ct/rectpacker.hpp) | `RectPacker` | 2D rectangle bin packing (texture/atlas packing) |
 | [regex.hpp](include/ct/regex.hpp) | `Regex`, `Match` | Regular expressions with Python `re` semantics (see below) |
 | [thread.hpp](include/ct/thread.hpp) | `Thread`, `Mutex`, `LockGuard`, `CondVar`, `Atomic` | Cross-platform threading primitives (pthreads / Win32), no `<thread>` |
@@ -228,6 +229,62 @@ patterns and text):
 
 Not implemented: Unicode categories (`\w` etc. are ASCII, as with
 `re.ASCII`), `\N{...}`, `LOCALE`. Case folding is ASCII only.
+
+## HTML
+
+`ct::Soup` parses HTML the way a browser does rather than the way a validator
+does: it never fails. Tags that never close (`<br>`, `<img>`), tags closed
+implicitly by a sibling (`<li>`, `<p>`, `<td>`), attributes without quotes,
+`<` in prose, `</div>` inside a `<script>` string, mismatched end tags - all of
+it parses into a usable tree. This is what `ct::Xml` cannot do, by design:
+`Xml` is strict and reports an error, and real pages are not well-formed.
+
+```cpp
+#include <ct/soup.hpp>
+
+ct::Soup soup = ct::Soup::parse(html);
+
+soup.title();                              // <title>, trimmed
+soup.getTextTrimmed();                     // page text, whitespace collapsed
+
+const ct::Node *node = soup.selectOne("video source[src$=.m3u8]");
+if (node)
+    puts(node->attr("src"));               // "" when absent; attribute() gives null
+
+for (const ct::Node *a : soup.select("a[href], [data-hls]"))
+    printf("%s %s\n", a->tag.c_str(), a->getTextTrimmed().c_str());
+
+soup.findAll("li");                        // every descendant <li>
+node->closest("table");                    // nearest ancestor
+node->childElements("td");                 // element children only
+node->hasClass("active");                  // whole-word class match
+node->html();                              // re-serialise the subtree
+```
+
+Selectors: `tag`, `#id`, `.class`, `*`, `[attr]`, `[attr=v]`, `[attr^=v]`,
+`[attr$=v]`, `[attr*=v]`, `[attr~=v]`, descendant (`a b`), child (`a > b`),
+union (`a, b`), and `:first-child`, `:last-child`, `:only-child`, `:empty`,
+`:not(simple)`. Attribute values may be bare, `'quoted'` or `"quoted"`.
+Matching runs right to left, so `div p` does not walk every `div`'s subtree.
+Results come back in document order, deduplicated across a union.
+
+A selector that does not parse matches nothing instead of aborting, because
+selectors arrive from config files and text boxes rather than from source.
+
+Tag and attribute names fold to lowercase; attribute values do not. Entities
+are decoded in text and in attribute values (`&amp;`, `&#65;`, `&#x41;`, and
+the named ones pages actually use); an unknown `&foo;` is left verbatim, as
+browsers leave it. `<script>` and `<style>` bodies are kept as raw text and
+excluded from `getText()`.
+
+Not implemented: `:nth-child()` and the other structural pseudo-classes,
+sibling combinators (`a + b`, `a ~ b`), namespaces, and the full HTML5
+tree-construction algorithm (`<table>` foster parenting, the active
+formatting-elements list). Parsing allocates a node per element; there is no
+arena.
+
+[tests/test_soup.cpp](tests/test_soup.cpp) covers the malformed-input cases
+above alongside the well-formed ones, since those are the ones that matter.
 
 ## Building and testing
 

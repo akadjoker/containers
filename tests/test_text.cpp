@@ -12,6 +12,6 @@ TEST(Text, LinesBomAndWords)
 
 TEST(Text, WriterBuffersAndFormats)
 {
-    ct::MemoryStream stream; { ct::TextWriter writer(stream); writer.line("hello").number(42).write(' ').number(1.25, 2).write('\n').fmt("%s:%d", "x", 7); EXPECT_TRUE(writer.flush()); }
-    ct::String text; ASSERT_TRUE(stream.seek(0, ct::Seek::Set)); ASSERT_TRUE(ct::TextReader(stream).read_all(text)); EXPECT_EQ(text, "hello\n42 1.2\nx:7");
+    ct::MemoryStream stream; { ct::TextWriter writer(stream); writer.line("hello").number(42).number(std::size_t(0)).number(-1L).write(' ').number(1.25, 2).write('\n').fmt("%s:%d", "x", 7); EXPECT_TRUE(writer.flush()); }
+    ct::String text; ASSERT_TRUE(stream.seek(0, ct::Seek::Set)); ASSERT_TRUE(ct::TextReader(stream).read_all(text)); EXPECT_EQ(text, "hello\n420-1 1.2\nx:7");
 }

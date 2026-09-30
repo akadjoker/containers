@@ -1,9 +1,11 @@
 #include <ct/string.hpp>
+#include <ct/vector.hpp>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <cstring>
+#include <iterator>
 #include <string>
 #include <vector>
 
@@ -426,4 +428,48 @@ TEST(StringFuzz, RandomOpsMatchStd)
     }
     EXPECT_EQ(s.to<std::string>(), ref);
     EXPECT_EQ(std::strlen(s.c_str()), ref.size()) << "NUL na posição certa";
+}
+
+TEST(StringNumber, TodosOsInteirosSemAmbiguidade)
+{
+    EXPECT_TRUE(String::number(std::size_t(5)) == "5");
+    EXPECT_TRUE(String::number(-3L) == "-3");
+    EXPECT_TRUE(String::number(7UL) == "7");
+    EXPECT_TRUE(String::number(short(-2)) == "-2");
+    EXPECT_TRUE(String::number(static_cast<unsigned char>(200)) == "200");
+    EXPECT_TRUE(String::number(1.5f) == "1.5");
+    String s;
+    s.append_number(std::size_t(42)).append_number(-1L).append_number(3u).append_number(9LL);
+    EXPECT_TRUE(s == "42-139");
+}
+
+TEST(StringFind, ConjuntosNaoCasamNulEmbebido)
+{
+    String s("ab\0cd", 5);
+    EXPECT_EQ(s.find_first_of("xyz"), String::npos);
+    EXPECT_EQ(s.find_first_of("d"), 4u);
+    EXPECT_EQ(s.find_first_not_of("ab"), 2u);
+    EXPECT_EQ(s.find_last_of("a"), 0u);
+    EXPECT_EQ(s.find_last_of("xyz"), String::npos);
+    std::string ref("ab\0cd", 5);
+    EXPECT_EQ(s.find_first_of("xyz"), ref.find_first_of("xyz"));
+    EXPECT_EQ(s.find_first_not_of("ab"), ref.find_first_not_of("ab"));
+}
+
+TEST(StringMisc, TrimmedRemoveTodosOsBrancosAscii)
+{
+    String s("\f\v \t x \r\n\f");
+    EXPECT_TRUE(s.trimmed() == "x");
+}
+
+TEST(StringMisc, IteradoresInversosFuncionamComStd)
+{
+    ct::Vector<int> v{3, 1, 2};
+    std::sort(v.rbegin(), v.rend());
+    EXPECT_EQ(v[0], 3);
+    EXPECT_EQ(v[1], 2);
+    EXPECT_EQ(v[2], 1);
+    EXPECT_EQ(std::distance(v.rbegin(), v.rend()), 3);
+    EXPECT_EQ(*(v.rbegin() + 1), 2);
+    EXPECT_EQ(v.rbegin()[2], 3);
 }

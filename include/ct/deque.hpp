@@ -36,6 +36,12 @@ namespace ct
             friend class It;
 
         public:
+            using iterator_category = std::random_access_iterator_tag;
+            using value_type = T;
+            using difference_type = std::ptrdiff_t;
+            using pointer = Ptr;
+            using reference = Ref;
+
             It() noexcept : base_(nullptr), i_(0), mask_(0) {}
             It(Ptr b, size_type i, size_type m) noexcept : base_(b), i_(i), mask_(m) {}
             It(const It<T &, T *> &o) noexcept : base_(o.base_), i_(o.i_), mask_(o.mask_) {}

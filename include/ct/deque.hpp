@@ -44,7 +44,13 @@ namespace ct
 
             It() noexcept : base_(nullptr), i_(0), mask_(0) {}
             It(Ptr b, size_type i, size_type m) noexcept : base_(b), i_(i), mask_(m) {}
-            It(const It<T &, T *> &o) noexcept : base_(o.base_), i_(o.i_), mask_(o.mask_) {}
+            It(const It &) noexcept = default;
+            It &operator=(const It &) noexcept = default;
+            template <typename R2, typename P2,
+                      typename = typename detail::enable_if<
+                          !detail::is_same<It<R2, P2>, It>::value &&
+                          std::is_convertible<P2, Ptr>::value>::type>
+            It(const It<R2, P2> &o) noexcept : base_(o.base_), i_(o.i_), mask_(o.mask_) {}
 
             Ref operator*() const { return base_[i_ & mask_]; }
             Ptr operator->() const { return base_ + (i_ & mask_); }

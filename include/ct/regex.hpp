@@ -525,16 +525,18 @@ namespace ct
                         i_ = save;
                         return false;
                     }
-                    long lo = -1, hi = -1;
+                    long long lo = -1, hi = -1;
                     bool has_comma = false;
+                    bool too_large = false;
                     if (!at_end() && is_digit(static_cast<unsigned char>(peek())))
                     {
                         lo = 0;
                         while (!at_end() && is_digit(static_cast<unsigned char>(peek())))
                         {
-                            lo = lo * 10 + (peek() - '0');
+                            if (lo <= 0x7FFFFFFF)
+                                lo = lo * 10 + (peek() - '0');
                             if (lo > 0x7FFFFFFF)
-                                lo = 0x7FFFFFFF;
+                                too_large = true;
                             ++i_;
                         }
                     }
@@ -546,9 +548,10 @@ namespace ct
                             hi = 0;
                             while (!at_end() && is_digit(static_cast<unsigned char>(peek())))
                             {
-                                hi = hi * 10 + (peek() - '0');
+                                if (hi <= 0x7FFFFFFF)
+                                    hi = hi * 10 + (peek() - '0');
                                 if (hi > 0x7FFFFFFF)
-                                    hi = 0x7FFFFFFF;
+                                    too_large = true;
                                 ++i_;
                             }
                         }
@@ -558,6 +561,11 @@ namespace ct
                     if (!eat('}'))
                     {
                         i_ = save;
+                        return false;
+                    }
+                    if (too_large)
+                    {
+                        fail("the repetition number is too large", save);
                         return false;
                     }
                     min = lo < 0 ? 0 : static_cast<std::int32_t>(lo);
@@ -600,7 +608,11 @@ namespace ct
                         else if (c == '{')
                         {
                             if (!parse_braces(min, max))
+                            {
+                                if (err_)
+                                    return -1;
                                 break;
+                            }
                             if (max >= 0 && max < min)
                                 return fail("min repeat greater than max repeat", qoff);
                         }
@@ -1264,7 +1276,11 @@ namespace ct
                         if (nd.a != nd.b)
                             return -1;
                         int w = width(nd.child);
-                        return w < 0 ? -1 : w * nd.a;
+                        if (w < 0)
+                            return -1;
+                        if (w > 0 && nd.a > 0x7FFFFFFF / w)
+                            return -1;
+                        return w * nd.a;
                     }
                     case N_Group:
                     case N_Atomic:
@@ -1279,7 +1295,10 @@ namespace ct
             class Compiler
             {
             public:
-                Compiler(Program &prog, const Vector<Node> &nodes) : prog_(prog), nodes_(nodes) {}
+                Compiler(Program &prog, const Vector<Node> &nodes)
+                    : prog_(prog), nodes_(nodes), sizes_(nodes.size(), -1)
+                {
+                }
 
                 void compile(int root)
                 {
@@ -1291,6 +1310,7 @@ namespace ct
             private:
                 Program &prog_;
                 const Vector<Node> &nodes_;
+                Vector<int> sizes_;
 
                 int pc() const noexcept { return static_cast<int>(prog_.code.size()); }
 
@@ -1350,6 +1370,13 @@ namespace ct
                 }
 
                 void gen(int ni)
+                {
+                    const int before = pc();
+                    gen_node(ni);
+                    sizes_[static_cast<std::size_t>(ni)] = pc() - before;
+                }
+
+                void gen_node(int ni)
                 {
                     const Node &nd = nodes_[ni];
                     switch (nd.kind)
@@ -1507,9 +1534,12 @@ namespace ct
                 {
                     int before = pc();
                     std::size_t reps_before = prog_.reps.size();
+                    long copies = max < 0 ? (min > 1 ? min : 1) : max;
+                    const int known = sizes_[static_cast<std::size_t>(child)];
+                    if (known >= 0 && copies * known > kMaxUnroll)
+                        return false;
                     gen(child);
                     int body = pc() - before;
-                    long copies = max < 0 ? (min > 1 ? min : 1) : max;
                     if (copies * body > kMaxUnroll)
                     {
                         prog_.code.resize(static_cast<std::size_t>(before));
@@ -1882,13 +1912,13 @@ namespace ct
                                     continue;
                                 }
                             }
-                            push(Fr_UndoLast, in.x, 0, last_[r]);
-                            last_[r] = pos;
                             if (c < static_cast<std::size_t>(info.min))
                             {
                                 ++pc;
                                 continue;
                             }
+                            push(Fr_UndoLast, in.x, 0, last_[r]);
+                            last_[r] = pos;
                             if (info.lazy)
                             {
                                 push(Fr_Alt, pc + 1, pos, 0);
@@ -2033,7 +2063,7 @@ namespace ct
                             }
                             else
                             {
-                                while (st < n_ && !prog_.first_has(static_cast<unsigned char>(s_[st])))
+                                while (st < n_ && (is_continuation(s_[st]) || !prog_.first_has(static_cast<unsigned char>(s_[st]))))
                                     ++st;
                                 if (st >= n_)
                                     return false;
@@ -2050,10 +2080,17 @@ namespace ct
                         if (st >= n_)
                             return false;
                         ++st;
+                        while (st < n_ && is_continuation(s_[st]))
+                            ++st;
                     }
                 }
 
             private:
+                static bool is_continuation(char c) noexcept
+                {
+                    return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
+                }
+
                 const Program &prog_;
                 const char *s_;
                 std::size_t n_;
@@ -2138,6 +2175,8 @@ namespace ct
                     case As_WordB:
                     case As_NotWordB:
                     {
+                        if (kind == As_NotWordB && n_ == 0)
+                            return false;
                         bool a = pos > 0 && is_word(static_cast<unsigned char>(s_[pos - 1]));
                         bool b = pos < n_ && is_word(static_cast<unsigned char>(s_[pos]));
                         return (a != b) == (kind == As_WordB);
@@ -2311,7 +2350,7 @@ namespace ct
         {
             require_valid();
             if (pos > text.size())
-                return false;
+                pos = text.size();
             detail::re::Runner r(prog_, text);
             if (!r.exec(pos, full, false, pos))
                 return false;
@@ -2406,7 +2445,7 @@ namespace ct
     {
         require_valid();
         if (pos > text.size())
-            return false;
+            pos = text.size();
         detail::re::Runner r(prog_, text);
         std::size_t ms, me;
         if (!r.search(pos, false, ms, me))

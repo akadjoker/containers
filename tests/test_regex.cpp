@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <ctime>
 #include <string>
 
 using ct::Match;
@@ -320,4 +321,74 @@ TEST(Regex, EmbeddedNulBytes)
     EXPECT_EQ(ms[1].start(), 3u);
     Regex any = Regex::compile("^.+$");
     EXPECT_TRUE(any.fullmatch(sv));
+}
+
+TEST(Regex, PosAlemDoFimEEncostadoAoFim)
+{
+    Regex empty = Regex::compile("");
+    Match m;
+    ASSERT_TRUE(empty.search("abc", &m, 10));
+    EXPECT_EQ(m.start(0), 3u);
+    EXPECT_EQ(m.end(0), 3u);
+    ASSERT_TRUE(empty.match("abc", &m, 10));
+    EXPECT_EQ(m.start(0), 3u);
+    Regex a = Regex::compile("a");
+    EXPECT_FALSE(a.search("abc", &m, 10));
+    EXPECT_FALSE(a.fullmatch("abc", &m, 10));
+}
+
+TEST(Regex, ContadorDeRepeticaoDemasiadoGrandeEErro)
+{
+    Regex::Error err;
+    Regex re = Regex::compile("a{99999999999999999999}", 0, &err);
+    EXPECT_FALSE(static_cast<bool>(re));
+    ASSERT_NE(err.message, nullptr);
+    EXPECT_STREQ(err.message, "the repetition number is too large");
+    Regex::Error err2;
+    Regex re2 = Regex::compile("a{1,4294967296}", 0, &err2);
+    EXPECT_FALSE(static_cast<bool>(re2));
+    Regex ok = Regex::compile("a{2147483647}");
+    EXPECT_TRUE(static_cast<bool>(ok));
+}
+
+TEST(Regex, LookBehindComLarguraEnormeNaoFazOverflow)
+{
+    Regex::Error err;
+    Regex re = Regex::compile("(?<=(?:ab){2000000000})x", 0, &err);
+    EXPECT_FALSE(static_cast<bool>(re));
+    EXPECT_NE(err.message, nullptr);
+    Regex nested = Regex::compile("(?<=(?:(?:ab){70000}){70000})x", 0, &err);
+    EXPECT_FALSE(static_cast<bool>(nested));
+}
+
+TEST(Regex, RepeticoesContadasAninhadasCompilamEmTempoLinear)
+{
+    String pattern("a{2}");
+    for (int level = 0; level < 26; ++level)
+        pattern = String("(?:") + pattern + "){2}";
+    const clock_t start = std::clock();
+    Regex re = Regex::compile(pattern);
+    const double seconds = double(std::clock() - start) / CLOCKS_PER_SEC;
+    ASSERT_TRUE(static_cast<bool>(re));
+    EXPECT_LT(seconds, 5.0) << "compilar " << pattern.size() << " bytes demorou " << seconds << " s";
+    EXPECT_FALSE(re.fullmatch("aaaa"));
+    EXPECT_TRUE(re.search("", nullptr) == false);
+    Regex small = Regex::compile("(?:(?:a{2}){2}){2}");
+    EXPECT_TRUE(small.fullmatch("aaaaaaaa"));
+    EXPECT_FALSE(small.fullmatch("aaaaaaa"));
+}
+
+TEST(Regex, MatchesVaziosNaoPartemUtf8)
+{
+    Regex empty = Regex::compile("");
+    String out = empty.sub("\xC3\xA9", "-");
+    EXPECT_EQ(out.size(), 4u);
+    EXPECT_EQ(std::memcmp(out.data(), "-\xC3\xA9-", 4), 0);
+    ct::Vector<String> parts = empty.split("a\xC3\xA9");
+    EXPECT_EQ(parts.size(), 4u);
+    Regex cont = Regex::compile("[\\x80-\\xbf]");
+    EXPECT_FALSE(cont.search("\xC3\xA9"));
+    Regex nb = Regex::compile("\\B");
+    EXPECT_FALSE(nb.search(""));
+    EXPECT_TRUE(nb.search("ab"));
 }

@@ -31,6 +31,16 @@ def pyflags(f):
 CASES = [
     # literals and basics
     ("abc", 0, "xxabcxx", None),
+    # empty matches must not split UTF-8 code points
+    ("", 0, "é", "-"),
+    ("(?:)", 0, "aé", "-"),
+    ("[\\x80-\\xbf]", 0, "é", None),
+    ("\\B", 0, "", None),
+    ("[ab]+|\\B", 0, "", None),
+    ("x*", 0, "ééé", "-"),
+    # counted repeat whose mandatory iteration matches empty
+    ("(|a){1,2}b", 0, "ab", None),
+    ("((?<!b)++|(?>a|ab)*+.+?){1,2}(a*)*", 0, "bnn", None),
     ("abc", 0, "xxabxx", None),
     ("", 0, "abc", None),
     ("a", 0, "", None),

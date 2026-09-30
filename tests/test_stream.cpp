@@ -2,6 +2,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <cstring>
+#include <limits>
+
 TEST(Stream, MemoryReadWriteSeekAndTake)
 {
     ct::MemoryStream stream;
@@ -39,5 +43,94 @@ TEST(Stream, FileHelpers)
     ASSERT_TRUE(ct::File::read_all(path, text));
     EXPECT_EQ(text, "abc");
     EXPECT_EQ(ct::File::size(path), 3);
+    EXPECT_TRUE(ct::File::remove(path));
+}
+
+TEST(Stream, SubstreamNoFimDevolveZeroSemErro)
+{
+    const char text[] = "0123456789";
+    ct::MemoryStream memory(text, 10);
+    ct::SubStream sub(memory, 3, 4);
+    char out[8] = {};
+    EXPECT_EQ(sub.read(out, 8), 4u);
+    EXPECT_EQ(sub.read(out, 8), 0u);
+    EXPECT_EQ(sub.error(), nullptr);
+    EXPECT_TRUE(sub.eof());
+    ct::String all;
+    EXPECT_TRUE(sub.seek(0, ct::Seek::Set));
+    EXPECT_TRUE(sub.read_all(all));
+    EXPECT_EQ(all, "3456");
+}
+
+TEST(Stream, SubstreamLimitaSeAoTamanhoDaBase)
+{
+    const char text[] = "0123456789";
+    ct::MemoryStream memory(text, 10);
+    ct::SubStream tail(memory, 7, 100);
+    EXPECT_EQ(tail.size(), 3);
+    ct::String all;
+    EXPECT_TRUE(tail.read_all(all));
+    EXPECT_EQ(all, "789");
+    EXPECT_TRUE(tail.eof());
+    ct::SubStream beyond(memory, 50, 5);
+    EXPECT_EQ(beyond.size(), 0);
+    EXPECT_TRUE(beyond.eof());
+    char c;
+    EXPECT_EQ(beyond.read(&c, 1), 0u);
+}
+
+TEST(Stream, SubstreamSeekNaoFazOverflow)
+{
+    const char text[] = "0123456789";
+    ct::MemoryStream memory(text, 10);
+    ct::SubStream sub(memory, 1, 5);
+    EXPECT_TRUE(sub.seek(1, ct::Seek::Set));
+    EXPECT_FALSE(sub.seek(std::numeric_limits<std::int64_t>::max(), ct::Seek::Cur));
+    EXPECT_FALSE(sub.seek(std::numeric_limits<std::int64_t>::min(), ct::Seek::Cur));
+    EXPECT_EQ(sub.tell(), 1);
+    ct::SubStream far(memory, std::numeric_limits<std::int64_t>::max(), 5);
+    char c;
+    EXPECT_EQ(far.read(&c, 1), 0u);
+}
+
+TEST(Stream, FileReadWritePreservaOConteudo)
+{
+    const char *path = "/tmp/ct_stream_rw.bin";
+    ASSERT_TRUE(ct::File::write_all(path, "0123456789ABCDEF", 16));
+    {
+        ct::FileStream f(path, ct::FileStream::ReadWrite);
+        ASSERT_TRUE(f.is_open());
+        EXPECT_EQ(f.size(), 16);
+        EXPECT_TRUE(f.seek(4, ct::Seek::Set));
+        EXPECT_TRUE(f.write_all("xy", 2));
+    }
+    ct::String text;
+    ASSERT_TRUE(ct::File::read_all(path, text));
+    EXPECT_EQ(text, "0123xy6789ABCDEF");
+    EXPECT_TRUE(ct::File::remove(path));
+    {
+        ct::FileStream f(path, ct::FileStream::ReadWrite);
+        ASSERT_TRUE(f.is_open());
+        EXPECT_EQ(f.size(), 0);
+        EXPECT_TRUE(f.write_all("novo", 4));
+    }
+    ASSERT_TRUE(ct::File::read_all(path, text));
+    EXPECT_EQ(text, "novo");
+    EXPECT_TRUE(ct::File::remove(path));
+}
+
+TEST(Stream, FileSizeNaoLimpaEof)
+{
+    const char *path = "/tmp/ct_stream_eof.bin";
+    ASSERT_TRUE(ct::File::write_all(path, "abc", 3));
+    ct::FileStream f(path, ct::FileStream::Read);
+    ASSERT_TRUE(f.is_open());
+    char buf[8];
+    EXPECT_EQ(f.read(buf, 8), 3u);
+    EXPECT_TRUE(f.eof());
+    EXPECT_EQ(f.size(), 3);
+    EXPECT_TRUE(f.eof());
+    EXPECT_EQ(f.read(buf, 8), 0u);
+    f.close();
     EXPECT_TRUE(ct::File::remove(path));
 }

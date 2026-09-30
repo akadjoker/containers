@@ -74,8 +74,9 @@ namespace ct
         bool open(StringView path, Mode mode)
         {
             close(); clear_error(); String p(path);
-            const char *m = mode == Read ? "rb" : mode == Write ? "wb" : mode == Append ? "ab" : "w+b";
+            const char *m = mode == Read ? "rb" : mode == Write ? "wb" : mode == Append ? "ab" : "r+b";
             file_ = std::fopen(p.c_str(), m);
+            if (!file_ && mode == ReadWrite && errno == ENOENT) file_ = std::fopen(p.c_str(), "w+b");
             if (!file_) { set_errno(); return false; }
             readable_ = mode == Read || mode == ReadWrite;
             writable_ = mode != Read;
@@ -116,8 +117,11 @@ namespace ct
             if (!file_) return -1;
             std::int64_t here = tell();
             if (here < 0) return -1;
+            const bool at_eof = std::feof(file_) != 0;
             FileStream *self = const_cast<FileStream *>(this); if (!self->seek(0, Seek::End)) return -1;
-            std::int64_t result = tell(); self->seek(here, Seek::Set); return result;
+            std::int64_t result = tell(); self->seek(here, Seek::Set);
+            if (at_eof) { int c = std::fgetc(file_); if (c != EOF) std::ungetc(c, file_); }
+            return result;
         }
         bool flush() override { if (!file_) return false; if (std::fflush(file_) != 0) { set_errno(); return false; } return true; }
         void close() override { if (file_) { std::fclose(file_); file_ = nullptr; } readable_ = writable_ = false; }
@@ -177,11 +181,38 @@ namespace ct
     class SubStream : public Stream
     {
     public:
-        SubStream(Stream &base, std::int64_t offset, std::int64_t length) : base_(base), offset_(offset), length_(length < 0 ? 0 : length), pos_(0) {}
+        SubStream(Stream &base, std::int64_t offset, std::int64_t length) : base_(base), offset_(offset < 0 ? 0 : offset), length_(0), pos_(0)
+        {
+            const std::int64_t limit = std::numeric_limits<std::int64_t>::max();
+            if (length < 0) length = 0;
+            if (length > limit - offset_) length = limit - offset_;
+            if (base_.can_seek())
+            {
+                const std::int64_t total = base_.size();
+                if (total >= 0)
+                {
+                    const std::int64_t available = offset_ < total ? total - offset_ : 0;
+                    if (length > available) length = available;
+                }
+            }
+            length_ = length;
+        }
         std::size_t read(void *dst, std::size_t n) override
-        { if (!is_open() || pos_ >= length_ || !base_.seek(offset_ + pos_, Seek::Set)) { if (!base_.error()) set_error("substream seek failed"); return 0; } std::int64_t left = length_ - pos_; n = n < static_cast<std::size_t>(left) ? n : static_cast<std::size_t>(left); std::size_t r = base_.read(dst, n); pos_ += r; return r; }
+        {
+            if (!is_open()) { set_error("substream is closed"); return 0; }
+            if (pos_ >= length_) return 0;
+            if (!base_.seek(offset_ + pos_, Seek::Set)) { set_error(base_.error() ? base_.error() : "substream seek failed"); return 0; }
+            std::int64_t left = length_ - pos_; n = n < static_cast<std::size_t>(left) ? n : static_cast<std::size_t>(left);
+            std::size_t r = base_.read(dst, n); if (r != n && base_.error()) set_error(base_.error()); pos_ += static_cast<std::int64_t>(r); return r;
+        }
         std::size_t write(const void *, std::size_t) override { set_error("substream is read-only"); return 0; }
-        bool seek(std::int64_t offset, Seek origin) override { std::int64_t base = origin == Seek::Set ? 0 : origin == Seek::Cur ? pos_ : length_; std::int64_t next = base + offset; if (next < 0 || next > length_) return false; pos_ = next; return true; }
+        bool seek(std::int64_t offset, Seek origin) override
+        {
+            std::int64_t base = origin == Seek::Set ? 0 : origin == Seek::Cur ? pos_ : length_;
+            if (offset > 0 && base > std::numeric_limits<std::int64_t>::max() - offset) return false;
+            if (offset < 0 && base < std::numeric_limits<std::int64_t>::min() - offset) return false;
+            std::int64_t next = base + offset; if (next < 0 || next > length_) return false; pos_ = next; return true;
+        }
         std::int64_t tell() const override { return pos_; }
         std::int64_t size() const override { return length_; }
         void close() override { closed_ = true; }

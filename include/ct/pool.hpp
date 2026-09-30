@@ -1,6 +1,7 @@
 #pragma once
 
 #include "detail/utils.hpp"
+#include "vector.hpp"
 
 namespace ct
 {
@@ -32,8 +33,9 @@ namespace ct
 
     public:
         explicit Pool(std::size_t slots_per_chunk = default_slots(), const Alloc &alloc = Alloc())
-            : Alloc(alloc), chunks_(nullptr), free_(nullptr), cur_(nullptr), end_(nullptr),
-              slots_per_chunk_(slots_per_chunk ? slots_per_chunk : 1), live_(0), capacity_(0)
+            : Alloc(alloc), chunks_(nullptr), index_(alloc), free_(nullptr), cur_(nullptr),
+              end_(nullptr), slots_per_chunk_(slots_per_chunk ? slots_per_chunk : 1), live_(0),
+              capacity_(0)
         {
             if (slots_per_chunk_ > max_slots())
                 detail::fatal("ct::Pool: numero de slots invalido");
@@ -49,9 +51,9 @@ namespace ct
         Pool &operator=(const Pool &) = delete;
 
         Pool(Pool &&o) noexcept
-            : Alloc(static_cast<Alloc &&>(o)), chunks_(o.chunks_), free_(o.free_), cur_(o.cur_),
-              end_(o.end_), slots_per_chunk_(o.slots_per_chunk_), live_(o.live_),
-              capacity_(o.capacity_)
+            : Alloc(static_cast<Alloc &&>(o)), chunks_(o.chunks_), index_(detail::move(o.index_)),
+              free_(o.free_), cur_(o.cur_), end_(o.end_), slots_per_chunk_(o.slots_per_chunk_),
+              live_(o.live_), capacity_(o.capacity_)
         {
             o.chunks_ = nullptr;
             o.free_ = nullptr;
@@ -68,6 +70,7 @@ namespace ct
                 release_chunks();
                 static_cast<Alloc &>(*this) = static_cast<Alloc &&>(o);
                 chunks_ = o.chunks_;
+                index_ = detail::move(o.index_);
                 free_ = o.free_;
                 cur_ = o.cur_;
                 end_ = o.end_;
@@ -155,6 +158,7 @@ namespace ct
 
     private:
         Chunk *chunks_;
+        Vector<Chunk *, Alloc> index_;
         FreeSlot *free_;
         char *cur_;
         char *end_;
@@ -173,17 +177,35 @@ namespace ct
             return reinterpret_cast<char *>((value + kAlign - 1) & ~(kAlign - 1));
         }
 
+        static std::uintptr_t address(const void *p) noexcept
+        {
+            return reinterpret_cast<std::uintptr_t>(p);
+        }
+
+        std::size_t index_upper_bound(std::uintptr_t pointer) const noexcept
+        {
+            std::size_t lo = 0;
+            std::size_t hi = index_.size();
+            while (lo < hi)
+            {
+                const std::size_t mid = lo + (hi - lo) / 2;
+                if (pointer < address(index_[mid]->data))
+                    hi = mid;
+                else
+                    lo = mid + 1;
+            }
+            return lo;
+        }
+
         Chunk *find_chunk(const T *p) const
         {
-            const std::uintptr_t pointer = reinterpret_cast<std::uintptr_t>(p);
-            for (Chunk *chunk = chunks_; chunk; chunk = chunk->next)
-            {
-                const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(chunk->data);
-                const std::uintptr_t end = begin + slots_per_chunk_ * kSlot;
-                if (pointer >= begin && pointer < end)
-                    return chunk;
-            }
-            return nullptr;
+            const std::uintptr_t pointer = address(p);
+            const std::size_t at = index_upper_bound(pointer);
+            if (at == 0)
+                return nullptr;
+            Chunk *chunk = index_[at - 1];
+            const std::uintptr_t end = address(chunk->data) + slots_per_chunk_ * kSlot;
+            return pointer < end ? chunk : nullptr;
         }
 
         std::uint8_t &state_ref(T *p) const
@@ -239,6 +261,7 @@ namespace ct
                 chunk = next;
             }
             chunks_ = nullptr;
+            index_.clear();
             free_ = nullptr;
             cur_ = end_ = nullptr;
             capacity_ = 0;
@@ -261,6 +284,7 @@ namespace ct
             chunk->data = aligned_data(chunk);
             chunk->states = reinterpret_cast<std::uint8_t *>(chunk->data + slots_bytes);
             std::memset(chunk->states, 2, slots_per_chunk_);
+            index_.insert(index_.begin() + index_upper_bound(address(chunk->data)), chunk);
             chunks_ = chunk;
             cur_ = chunk->data;
             end_ = cur_ + slots_bytes;

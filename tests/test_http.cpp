@@ -2,7 +2,19 @@
 #include <ct/http_client.hpp>
 #include <ct/http_server.hpp>
 #include <gtest/gtest.h>
+
+#include <chrono>
+#include <cstring>
 #include <thread>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+#if defined(__linux__)
+#include <dirent.h>
+#include <sys/resource.h>
+#endif
 
 TEST(HttpParser, IncrementalRequest)
 {
@@ -85,3 +97,216 @@ TEST(HttpServer, RoutesParamsAndKeepAlive)
     EXPECT_EQ(response.status, 404);
     server.stop(); loop.join();
 }
+
+namespace
+{
+    ct::String raw_exchange(const ct::Address &address, ct::StringView request)
+    {
+        ct::TcpStream stream;
+        if (!stream.connect(address, 2000)) return ct::String("connect failed");
+        stream.set_timeout_ms(2000, 2000);
+        if (!stream.send_all(request)) return ct::String("send failed");
+        ct::String reply;
+        char buffer[4096];
+        for (;;)
+        {
+            long n = stream.recv(buffer, sizeof(buffer));
+            if (n <= 0) break;
+            reply.append(buffer, static_cast<std::size_t>(n));
+        }
+        return reply;
+    }
+}
+
+TEST(HttpParser, RejectsHeaderSmugglingAndInjection)
+{
+    ct::HttpRequest request;
+    const char space_before_colon[] = "POST / HTTP/1.1\r\nContent-Length : 27\r\n\r\n";
+    ct::HttpParser a; EXPECT_EQ(a.feed(space_before_colon, sizeof(space_before_colon) - 1, request), ct::HttpParser::Error);
+    const char bare_lf[] = "GET / HTTP/1.1\r\nX-In: v\nSet-Cookie: pwned=1\r\n\r\n";
+    ct::HttpParser b; EXPECT_EQ(b.feed(bare_lf, sizeof(bare_lf) - 1, request), ct::HttpParser::Error);
+    const char both[] = "POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+    ct::HttpParser c; EXPECT_EQ(c.feed(both, sizeof(both) - 1, request), ct::HttpParser::Error);
+    const char gzip[] = "POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n";
+    ct::HttpParser d; EXPECT_EQ(d.feed(gzip, sizeof(gzip) - 1, request), ct::HttpParser::Error);
+    const char chunked_first[] = "POST / HTTP/1.1\r\nTransfer-Encoding: chunked, gzip\r\n\r\n";
+    ct::HttpParser e; EXPECT_EQ(e.feed(chunked_first, sizeof(chunked_first) - 1, request), ct::HttpParser::Error);
+    const char chunked_last[] = "POST / HTTP/1.1\r\nTransfer-Encoding: gzip, chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\n";
+    ct::HttpParser f; EXPECT_EQ(f.feed(chunked_last, sizeof(chunked_last) - 1, request), ct::HttpParser::Done);
+    EXPECT_EQ(request.body, "hi");
+    const char tab_in_target[] = "GET /a\tb HTTP/1.1\r\n\r\n";
+    ct::HttpParser g; EXPECT_EQ(g.feed(tab_in_target, sizeof(tab_in_target) - 1, request), ct::HttpParser::Error);
+}
+
+TEST(HttpParser, FeedAfterDoneIsAnError)
+{
+    const char one[] = "GET /one HTTP/1.1\r\n\r\n";
+    ct::HttpParser parser; ct::HttpRequest request;
+    ASSERT_EQ(parser.feed(one, sizeof(one) - 1, request), ct::HttpParser::Done);
+    EXPECT_EQ(parser.feed("GET /two HTTP/1.1\r\n\r\n", 21, request), ct::HttpParser::Error);
+    EXPECT_NE(parser.error(), nullptr);
+}
+
+TEST(HttpParser, DecodesPercentEncodedPathButKeepsQueryAndEncodedSlash)
+{
+    ct::HttpRequest request;
+    const char ok[] = "GET /a%20b/%2e%2e/c%2Fd?x=%20y HTTP/1.1\r\n\r\n";
+    ct::HttpParser a; ASSERT_EQ(a.feed(ok, sizeof(ok) - 1, request), ct::HttpParser::Done);
+    EXPECT_EQ(request.path, "/a b/../c%2Fd");
+    EXPECT_EQ(request.query, "x=%20y");
+    const char bad_hex[] = "GET /a%zz HTTP/1.1\r\n\r\n";
+    ct::HttpParser b; EXPECT_EQ(b.feed(bad_hex, sizeof(bad_hex) - 1, request), ct::HttpParser::Error);
+    const char nul[] = "GET /a%00b HTTP/1.1\r\n\r\n";
+    ct::HttpParser c; EXPECT_EQ(c.feed(nul, sizeof(nul) - 1, request), ct::HttpParser::Error);
+    const char truncated[] = "GET /a%2 HTTP/1.1\r\n\r\n";
+    ct::HttpParser d; EXPECT_EQ(d.feed(truncated, sizeof(truncated) - 1, request), ct::HttpParser::Error);
+}
+
+TEST(HttpParser, HeadResponseHasNoBodyAndInformationalIsComplete)
+{
+    const char head[] = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n";
+    ct::HttpParser parser; ct::HttpResponse response;
+    parser.expect_head_response(true);
+    EXPECT_EQ(parser.feed(head, sizeof(head) - 1, response), ct::HttpParser::Done);
+    EXPECT_TRUE(response.body.empty());
+    EXPECT_EQ(parser.consumed(), sizeof(head) - 1);
+    const char cont[] = "HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok";
+    ct::HttpParser second; ct::HttpResponse first_response;
+    EXPECT_EQ(second.feed(cont, sizeof(cont) - 1, first_response), ct::HttpParser::Done);
+    EXPECT_EQ(first_response.status, 100);
+    second.reset();
+    EXPECT_EQ(second.feed(nullptr, 0, first_response), ct::HttpParser::Done);
+    EXPECT_EQ(first_response.status, 200);
+    EXPECT_EQ(first_response.body, "ok");
+}
+
+TEST(HttpClient, RejectsControlCharactersBeforeConnecting)
+{
+    ct::Address address; ASSERT_TRUE(ct::Address::parse("127.0.0.1", 9, address));
+    ct::HttpResponse response; ct::NetError error = {"", 0};
+    ct::HttpRequest crlf; crlf.method = "GET"; crlf.path = "/a\r\nX-Injected: yes";
+    EXPECT_FALSE(ct::HttpClient::request(crlf, address, response, &error, 200));
+    EXPECT_STREQ(error.message, "invalid characters in HTTP request line");
+    ct::HttpRequest header; header.method = "GET"; header.path = "/";
+    header.headers.push_back(ct::HttpHeader{ct::String("X-A"), ct::String("v\nSet-Cookie: x")});
+    EXPECT_FALSE(ct::HttpClient::request(header, address, response, &error, 200));
+    EXPECT_STREQ(error.message, "invalid characters in HTTP header");
+    EXPECT_FALSE(ct::HttpClient::get("http://127.0.0.1:9/a\r\nHost: evil", response, &error, 200));
+}
+
+TEST(HttpClient, SkipsInformationalResponsesAndHandlesHead)
+{
+    ct::Address address; ASSERT_TRUE(ct::Address::parse("127.0.0.1", 0, address));
+    ct::TcpListener listener; if (!listener.bind(address)) GTEST_SKIP() << "HTTP test port unavailable"; ASSERT_TRUE(listener.listen());
+    address = listener.local_address();
+    std::thread server([&] {
+        for (int round = 0; round < 2; ++round)
+        {
+            ct::TcpStream peer; ASSERT_TRUE(listener.accept(peer));
+            char request[1024]; long n = peer.recv(request, sizeof(request) - 1); ASSERT_GT(n, 0); request[n] = '\0';
+            if (std::strncmp(request, "HEAD", 4) == 0)
+                ASSERT_TRUE(peer.send_all("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Type: text/plain\r\n\r\n"));
+            else
+                ASSERT_TRUE(peer.send_all("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"));
+        }
+    });
+    ct::HttpResponse response; ct::NetError error = {"", 0};
+    ct::HttpRequest head; head.method = "HEAD"; head.path = "/";
+    EXPECT_TRUE(ct::HttpClient::request(head, address, response, &error));
+    EXPECT_EQ(response.status, 200); EXPECT_TRUE(response.body.empty()); EXPECT_EQ(response.header("content-length"), "5");
+    ct::HttpRequest get; get.method = "GET"; get.path = "/";
+    EXPECT_TRUE(ct::HttpClient::request(get, address, response, &error));
+    EXPECT_EQ(response.status, 200); EXPECT_EQ(response.body, "hello");
+    server.join();
+}
+
+TEST(HttpServer, HeadUsesGetRoutesWithoutBodyAndBadInputGets400)
+{
+    ct::Address address; ASSERT_TRUE(ct::Address::parse("127.0.0.1", 0, address));
+    ct::HttpServer server;
+    server.route("GET", "/users/:id", [](const ct::HttpRequest &request, ct::HttpResponse &response) { response.text(request.param("id")); });
+    server.route("GET", "/inject", [](const ct::HttpRequest &, ct::HttpResponse &response) { response.set("X-Bad", "a\r\nSet-Cookie: pwned=1"); response.text("x"); });
+    server.route("GET", "/empty", [](const ct::HttpRequest &, ct::HttpResponse &response) { response.status = 204; });
+    ct::NetError error = {"", 0};
+    if (!server.listen(address, &error)) GTEST_SKIP() << "HTTP server test port unavailable";
+    address = server.local_address();
+    std::thread loop([&] { server.run(); });
+    ct::String head = raw_exchange(address, "HEAD /users/42 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(head.starts_with("HTTP/1.1 200 ")) << head.c_str();
+    EXPECT_TRUE(head.contains("Content-Length: 2\r\n")) << head.c_str();
+    EXPECT_TRUE(head.ends_with("\r\n\r\n")) << head.c_str();
+    ct::String missing = raw_exchange(address, "HEAD /missing HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(missing.starts_with("HTTP/1.1 404 ")) << missing.c_str();
+    EXPECT_TRUE(missing.ends_with("\r\n\r\n")) << missing.c_str();
+    ct::String bad = raw_exchange(address, "GET / HTTP/1.1\r\nBroken header\r\n\r\n");
+    EXPECT_TRUE(bad.starts_with("HTTP/1.1 400 ")) << bad.c_str();
+    ct::String smuggle = raw_exchange(address, "POST /users/1 HTTP/1.1\r\nHost: x\r\nContent-Length : 27\r\n\r\nGET /users/2 HTTP/1.1\r\n\r\n");
+    EXPECT_TRUE(smuggle.starts_with("HTTP/1.1 400 ")) << smuggle.c_str();
+    EXPECT_EQ(smuggle.find("HTTP/1.1 200"), ct::String::npos) << smuggle.c_str();
+    ct::String inject = raw_exchange(address, "GET /inject HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(inject.starts_with("HTTP/1.1 500 ")) << inject.c_str();
+    EXPECT_FALSE(inject.contains("Set-Cookie")) << inject.c_str();
+    ct::String empty = raw_exchange(address, "GET /empty HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(empty.starts_with("HTTP/1.1 204 ")) << empty.c_str();
+    EXPECT_FALSE(empty.contains("Content-Length")) << empty.c_str();
+    EXPECT_TRUE(empty.ends_with("\r\n\r\n")) << empty.c_str();
+    ct::String pipelined = raw_exchange(address, "HEAD /users/7 HTTP/1.1\r\nHost: x\r\n\r\nGET /users/8 HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_NE(pipelined.find("HTTP/1.1 200 OK\r\n"), ct::String::npos) << pipelined.c_str();
+    EXPECT_TRUE(pipelined.ends_with("\r\n\r\n8")) << pipelined.c_str();
+    server.stop(); loop.join();
+}
+
+#if !defined(_WIN32)
+TEST(HttpServer, StaticFilesUseDecodedPathsAndStayInsideTheDirectory)
+{
+    const char *dir = "/tmp/ct_http_static_test";
+    ::mkdir(dir, 0755);
+    ASSERT_TRUE(ct::File::write_all("/tmp/ct_http_static_test/my file.txt", "conteudo", 8));
+    ASSERT_TRUE(ct::File::write_all("/tmp/ct_http_secret.txt", "segredo", 7));
+    ct::Address address; ASSERT_TRUE(ct::Address::parse("127.0.0.1", 0, address));
+    ct::HttpServer server;
+    server.serve_files("/static", dir);
+    ct::NetError error = {"", 0};
+    if (!server.listen(address, &error)) GTEST_SKIP() << "HTTP server test port unavailable";
+    address = server.local_address();
+    std::thread loop([&] { server.run(); });
+    ct::String ok = raw_exchange(address, "GET /static/my%20file.txt HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(ok.starts_with("HTTP/1.1 200 ")) << ok.c_str();
+    EXPECT_TRUE(ok.ends_with("conteudo")) << ok.c_str();
+    ct::String escape = raw_exchange(address, "GET /static/%2e%2e/ct_http_secret.txt HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(escape.starts_with("HTTP/1.1 404 ")) << escape.c_str();
+    ct::String head = raw_exchange(address, "HEAD /static/my%20file.txt HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    EXPECT_TRUE(head.starts_with("HTTP/1.1 200 ")) << head.c_str();
+    EXPECT_TRUE(head.contains("Content-Length: 8\r\n")) << head.c_str();
+    EXPECT_TRUE(head.ends_with("\r\n\r\n")) << head.c_str();
+    server.stop(); loop.join();
+    ct::File::remove("/tmp/ct_http_static_test/my file.txt");
+    ct::File::remove("/tmp/ct_http_secret.txt");
+    ::rmdir(dir);
+}
+#endif
+
+#if defined(__linux__)
+TEST(HttpServer, AcceptFailureDoesNotSpinThePollLoop)
+{
+    ct::Address address; ASSERT_TRUE(ct::Address::parse("127.0.0.1", 0, address));
+    ct::HttpServer server;
+    ct::NetError error = {"", 0};
+    if (!server.listen(address, &error)) GTEST_SKIP() << "HTTP server test port unavailable";
+    address = server.local_address();
+    ct::TcpStream client;
+    ASSERT_TRUE(client.connect(address, 1000));
+    rlimit saved; ASSERT_EQ(getrlimit(RLIMIT_NOFILE, &saved), 0);
+    unsigned open_fds = 0;
+    if (DIR *d = opendir("/proc/self/fd")) { while (readdir(d)) ++open_fds; closedir(d); }
+    ASSERT_GT(open_fds, 3u);
+    rlimit low = saved; low.rlim_cur = open_fds - 3;
+    ASSERT_EQ(setrlimit(RLIMIT_NOFILE, &low), 0);
+    const auto start = std::chrono::steady_clock::now();
+    for (int i = 0; i < 20; ++i) server.poll(10);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    ASSERT_EQ(setrlimit(RLIMIT_NOFILE, &saved), 0);
+    EXPECT_GE(ms, 60.0) << "20 polls de 10 ms terminaram em " << ms << " ms: accept a falhar em busy-loop";
+    server.stop();
+}
+#endif

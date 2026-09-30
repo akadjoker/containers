@@ -28,11 +28,25 @@ namespace ct
         static bool request(const HttpRequest &request, const Address &address,
                             HttpResponse &out, NetError *error = nullptr, unsigned timeout_ms = 5000)
         {
+            StringView method = request.method.empty() ? StringView("GET") : StringView(request.method);
+            StringView path = request.path.empty() ? StringView("/") : StringView(request.path);
+            if (!detail::http_valid_token(method) || !detail::http_valid_target(path) ||
+                (!request.query.empty() && !detail::http_valid_target(request.query)))
+            {
+                set_error(error, "invalid characters in HTTP request line", 0);
+                return false;
+            }
+            for (std::size_t i = 0; i < request.headers.size(); ++i)
+            {
+                if (!detail::http_valid_token(request.headers[i].name) || !detail::http_valid_header_value(request.headers[i].value))
+                {
+                    set_error(error, "invalid characters in HTTP header", 0);
+                    return false;
+                }
+            }
             TcpStream stream;
             if (!stream.connect(address, timeout_ms, error)) return false;
             String wire;
-            StringView method = request.method.empty() ? StringView("GET") : StringView(request.method);
-            StringView path = request.path.empty() ? StringView("/") : StringView(request.path);
             wire.append(method.data(), method.size()).append(" ").append(path.data(), path.size());
             if (!request.query.empty()) wire.append("?").append(request.query);
             wire.append(" HTTP/1.1\r\n");
@@ -49,6 +63,7 @@ namespace ct
             wire.append("\r\n").append(request.body);
             if (!stream.send_all(wire)) { if (error) *error = stream.last_error(); return false; }
             HttpParser parser;
+            parser.expect_head_response(detail::http_iequal(method, "HEAD"));
             char buffer[8192];
             for (;;)
             {
@@ -56,18 +71,29 @@ namespace ct
                 if (count < 0) { if (error) *error = stream.last_error(); return false; }
                 if (count == 0)
                 {
-                    HttpParser::State state = parser.finish(out);
+                    HttpParser::State state = skip_informational(parser, parser.finish(out), out, true);
                     if (state == HttpParser::Done) return true;
                     set_error(error, state == HttpParser::Error ? parser.error() : "connection closed before complete HTTP response", 0);
                     return false;
                 }
-                HttpParser::State state = parser.feed(buffer, static_cast<std::size_t>(count), out);
+                HttpParser::State state = skip_informational(parser, parser.feed(buffer, static_cast<std::size_t>(count), out), out, false);
                 if (state == HttpParser::Done) return true;
                 if (state == HttpParser::Error) { set_error(error, parser.error(), 0); return false; }
             }
         }
 
     private:
+        static HttpParser::State skip_informational(HttpParser &parser, HttpParser::State state, HttpResponse &out, bool eof)
+        {
+            while (state == HttpParser::Done && out.status >= 100 && out.status < 200 && out.status != 101)
+            {
+                parser.reset();
+                state = parser.feed(nullptr, 0, out);
+                if (state == HttpParser::NeedMore && eof) state = parser.finish(out);
+            }
+            return state;
+        }
+
         static void set_error(NetError *error, const char *message, int code)
         {
             if (error) { error->message = message; error->code = code ? code : -1; }

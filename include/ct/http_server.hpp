@@ -13,7 +13,7 @@ namespace ct
     public:
         using Handler = Function<void(const HttpRequest &, HttpResponse &)>;
 
-        explicit HttpServer(unsigned = 0) noexcept : running_(0) {}
+        explicit HttpServer(unsigned = 0) noexcept : running_(0), accept_backoff_(0) {}
         ~HttpServer() { stop(); }
         HttpServer(const HttpServer &) = delete;
         HttpServer &operator=(const HttpServer &) = delete;
@@ -64,11 +64,12 @@ namespace ct
         {
             if (!running_.load() || !listener_.valid()) return;
             Poller poller;
-            poller.add(listener_, Poller::Readable);
+            poller.add(listener_, accept_backoff_ ? 0u : static_cast<unsigned>(Poller::Readable));
             for (std::size_t i = 0; i < connections_.size(); ++i)
                 poller.add(connections_[i].stream, connections_[i].output.empty() ? Poller::Readable : Poller::Writable);
             if (poller.wait(timeout_ms) < 0) return;
-            if (poller.readable(0)) accept_ready();
+            if (accept_backoff_) --accept_backoff_;
+            else if (poller.readable(0)) accept_ready();
             for (std::size_t i = connections_.size(); i-- > 0;)
             {
                 const std::size_t event = i + 1;
@@ -127,7 +128,11 @@ namespace ct
             for (;;)
             {
                 TcpStream stream;
-                if (!listener_.accept(stream)) break;
+                if (!listener_.accept(stream))
+                {
+                    if (!listener_.would_block()) accept_backoff_ = 1;
+                    break;
+                }
                 stream.set_nonblocking(true);
                 Connection connection;
                 connection.stream = detail::move(stream);
@@ -143,8 +148,8 @@ namespace ct
             if (count < 0) return connection.stream.would_block();
             HttpRequest request;
             HttpParser::State state = connection.parser.feed(buffer, static_cast<std::size_t>(count), request);
-            if (state == HttpParser::Error) return false;
-            if (state == HttpParser::Done) prepare_response(connection, request);
+            if (state == HttpParser::Error) bad_request(connection);
+            else if (state == HttpParser::Done) prepare_response(connection, request);
             return true;
         }
 
@@ -160,18 +165,34 @@ namespace ct
             HttpRequest next;
             HttpParser::State state = connection.parser.feed(nullptr, 0, next);
             if (state == HttpParser::Done) prepare_response(connection, next);
-            else if (state == HttpParser::Error) return false;
+            else if (state == HttpParser::Error) bad_request(connection);
+            return true;
+        }
+
+        static void bad_request(Connection &connection)
+        {
+            connection.close_after = true;
+            connection.output = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: 11\r\nConnection: close\r\n\r\nBad Request";
+        }
+
+        static bool wire_safe(const HttpResponse &response) noexcept
+        {
+            for (std::size_t i = 0; i < response.headers.size(); ++i)
+                if (!detail::http_valid_token(response.headers[i].name) || !detail::http_valid_header_value(response.headers[i].value)) return false;
             return true;
         }
 
         void prepare_response(Connection &connection, HttpRequest &request)
         {
             HttpResponse response;
+            const bool is_head = detail::http_iequal(request.method, "HEAD");
             bool found = false;
             for (std::size_t i = 0; i < routes_.size(); ++i)
             {
                 Route &route = routes_[i];
-                if ((route.method == "*" || detail::http_iequal(route.method, request.method)) && match(route.pattern, request.path, request.params))
+                const bool method_ok = route.method == "*" || detail::http_iequal(route.method, request.method) ||
+                                       (is_head && detail::http_iequal(route.method, "GET"));
+                if (method_ok && match(route.pattern, request.path, request.params))
                 {
                     route.handler(request, response);
                     found = true;
@@ -184,13 +205,22 @@ namespace ct
             connection.close_after = request.version == "HTTP/1.0"
                 ? !detail::http_has_token(requested_connection, "keep-alive")
                 : detail::http_has_token(requested_connection, "close");
-            if (response.header("Content-Length").empty()) response.set("Content-Length", String::number(static_cast<unsigned long long>(response.body.size())));
+            if (!wire_safe(response))
+            {
+                response = HttpResponse();
+                response.status = 500;
+                response.text("Internal Server Error");
+                connection.close_after = true;
+            }
+            const bool status_without_body = (response.status >= 100 && response.status < 200) || response.status == 204 || response.status == 304;
+            if (!status_without_body && response.header("Content-Length").empty()) response.set("Content-Length", String::number(static_cast<unsigned long long>(response.body.size())));
             response.set("Connection", connection.close_after ? StringView("close") : StringView("keep-alive"));
             connection.output.clear();
             connection.output.append("HTTP/1.1 ").append_number(response.status).append(" ").append(reason(response.status)).append("\r\n");
             for (std::size_t i = 0; i < response.headers.size(); ++i)
                 connection.output.append(response.headers[i].name).append(": ").append(response.headers[i].value).append("\r\n");
-            connection.output.append("\r\n").append(response.body);
+            connection.output.append("\r\n");
+            if (!is_head && !status_without_body) connection.output.append(response.body);
         }
 
         static const char *reason(int status) noexcept
@@ -269,5 +299,6 @@ namespace ct
         Vector<Route> routes_;
         Vector<StaticDir> static_dirs_;
         Atomic<int> running_;
+        unsigned accept_backoff_;
     };
 }

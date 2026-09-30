@@ -149,6 +149,31 @@ namespace ct
             return (dp && *dp) ? *dp : '.';
         }
 
+        inline bool xml_parse_digits(const char *&p, std::uint64_t &mag)
+        {
+            bool fits = true;
+            mag = 0;
+            for (; xml_is_digit(*p); ++p)
+            {
+                const std::uint64_t digit = static_cast<std::uint64_t>(*p - '0');
+                if (mag > ((std::numeric_limits<std::uint64_t>::max)() - digit) / 10)
+                    fits = false;
+                else
+                    mag = mag * 10 + digit;
+            }
+            return fits;
+        }
+
+        inline bool xml_real_fits_int(double d) noexcept
+        {
+            return d == d && d >= -9223372036854775808.0 && d < 9223372036854775808.0;
+        }
+
+        inline bool xml_real_fits_uint(double d) noexcept
+        {
+            return d == d && d >= 0.0 && d < 18446744073709551616.0;
+        }
+
         inline double xml_strtod_locale(const char *s)
         {
             const char dp = xml_decimal_point();
@@ -183,18 +208,29 @@ namespace ct
         if (!detail::xml_is_digit(*p))
             return def;
         std::uint64_t mag = 0;
-        const char *digits_start = p;
-        for (; detail::xml_is_digit(*p); ++p)
-            mag = mag * 10 + static_cast<unsigned>(*p - '0');
+        const bool fits = detail::xml_parse_digits(p, mag);
         if (*p == '\0')
-            return neg ? -static_cast<std::int64_t>(mag) : static_cast<std::int64_t>(mag);
+        {
+            const std::uint64_t limit =
+                static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
+            if (!fits)
+                return def;
+            if (neg)
+            {
+                if (mag <= limit)
+                    return -static_cast<std::int64_t>(mag);
+                if (mag == limit + 1)
+                    return (std::numeric_limits<std::int64_t>::min)();
+                return def;
+            }
+            return mag <= limit ? static_cast<std::int64_t>(mag) : def;
+        }
         if (*p == '.' || *p == 'e' || *p == 'E')
         {
-
-            static_cast<void>(digits_start);
-            return static_cast<std::int64_t>(detail::xml_strtod_locale(v->c_str()));
+            const double d = detail::xml_strtod_locale(v->c_str());
+            return detail::xml_real_fits_int(d) ? static_cast<std::int64_t>(d) : def;
         }
-        return def; 
+        return def;
     }
 
     inline std::uint64_t Xml::attr_uint(const char *name, std::uint64_t def) const noexcept
@@ -208,12 +244,14 @@ namespace ct
         if (!detail::xml_is_digit(*p))
             return def;
         std::uint64_t mag = 0;
-        for (; detail::xml_is_digit(*p); ++p)
-            mag = mag * 10 + static_cast<unsigned>(*p - '0');
+        const bool fits = detail::xml_parse_digits(p, mag);
         if (*p == '\0')
-            return mag;
+            return fits ? mag : def;
         if (*p == '.' || *p == 'e' || *p == 'E')
-            return static_cast<std::uint64_t>(detail::xml_strtod_locale(v->c_str()));
+        {
+            const double d = detail::xml_strtod_locale(v->c_str());
+            return detail::xml_real_fits_uint(d) ? static_cast<std::uint64_t>(d) : def;
+        }
         return def;
     }
 
@@ -958,11 +996,12 @@ namespace ct
         }
 
         detail::XmlParser ps(text, text + len);
-
+        std::size_t bom = 0;
         if (len >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
             static_cast<unsigned char>(text[1]) == 0xBB &&
             static_cast<unsigned char>(text[2]) == 0xBF)
-            ps.cur += 3;
+            bom = 3;
+        ps.cur += bom;
 
         Xml root;
         if (ps.skip_misc())
@@ -985,14 +1024,14 @@ namespace ct
                 err->offset = off;
                 err->line = 1;
                 err->column = 1;
-                for (std::size_t i = 0; i < off && i < len; ++i)
+                for (std::size_t i = bom; i < off && i < len; ++i)
                 {
                     if (text[i] == '\n')
                     {
                         ++err->line;
                         err->column = 1;
                     }
-                    else
+                    else if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80)
                         ++err->column;
                 }
             }

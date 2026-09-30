@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+#include <limits>
+
 using ct::String;
 using ct::Xml;
 
@@ -436,4 +439,51 @@ TEST(Xml, ParseFromCtString)
     Xml y = Xml::parse(s, &err);
     EXPECT_FALSE(static_cast<bool>(err));
     EXPECT_EQ(y.tag(), "root");
+}
+
+TEST(Xml, AttrIntEAttrUintNaoFazemOverflow)
+{
+    ct::Xml x = ct::Xml::parse(
+        "<a min='-9223372036854775808' max='9223372036854775807' over='9223372036854775808' "
+        "under='-9223372036854775809' huge='99999999999999999999' big='1e30' neg='-1e30' "
+        "umax='18446744073709551615' uover='18446744073709551616' ok='12.75'/>");
+    ASSERT_EQ(x.tag(), "a");
+    EXPECT_EQ(x.attr_int("min"), std::numeric_limits<std::int64_t>::min());
+    EXPECT_EQ(x.attr_int("max"), std::numeric_limits<std::int64_t>::max());
+    EXPECT_EQ(x.attr_int("over", -1), -1);
+    EXPECT_EQ(x.attr_int("under", -1), -1);
+    EXPECT_EQ(x.attr_int("huge", -1), -1);
+    EXPECT_EQ(x.attr_int("big", -1), -1);
+    EXPECT_EQ(x.attr_int("neg", -1), -1);
+    EXPECT_EQ(x.attr_int("ok"), 12);
+    EXPECT_EQ(x.attr_uint("umax"), std::numeric_limits<std::uint64_t>::max());
+    EXPECT_EQ(x.attr_uint("uover", 5u), 5u);
+    EXPECT_EQ(x.attr_uint("huge", 5u), 5u);
+    EXPECT_EQ(x.attr_uint("big", 5u), 5u);
+    EXPECT_EQ(x.attr_uint("ok"), 12u);
+}
+
+TEST(Xml, ErroDeStreamNaoApontaParaOStream)
+{
+    ct::Xml::Error error;
+    {
+        ct::FileStream closed;
+        ct::Xml x = ct::parse_xml(closed, &error);
+        EXPECT_TRUE(x.empty());
+    }
+    ASSERT_TRUE(error);
+    EXPECT_GT(std::strlen(error.message), 0u);
+}
+
+TEST(Xml, ColunaDoErroIgnoraBom)
+{
+    ct::Xml::Error err;
+    ct::Xml::parse("\xEF\xBB\xBF<a><b></a>", &err);
+    ASSERT_TRUE(err);
+    EXPECT_EQ(err.line, 1u);
+    EXPECT_LT(err.column, 12u);
+    ct::Xml::Error plain;
+    ct::Xml::parse("<a><b></a>", &plain);
+    ASSERT_TRUE(plain);
+    EXPECT_EQ(err.column, plain.column);
 }

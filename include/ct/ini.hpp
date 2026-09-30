@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cerrno>
+
 #include <cstdlib>
 
 #include "stream.hpp"
@@ -115,8 +117,14 @@ namespace ct
             if (s)
             {
                 const Entry *e = find_entry(*s, key);
-                if (e)
-                    return std::strtoll(e->value.c_str(), nullptr, 10);
+                if (e && !e->value.empty())
+                {
+                    char *end = nullptr;
+                    errno = 0;
+                    const long long parsed = std::strtoll(e->value.c_str(), &end, 10);
+                    if (end && *end == '\0' && errno != ERANGE)
+                        return parsed;
+                }
             }
             return fallback;
         }
@@ -127,8 +135,13 @@ namespace ct
             if (s)
             {
                 const Entry *e = find_entry(*s, key);
-                if (e)
-                    return std::strtod(e->value.c_str(), nullptr);
+                if (e && !e->value.empty())
+                {
+                    char *end = nullptr;
+                    const double parsed = std::strtod(e->value.c_str(), &end);
+                    if (end && *end == '\0')
+                        return parsed;
+                }
             }
             return fallback;
         }
@@ -289,9 +302,10 @@ namespace ct
                 if (line[0] == '[')
                 {
                     size_type close = line.rfind(']');
-                    if (close == npos || close == 0)
+                    StringView name = close == npos ? line.substr(1).trimmed()
+                                                    : line.substr(1, close - 1).trimmed();
+                    if (name.empty())
                         continue;
-                    StringView name = line.substr(1, close - 1).trimmed();
                     current = find_section_index(name);
                     if (current == npos)
                     {

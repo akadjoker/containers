@@ -99,3 +99,40 @@ TEST(Ini, FileSaveLoad)
 
     ct::File::remove(path);
 }
+
+TEST(Ini, GettersTipadosDevolvemFallbackParaValoresNaoNumericos)
+{
+    Ini ini = Ini::parse(
+        "[s]\n"
+        "texto=abc\n"
+        "hex=0x10\n"
+        "real=3.14\n"
+        "vazio=\n"
+        "grande=99999999999999999999\n"
+        "neg=-17\n");
+    EXPECT_EQ(ini.get_int("s", "texto", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "hex", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "real", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "vazio", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "grande", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "neg", 42), -17);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "texto", 2.5), 2.5);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "vazio", 2.5), 2.5);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "real", 2.5), 3.14);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "neg", 2.5), -17.0);
+}
+
+TEST(Ini, CabecalhoSemFechoNaoRedirecionaChavesParaASeccaoAnterior)
+{
+    Ini ini = Ini::parse(
+        "[s]\n"
+        "a=1\n"
+        "[t\n"
+        "z=9\n"
+        "[\n"
+        "w=2\n");
+    EXPECT_EQ(ini.get("s", "a"), "1");
+    EXPECT_EQ(ini.get("s", "z", "ausente"), "ausente");
+    EXPECT_EQ(ini.get("t", "z"), "9");
+    EXPECT_EQ(ini.get("t", "w"), "2");
+}

@@ -609,17 +609,7 @@ namespace ct
             return S(data(), size());
         }
 
-        std::uint64_t hash() const
-        {
-            std::uint64_t result = 1469598103934665603ull;
-            const char *d = data();
-            for (size_type i = 0, n = size(); i < n; ++i)
-            {
-                result ^= static_cast<unsigned char>(d[i]);
-                result *= 1099511628211ull;
-            }
-            return result;
-        }
+        std::uint64_t hash() const noexcept { return detail::hash_bytes(data(), size()); }
 
         void swap(String &o) noexcept
         {

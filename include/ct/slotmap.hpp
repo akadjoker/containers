@@ -29,6 +29,8 @@ namespace ct
                           static_cast<std::uint32_t>(b >> 32));
         }
 
+        std::uint64_t hash() const noexcept { return detail::hash_mix(bits()); }
+
         bool operator==(const Handle &o) const noexcept
         {
             return index == o.index && generation == o.generation;

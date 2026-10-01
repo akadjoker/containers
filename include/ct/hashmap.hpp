@@ -2,27 +2,22 @@
 #pragma once
 
 #include "detail/utils.hpp"
+#include "span.hpp"
+#include "string.hpp"
 
 namespace ct
 {
 
-    namespace detail
-    {
-
-        inline std::uint64_t hash_mix(std::uint64_t x)
-        {
-            x ^= x >> 33;
-            x *= 0xff51afd7ed558ccdull;
-            x ^= x >> 33;
-            return x;
-        }
-    } 
-
-    template <typename K>
+    template <typename K, typename Enable = void>
     struct Hash
     {
         std::uint64_t operator()(const K &k) const { return k.hash(); }
     };
+
+    inline std::uint64_t hash_combine(std::uint64_t seed, std::uint64_t h) noexcept
+    {
+        return seed ^ (h + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
+    }
 
 #define CT_INT_HASH(T)                                                    \
     template <>                                                           \
@@ -44,7 +39,83 @@ namespace ct
     CT_INT_HASH(unsigned long)
     CT_INT_HASH(long long)
     CT_INT_HASH(unsigned long long)
+    CT_INT_HASH(wchar_t)
+    CT_INT_HASH(char16_t)
+    CT_INT_HASH(char32_t)
 #undef CT_INT_HASH
+
+    template <>
+    struct Hash<bool>
+    {
+        std::uint64_t operator()(bool k) const { return detail::hash_mix(k ? 1u : 0u); }
+    };
+
+    template <>
+    struct Hash<float>
+    {
+        std::uint64_t operator()(float k) const
+        {
+            if (k == 0.0f)
+                k = 0.0f;
+            std::uint32_t bits;
+            std::memcpy(&bits, &k, sizeof(bits));
+            return detail::hash_mix(bits);
+        }
+    };
+
+    template <>
+    struct Hash<double>
+    {
+        std::uint64_t operator()(double k) const
+        {
+            if (k == 0.0)
+                k = 0.0;
+            std::uint64_t bits;
+            std::memcpy(&bits, &k, sizeof(bits));
+            return detail::hash_mix(bits);
+        }
+    };
+
+    template <typename E>
+    struct Hash<E, typename detail::enable_if<std::is_enum<E>::value>::type>
+    {
+        std::uint64_t operator()(E k) const
+        {
+            return detail::hash_mix(static_cast<std::uint64_t>(
+                static_cast<typename std::underlying_type<E>::type>(k)));
+        }
+    };
+
+    template <>
+    struct Hash<StringView>
+    {
+        std::uint64_t operator()(StringView s) const noexcept
+        {
+            return detail::hash_bytes(s.data(), s.size());
+        }
+    };
+
+    template <>
+    struct Hash<String>
+    {
+        using is_transparent = void;
+
+        std::uint64_t operator()(const String &s) const noexcept
+        {
+            return detail::hash_bytes(s.data(), s.size());
+        }
+        std::uint64_t operator()(StringView s) const noexcept
+        {
+            return detail::hash_bytes(s.data(), s.size());
+        }
+        std::uint64_t operator()(const char *s) const noexcept { return (*this)(StringView(s)); }
+
+        static bool equal(const String &a, StringView b) noexcept
+        {
+            return a.size() == b.size() && (b.size() == 0 || std::memcmp(a.data(), b.data(), b.size()) == 0);
+        }
+        static bool equal(const String &a, const char *b) noexcept { return equal(a, StringView(b)); }
+    };
 
     template <typename T>
     struct Hash<T *>
@@ -163,7 +234,30 @@ namespace ct
             return const_cast<HashMap *>(this)->find(k);
         }
 
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+        V *find(const Q &k) noexcept
+        {
+            if (!size_)
+                return nullptr;
+            size_type i = probe_as(k);
+            return meta_[i] ? &slots_[i].value : nullptr;
+        }
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+        const V *find(const Q &k) const noexcept
+        {
+            return const_cast<HashMap *>(this)->find(k);
+        }
+
         bool contains(const K &k) const noexcept { return find(k) != nullptr; }
+
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+        bool contains(const Q &k) const noexcept
+        {
+            return find(k) != nullptr;
+        }
 
         const V &get(const K &k, const V &fallback) const noexcept
         {
@@ -432,6 +526,20 @@ namespace ct
             return size_ == (std::numeric_limits<size_type>::max)() ||
                    size_ + 1 >= capacity ||
                    size_ + 1 > capacity - capacity / 4;
+        }
+
+        template <typename Q>
+        size_type probe_as(const Q &k) const
+        {
+            const H &hasher = *static_cast<const H *>(this);
+            size_type i = static_cast<size_type>(hasher(k)) & mask_;
+            while (meta_[i])
+            {
+                if (hasher.equal(slots_[i].key, k))
+                    return i;
+                i = (i + 1) & mask_;
+            }
+            return i;
         }
 
         size_type probe(const K &k) const

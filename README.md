@@ -89,6 +89,26 @@ itself (GoogleTest is fetched only to build the test suite).
 | [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
 | [ini.hpp](include/ct/ini.hpp) | `Ini` | INI settings parser/serializer with typed getters and file IO |
 
+## Hashing
+
+`HashMap` and `HashSet` hash keys through `ct::Hash<K>`. It is provided for
+the integral types, `bool`, `float`, `double` (`-0.0` and `0.0` hash alike),
+pointers, enums, `StringView`, `String` and `ct::Handle<T>`; any other type
+works if it has a `hash()` member or if you pass your own hasher as the third
+template argument. `ct::hash_combine(seed, h)` builds hashes for composite keys.
+
+`Hash<String>` is transparent, so a `String`-keyed map or set is searched with
+a `StringView` or a string literal without building a temporary `String`:
+
+```cpp
+ct::HashMap<ct::String, int> ids;
+ids.find("player");
+ids.contains(ct::StringView(text, n));
+```
+
+A hasher opts in by declaring `is_transparent`, an `operator()` for the other
+key type and a static `equal(const K &, const Q &)`.
+
 ## IO
 
 `Stream` is the common byte interface for files, owned or borrowed memory,

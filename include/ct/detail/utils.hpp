@@ -400,6 +400,25 @@ namespace ct
             return lex_less_n(a, na, b, nb, is_memcmp_ordered<T>{});
         }
 
+        inline std::uint64_t hash_mix(std::uint64_t x) noexcept
+        {
+            x ^= x >> 33;
+            x *= 0xff51afd7ed558ccdull;
+            x ^= x >> 33;
+            return x;
+        }
+
+        inline std::uint64_t hash_bytes(const char *data, std::size_t n) noexcept
+        {
+            std::uint64_t result = 1469598103934665603ull;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                result ^= static_cast<unsigned char>(data[i]);
+                result *= 1099511628211ull;
+            }
+            return result;
+        }
+
         inline std::size_t next_pow2(std::size_t n)
         {
             if (n < 2)

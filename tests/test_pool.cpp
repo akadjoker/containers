@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <ctime>
 #include <set>
 #include <vector>
 
@@ -204,4 +205,42 @@ TEST(Pool, BigObjectSmallChunk)
     EXPECT_EQ(b->data[9999], 2);
     EXPECT_EQ(c->data[9999], 3);
     EXPECT_EQ(pool.capacity(), 4u);
+}
+TEST(Pool, MuitosChunksNaoDegradamAllocateEDeallocate)
+{
+    struct Grande
+    {
+        char bytes[64];
+    };
+    const std::size_t total = 100000;
+    ct::Pool<Grande> pool(8);
+    std::vector<Grande *> vivos;
+    vivos.reserve(total);
+    const clock_t inicio = std::clock();
+    for (std::size_t i = 0; i < total; ++i)
+        vivos.push_back(pool.allocate());
+    EXPECT_GE(pool.capacity(), total);
+    for (std::size_t i = 0; i < total; ++i)
+        pool.deallocate(vivos[i]);
+    EXPECT_EQ(pool.live(), 0u);
+    for (std::size_t i = 0; i < total; ++i)
+        vivos[i] = pool.allocate();
+    EXPECT_EQ(pool.live(), total);
+    std::sort(vivos.begin(), vivos.end());
+    EXPECT_EQ(std::adjacent_find(vivos.begin(), vivos.end()), vivos.end());
+    for (std::size_t i = 0; i < total; ++i)
+        pool.deallocate(vivos[i]);
+    const double segundos = double(std::clock() - inicio) / CLOCKS_PER_SEC;
+    EXPECT_LT(segundos, 3.0) << "pool com " << pool.capacity() / 8 << " chunks demorou " << segundos << " s";
+}
+
+TEST(Pool, DeallocateDePonteiroForaDoPoolEFatal)
+{
+    ct::Pool<Bullet> pool(4);
+    Bullet *dentro = pool.allocate();
+    Bullet fora;
+    EXPECT_DEATH(pool.deallocate(&fora), "");
+    EXPECT_DEATH(pool.deallocate(dentro + 4), "");
+    pool.deallocate(dentro);
+    EXPECT_DEATH(pool.deallocate(dentro), "");
 }

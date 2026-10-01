@@ -1,6 +1,15 @@
 cmake_minimum_required(VERSION 3.14)
 project(ct_containers CXX)
 
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+  set(CT_IS_TOP_LEVEL ON)
+else()
+  set(CT_IS_TOP_LEVEL OFF)
+endif()
+option(CT_BUILD_TESTS "Build the ct test suite (fetches GoogleTest)" ${CT_IS_TOP_LEVEL})
+option(CT_BUILD_BENCH "Build the ct benchmarks" ${CT_IS_TOP_LEVEL})
+set(CT_PHYS_DIR "" CACHE PATH "Optional phys project root; enables the BlockAllocator comparison in ct_bench_pool")
+
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -10,18 +19,32 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 add_library(ct INTERFACE)
+add_library(ct::ct ALIAS ct)
 target_include_directories(ct INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 find_package(Threads REQUIRED)
 add_library(ct_threads INTERFACE)
+add_library(ct::threads ALIAS ct_threads)
 target_link_libraries(ct_threads INTERFACE ct Threads::Threads)
 
 add_library(ct_sockets INTERFACE)
+add_library(ct::sockets ALIAS ct_sockets)
 target_link_libraries(ct_sockets INTERFACE ct_threads)
 if(WIN32)
   target_link_libraries(ct_sockets INTERFACE ws2_32)
 endif()
 
+if(NOT CT_BUILD_TESTS AND NOT CT_BUILD_BENCH)
+  return()
+endif()
+
+if(MSVC)
+  set(CT_BENCH_OPTIONS /O2)
+else()
+  set(CT_BENCH_OPTIONS -O3 -march=native)
+endif()
+
+if(CT_BUILD_TESTS)
 if(POLICY CMP0135)
   cmake_policy(SET CMP0135 NEW)
 endif()
@@ -115,70 +138,72 @@ foreach(header IN LISTS CT_PUBLIC_HEADERS)
 endforeach()
 add_custom_target(ct_headers DEPENDS ${CT_HEADER_TARGETS})
 
-# ---- Benchmarks ----
+add_executable(ct_torture
+  tests/torture.cpp)
+target_link_libraries(ct_torture PRIVATE ct)
+endif()
+
+if(NOT CT_BUILD_BENCH)
+  return()
+endif()
+
 add_executable(ct_bench
   bench/bench_vector.cpp)
 target_link_libraries(ct_bench PRIVATE ct)
-target_compile_options(ct_bench PRIVATE -O3 -march=native)
+target_compile_options(ct_bench PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_arena
   bench/bench_arena.cpp)
 target_link_libraries(ct_bench_arena PRIVATE ct)
-target_compile_options(ct_bench_arena PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_arena PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_pool
   bench/bench_pool.cpp)
 target_link_libraries(ct_bench_pool PRIVATE ct)
-target_compile_options(ct_bench_pool PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_pool PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_string
   bench/bench_string.cpp)
 target_link_libraries(ct_bench_string PRIVATE ct)
-target_compile_options(ct_bench_string PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_string PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_map
   bench/bench_map.cpp)
 target_link_libraries(ct_bench_map PRIVATE ct)
-target_compile_options(ct_bench_map PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_map PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_slotmap
   bench/bench_slotmap.cpp)
 target_link_libraries(ct_bench_slotmap PRIVATE ct)
-target_compile_options(ct_bench_slotmap PRIVATE -O3 -march=native)
-
-add_executable(ct_torture
-  tests/torture.cpp)
-target_link_libraries(ct_torture PRIVATE ct)
+target_compile_options(ct_bench_slotmap PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_sort
   bench/bench_sort.cpp)
 target_link_libraries(ct_bench_sort PRIVATE ct)
-target_compile_options(ct_bench_sort PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_sort PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_regex
   bench/bench_regex.cpp)
 target_link_libraries(ct_bench_regex PRIVATE ct)
-target_compile_options(ct_bench_regex PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_regex PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_deque
   bench/bench_deque.cpp)
 target_link_libraries(ct_bench_deque PRIVATE ct)
-target_compile_options(ct_bench_deque PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_deque PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_stack
   bench/bench_stack.cpp)
 target_link_libraries(ct_bench_stack PRIVATE ct)
-target_compile_options(ct_bench_stack PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_stack PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_queue
   bench/bench_queue.cpp)
 target_link_libraries(ct_bench_queue PRIVATE ct)
-target_compile_options(ct_bench_queue PRIVATE -O3 -march=native)
+target_compile_options(ct_bench_queue PRIVATE ${CT_BENCH_OPTIONS})
 
-# comparação opcional contra o BlockAllocator do projeto phys (box3d)
-set(PHYS_DIR "/media/projectos/projects/cpp/vibecoding/fisica/phys")
-if(EXISTS "${PHYS_DIR}/src/block_allocator.cpp")
-  target_sources(ct_bench_pool PRIVATE "${PHYS_DIR}/src/block_allocator.cpp")
-  target_include_directories(ct_bench_pool PRIVATE "${PHYS_DIR}/include")
+if(CT_PHYS_DIR AND EXISTS "${CT_PHYS_DIR}/src/block_allocator.cpp")
+  target_sources(ct_bench_pool PRIVATE "${CT_PHYS_DIR}/src/block_allocator.cpp")
+  target_include_directories(ct_bench_pool PRIVATE "${CT_PHYS_DIR}/include")
   target_compile_definitions(ct_bench_pool PRIVATE CT_BENCH_HAVE_PHYS)
 endif()

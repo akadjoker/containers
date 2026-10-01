@@ -47,7 +47,7 @@ namespace ct
         using size_type = std::size_t;
         using iterator = char *;
         using const_iterator = const char *;
-        static constexpr size_type npos = static_cast<size_type>(-1);
+        enum : size_type { npos = static_cast<size_type>(-1) };
 
         String() noexcept : storage_()
         {
@@ -408,8 +408,12 @@ namespace ct
             return append(p, static_cast<size_type>(end_ptr - p));
         }
 
-        String &append_number(int v) { return append_number(static_cast<long long>(v)); }
-        String &append_number(unsigned v) { return append_number(static_cast<unsigned long long>(v)); }
+        template <typename I,
+                  typename = typename detail::enable_if<std::is_integral<I>::value>::type>
+        String &append_number(I v)
+        {
+            return append_integral(v, detail::integral_constant<bool, std::is_signed<I>::value>{});
+        }
 
         String &append_number(double v, int precision = 6)
         {
@@ -429,7 +433,14 @@ namespace ct
             s.append_number(v);
             return s;
         }
-        static String number(int v) { return number(static_cast<long long>(v)); }
+        template <typename I,
+                  typename = typename detail::enable_if<std::is_integral<I>::value>::type>
+        static String number(I v)
+        {
+            String s;
+            s.append_number(v);
+            return s;
+        }
         static String number(unsigned long long v)
         {
             String s;
@@ -470,8 +481,10 @@ namespace ct
 
         size_type find_first_of(const char *set, size_type pos = 0) const
         {
+            if (!set)
+                detail::fatal("ct::String::find_first_of: conjunto invalido");
             for (size_type i = pos; i < size(); ++i)
-                if (std::strchr(set, data()[i]))
+                if (in_set(set, data()[i]))
                     return i;
             return npos;
         }
@@ -481,7 +494,7 @@ namespace ct
             if (!set)
                 detail::fatal("ct::String::find_first_not_of: conjunto invalido");
             for (size_type i = pos; i < size(); ++i)
-                if (!std::strchr(set, data()[i]))
+                if (!in_set(set, data()[i]))
                     return i;
             return npos;
         }
@@ -492,7 +505,7 @@ namespace ct
                 detail::fatal("ct::String::find_last_of: conjunto invalido");
             const size_type last = pos < size() ? pos : size();
             for (size_type i = last; i > 0; --i)
-                if (std::strchr(set, data()[i - 1]))
+                if (in_set(set, data()[i - 1]))
                     return i - 1;
             return npos;
         }
@@ -596,17 +609,7 @@ namespace ct
             return S(data(), size());
         }
 
-        std::uint64_t hash() const
-        {
-            std::uint64_t result = 1469598103934665603ull;
-            const char *d = data();
-            for (size_type i = 0, n = size(); i < n; ++i)
-            {
-                result ^= static_cast<unsigned char>(d[i]);
-                result *= 1099511628211ull;
-            }
-            return result;
-        }
+        std::uint64_t hash() const noexcept { return detail::hash_bytes(data(), size()); }
 
         void swap(String &o) noexcept
         {
@@ -627,7 +630,24 @@ namespace ct
 
         static bool is_space(char c)
         {
-            return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+            return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+        }
+
+        static bool in_set(const char *set, char c)
+        {
+            return c != '\0' && std::strchr(set, c) != nullptr;
+        }
+
+        template <typename I>
+        String &append_integral(I v, detail::true_type)
+        {
+            return append_number(static_cast<long long>(v));
+        }
+
+        template <typename I>
+        String &append_integral(I v, detail::false_type)
+        {
+            return append_number(static_cast<unsigned long long>(v));
         }
 
         size_type small_size() const noexcept

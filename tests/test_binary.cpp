@@ -21,3 +21,76 @@ TEST(Binary, TruncatedReadFails)
     const std::uint8_t raw[] = {1, 2}; ct::MemoryStream stream(raw, sizeof(raw)); ct::BinaryReader reader(stream);
     EXPECT_EQ(reader.u32(), 0u); EXPECT_FALSE(reader.ok()); EXPECT_EQ(reader.u8(), 0);
 }
+
+namespace
+{
+    class SoLeitura : public ct::Stream
+    {
+    public:
+        SoLeitura(const void *data, std::size_t n) : data_(static_cast<const std::uint8_t *>(data)), size_(n), pos_(0) {}
+        std::size_t read(void *dst, std::size_t n) override
+        {
+            std::size_t left = size_ - pos_;
+            if (n > left) n = left;
+            std::memcpy(dst, data_ + pos_, n);
+            pos_ += n;
+            return n;
+        }
+        std::size_t write(const void *, std::size_t) override { return 0; }
+        bool seek(std::int64_t, ct::Seek) override { return false; }
+        std::int64_t tell() const override { return -1; }
+        std::int64_t size() const override { return -1; }
+        void close() override {}
+        bool is_open() const override { return true; }
+        bool eof() const override { return pos_ >= size_; }
+        bool can_read() const override { return true; }
+        bool can_write() const override { return false; }
+        bool can_seek() const override { return false; }
+    private:
+        const std::uint8_t *data_;
+        std::size_t size_, pos_;
+    };
+}
+
+TEST(Binary, PrefixoDeTamanhoMaiorQueOStreamFalhaSemAlocar)
+{
+    const std::uint8_t bytes[] = {0xff, 0xff, 0xff, 0xff, 'a', 'b'};
+    {
+        ct::MemoryStream memory(bytes, sizeof(bytes));
+        ct::BinaryReader reader(memory);
+        ct::String out("lixo");
+        EXPECT_FALSE(reader.string(out));
+        EXPECT_FALSE(reader.ok());
+        EXPECT_LT(out.capacity(), 1024u);
+    }
+    {
+        ct::MemoryStream memory(bytes, sizeof(bytes));
+        ct::BinaryReader reader(memory);
+        ct::Vector<std::uint8_t> out;
+        EXPECT_FALSE(reader.bytes(out, 0xffffffffu));
+        EXPECT_LT(out.capacity(), 1024u);
+    }
+    {
+        SoLeitura raw(bytes, sizeof(bytes));
+        ct::BinaryReader reader(raw);
+        ct::String out;
+        EXPECT_FALSE(reader.string(out));
+        EXPECT_FALSE(reader.ok());
+        EXPECT_LT(out.capacity(), 128u * 1024u);
+    }
+}
+
+TEST(Binary, StringGrandeEmStreamNaoPosicionavel)
+{
+    ct::MemoryStream memory;
+    ct::BinaryWriter writer(memory);
+    ct::String big(200000, 'z');
+    writer.string(big);
+    ct::Vector<std::uint8_t> raw = memory.take();
+    SoLeitura stream(raw.data(), raw.size());
+    ct::BinaryReader reader(stream);
+    ct::String out;
+    ASSERT_TRUE(reader.string(out));
+    EXPECT_EQ(out.size(), big.size());
+    EXPECT_TRUE(out == big);
+}

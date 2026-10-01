@@ -9,15 +9,20 @@ because something needed it.
 
 ```cmake
 add_subdirectory(containers)
-target_link_libraries(your_target PRIVATE ct)
+target_link_libraries(your_target PRIVATE ct::ct)
 ```
 
-`ct` is a CMake `INTERFACE` target that just adds `include/` to your include
-path. There's nothing to build or link - include what you need. The only
-exception is threading: [thread.hpp](include/ct/thread.hpp) and
+`ct` (alias `ct::ct`) is a CMake `INTERFACE` target that just adds `include/`
+to your include path. There's nothing to build or link - include what you
+need. The only exception is threading: [thread.hpp](include/ct/thread.hpp) and
 [threadpool.hpp](include/ct/threadpool.hpp) need pthreads on POSIX, so link
-`ct_threads` instead of `ct` in targets that use them. Network users link
-`ct_sockets`, which adds `ct_threads` and Winsock (`ws2_32`) on Windows.
+`ct::threads` instead of `ct::ct` in targets that use them. Network users link
+`ct::sockets`, which adds `ct::threads` and Winsock (`ws2_32`) on Windows.
+
+When `containers` is added as a subdirectory, the test suite and the
+benchmarks are off by default, so consumers do not fetch GoogleTest or build
+`-march=native` binaries. Turn them on with `-DCT_BUILD_TESTS=ON` and
+`-DCT_BUILD_BENCH=ON`; both default to on when this is the top-level project.
 
 ```cpp
 #include <ct/vector.hpp>
@@ -49,7 +54,7 @@ itself (GoogleTest is fetched only to build the test suite).
 |---|---|---|
 | [vector.hpp](include/ct/vector.hpp) | `Vector` | Dynamic array, `std::vector` replacement |
 | [deque.hpp](include/ct/deque.hpp) | `Deque` | Power-of-two ring-buffer double-ended queue |
-| [stack.hpp](include/ct/stack.hpp) | `Stack` | LIFO adaptor over `Deque` |
+| [stack.hpp](include/ct/stack.hpp) | `Stack` | LIFO adaptor over `Vector` |
 | [queue.hpp](include/ct/queue.hpp) | `Queue` | FIFO adaptor over `Deque` |
 | [priority_queue.hpp](include/ct/priority_queue.hpp) | `PriorityQueue` | Binary heap adaptor over `Vector` |
 | [string.hpp](include/ct/string.hpp) | `String` | Small-string-optimized string, `std::string` replacement |
@@ -67,7 +72,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [ptr.hpp](include/ct/ptr.hpp) | `Rc`, `Unique`, `Weak` | Smart pointers for the cases that need them |
 | [sort.hpp](include/ct/sort.hpp) | `insertion_sort`, `heap_sort`, `intro_sort`, `radix_sort` | Sorting algorithms |
 | [json.hpp](include/ct/json.hpp) | `Json` | Self-contained JSON parser/serializer |
-| [xml.hpp](include/ct/xml.hpp) | `Xml` | Self-contained XML parser |
+| [xml.hpp](include/ct/xml.hpp) | `Xml` | Self-contained XML parser; mixed content keeps its order (`text()` before the first child, `tail()` after each child) |
 | [rectpacker.hpp](include/ct/rectpacker.hpp) | `RectPacker` | 2D rectangle bin packing (texture/atlas packing) |
 | [regex.hpp](include/ct/regex.hpp) | `Regex`, `Match` | Regular expressions with Python `re` semantics (see below) |
 | [thread.hpp](include/ct/thread.hpp) | `Thread`, `Mutex`, `LockGuard`, `CondVar`, `Atomic` | Cross-platform threading primitives (pthreads / Win32), no `<thread>` |
@@ -83,6 +88,26 @@ itself (GoogleTest is fetched only to build the test suite).
 | [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP client |
 | [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
 | [ini.hpp](include/ct/ini.hpp) | `Ini` | INI settings parser/serializer with typed getters and file IO |
+
+## Hashing
+
+`HashMap` and `HashSet` hash keys through `ct::Hash<K>`. It is provided for
+the integral types, `bool`, `float`, `double` (`-0.0` and `0.0` hash alike),
+pointers, enums, `StringView`, `String` and `ct::Handle<T>`; any other type
+works if it has a `hash()` member or if you pass your own hasher as the third
+template argument. `ct::hash_combine(seed, h)` builds hashes for composite keys.
+
+`Hash<String>` is transparent, so a `String`-keyed map or set is searched with
+a `StringView` or a string literal without building a temporary `String`:
+
+```cpp
+ct::HashMap<ct::String, int> ids;
+ids.find("player");
+ids.contains(ct::StringView(text, n));
+```
+
+A hasher opts in by declaring `is_transparent`, an `operator()` for the other
+key type and a static `equal(const K &, const Q &)`.
 
 ## IO
 
@@ -197,9 +222,12 @@ Positions are byte offsets. Invalid patterns return an invalid `Regex` plus
 an `Error` with Python's message and offset; no exceptions.
 
 The engine compiles to bytecode and runs a backtracking VM with an explicit
-stack (no recursion). Patterns without backreferences, lookaround or atomic
-groups also get a visited-state bitmap (as in RE2's BitState), which bounds
-the work to `O(splits x text)` and removes catastrophic backtracking.
+stack (no recursion). Patterns without backreferences, lookaround, atomic groups or general
+counted/nullable repeats (`{n,m}` that cannot be unrolled, `(a*)*`) also get a
+visited-state bitmap (as in RE2's BitState), which bounds the work to
+`O(splits x text)` and removes catastrophic backtracking. Nullable bodies
+under an unbounded repeat, such as `(a*)*b` or `(a?a?)*b`, still backtrack
+exponentially, exactly as CPython does.
 
 [tests/test_regex.cpp](tests/test_regex.cpp) checks ~3000 expectations
 generated by running CPython's `re` over the same patterns

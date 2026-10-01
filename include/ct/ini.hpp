@@ -1,11 +1,122 @@
 #pragma once
 
+#include <cerrno>
+#include <clocale>
+#include <cstdio>
 #include <cstdlib>
 
 #include "stream.hpp"
 
 namespace ct
 {
+    namespace detail
+    {
+        inline char ini_decimal_point() noexcept
+        {
+            const lconv *lc = std::localeconv();
+            return lc && lc->decimal_point && lc->decimal_point[0] ? lc->decimal_point[0] : '.';
+        }
+
+        inline bool ini_parse_double(const char *text, double &out) noexcept
+        {
+            char *end = nullptr;
+            out = std::strtod(text, &end);
+            if (end && *end == '\0' && end != text)
+                return true;
+            const char dp = ini_decimal_point();
+            if (dp == '.')
+                return false;
+            char local[64];
+            std::size_t n = 0;
+            for (; text[n] && n + 1 < sizeof(local); ++n)
+                local[n] = text[n] == '.' ? dp : text[n];
+            if (text[n])
+                return false;
+            local[n] = '\0';
+            out = std::strtod(local, &end);
+            return end && *end == '\0' && end != local;
+        }
+
+        inline void ini_format_double(double v, String &out)
+        {
+            char buf[64];
+            int n = std::snprintf(buf, sizeof(buf), "%.15g", v);
+            double back = 0.0;
+            if (n <= 0 || !ini_parse_double(buf, back) || back != v)
+                n = std::snprintf(buf, sizeof(buf), "%.17g", v);
+            if (n <= 0)
+                n = 0;
+            if (static_cast<std::size_t>(n) >= sizeof(buf))
+                n = static_cast<int>(sizeof(buf) - 1);
+            for (int i = 0; i < n; ++i)
+                if (buf[i] == ',')
+                    buf[i] = '.';
+            out.assign(buf, static_cast<std::size_t>(n));
+        }
+
+        inline bool ini_needs_quotes(StringView v) noexcept
+        {
+            if (v.empty())
+                return true;
+            if (v.front() == ' ' || v.front() == '\t' || v.back() == ' ' || v.back() == '\t' || v.front() == '"')
+                return true;
+            for (std::size_t i = 0; i < v.size(); ++i)
+            {
+                const char c = v[i];
+                if (c == ';' || c == '#' || c == '=' || c == ':' || c == '\\' || c == '\n' || c == '\r' || c == '\t' || c == '\0')
+                    return true;
+            }
+            return false;
+        }
+
+        inline void ini_append_quoted(String &out, StringView v)
+        {
+            out.push_back('"');
+            for (std::size_t i = 0; i < v.size(); ++i)
+            {
+                const char c = v[i];
+                switch (c)
+                {
+                case '"': out.append("\\\""); break;
+                case '\\': out.append("\\\\"); break;
+                case '\n': out.append("\\n"); break;
+                case '\r': out.append("\\r"); break;
+                case '\t': out.append("\\t"); break;
+                case '\0': out.append("\\0"); break;
+                default: out.push_back(c); break;
+                }
+            }
+            out.push_back('"');
+        }
+
+        inline bool ini_valid_key(StringView key) noexcept
+        {
+            if (key.empty() || key.front() == ' ' || key.front() == '\t' || key.back() == ' ' || key.back() == '\t')
+                return false;
+            if (key.front() == '[' || key.front() == ';' || key.front() == '#')
+                return false;
+            for (std::size_t i = 0; i < key.size(); ++i)
+            {
+                const char c = key[i];
+                if (c == '=' || c == ':' || c == '\n' || c == '\r' || c == '\0')
+                    return false;
+            }
+            return true;
+        }
+
+        inline bool ini_valid_section(StringView name) noexcept
+        {
+            if (!name.empty() && (name.front() == ' ' || name.front() == '\t' || name.back() == ' ' || name.back() == '\t'))
+                return false;
+            for (std::size_t i = 0; i < name.size(); ++i)
+            {
+                const char c = name[i];
+                if (c == ']' || c == '\n' || c == '\r' || c == '\0')
+                    return false;
+            }
+            return true;
+        }
+    }
 
     class Ini
     {
@@ -65,7 +176,10 @@ namespace ct
                 {
                     out.append(e.key);
                     out.append("=");
-                    out.append(e.value);
+                    if (detail::ini_needs_quotes(e.value))
+                        detail::ini_append_quoted(out, e.value);
+                    else
+                        out.append(e.value);
                     out.append("\n");
                 }
             }
@@ -115,8 +229,14 @@ namespace ct
             if (s)
             {
                 const Entry *e = find_entry(*s, key);
-                if (e)
-                    return std::strtoll(e->value.c_str(), nullptr, 10);
+                if (e && !e->value.empty())
+                {
+                    char *end = nullptr;
+                    errno = 0;
+                    const long long parsed = std::strtoll(e->value.c_str(), &end, 10);
+                    if (end && *end == '\0' && errno != ERANGE)
+                        return parsed;
+                }
             }
             return fallback;
         }
@@ -127,8 +247,9 @@ namespace ct
             if (s)
             {
                 const Entry *e = find_entry(*s, key);
-                if (e)
-                    return std::strtod(e->value.c_str(), nullptr);
+                double parsed = 0.0;
+                if (e && !e->value.empty() && detail::ini_parse_double(e->value.c_str(), parsed))
+                    return parsed;
             }
             return fallback;
         }
@@ -167,7 +288,9 @@ namespace ct
         }
         void set(const char *section, const char *key, double value)
         {
-            set_value(section, key, String::number(value));
+            String text;
+            detail::ini_format_double(value, text);
+            set_value(section, key, text);
         }
         void set(const char *section, const char *key, bool value)
         {
@@ -270,8 +393,38 @@ namespace ct
 
         void set_value(StringView section, StringView key, const String &value)
         {
+            if (!detail::ini_valid_key(key))
+                detail::fatal("ct::Ini::set: chave invalida (vazia, com '=', ':' ou quebra de linha)");
+            if (!detail::ini_valid_section(section))
+                detail::fatal("ct::Ini::set: nome de seccao invalido (']' ou quebra de linha)");
             Section &s = ensure_section(section);
             put_entry(s, key, StringView(value));
+        }
+
+        static bool unquote(StringView raw, String &out)
+        {
+            out.clear();
+            for (std::size_t i = 1; i < raw.size(); ++i)
+            {
+                const char c = raw[i];
+                if (c == '"')
+                    return true;
+                if (c != '\\' || i + 1 >= raw.size())
+                {
+                    out.push_back(c);
+                    continue;
+                }
+                const char e = raw[++i];
+                switch (e)
+                {
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case '0': out.push_back('\0'); break;
+                default: out.push_back(e); break;
+                }
+            }
+            return false;
         }
 
         void parse_into(StringView text)
@@ -289,9 +442,10 @@ namespace ct
                 if (line[0] == '[')
                 {
                     size_type close = line.rfind(']');
-                    if (close == npos || close == 0)
+                    StringView name = close == npos ? line.substr(1).trimmed()
+                                                    : line.substr(1, close - 1).trimmed();
+                    if (name.empty())
                         continue;
-                    StringView name = line.substr(1, close - 1).trimmed();
                     current = find_section_index(name);
                     if (current == npos)
                     {
@@ -319,7 +473,11 @@ namespace ct
                     sections_.insert(sections_.begin(), detail::move(s));
                     current = 0;
                 }
-                put_entry(sections_[current], key, value);
+                String unquoted;
+                if (!value.empty() && value.front() == '"' && unquote(value, unquoted))
+                    put_entry(sections_[current], key, StringView(unquoted));
+                else
+                    put_entry(sections_[current], key, value);
             }
         }
     };

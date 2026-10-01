@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <limits>
 #include <new> 
 #include <type_traits>
@@ -173,25 +174,68 @@ namespace ct
             It it_;
 
         public:
+            using iterator_category = typename std::iterator_traits<It>::iterator_category;
+            using value_type = typename std::iterator_traits<It>::value_type;
+            using difference_type = typename std::iterator_traits<It>::difference_type;
+            using pointer = typename std::iterator_traits<It>::pointer;
+            using reference = typename std::iterator_traits<It>::reference;
+
+            ReverseIt() : it_() {}
             explicit ReverseIt(It it) : it_(it) {}
-            auto operator*() const -> decltype(*declval<It>())
+            reference operator*() const
             {
                 It t = it_;
                 return *--t;
             }
+            pointer operator->() const
+            {
+                It t = it_;
+                --t;
+                return &*t;
+            }
+            reference operator[](difference_type n) const { return *(*this + n); }
             ReverseIt &operator++()
             {
                 --it_;
                 return *this;
+            }
+            ReverseIt operator++(int)
+            {
+                ReverseIt t = *this;
+                --it_;
+                return t;
             }
             ReverseIt &operator--()
             {
                 ++it_;
                 return *this;
             }
+            ReverseIt operator--(int)
+            {
+                ReverseIt t = *this;
+                ++it_;
+                return t;
+            }
+            ReverseIt &operator+=(difference_type n)
+            {
+                it_ -= n;
+                return *this;
+            }
+            ReverseIt &operator-=(difference_type n)
+            {
+                it_ += n;
+                return *this;
+            }
+            ReverseIt operator+(difference_type n) const { return ReverseIt(it_ - n); }
+            ReverseIt operator-(difference_type n) const { return ReverseIt(it_ + n); }
+            difference_type operator-(const ReverseIt &o) const { return o.it_ - it_; }
             It base() const { return it_; }
             bool operator==(const ReverseIt &o) const { return it_ == o.it_; }
             bool operator!=(const ReverseIt &o) const { return it_ != o.it_; }
+            bool operator<(const ReverseIt &o) const { return o.it_ < it_; }
+            bool operator>(const ReverseIt &o) const { return o.it_ > it_; }
+            bool operator<=(const ReverseIt &o) const { return o.it_ <= it_; }
+            bool operator>=(const ReverseIt &o) const { return o.it_ >= it_; }
         };
 
         template <typename T>
@@ -354,6 +398,25 @@ namespace ct
         inline bool lex_less_n(const T *a, std::size_t na, const T *b, std::size_t nb)
         {
             return lex_less_n(a, na, b, nb, is_memcmp_ordered<T>{});
+        }
+
+        inline std::uint64_t hash_mix(std::uint64_t x) noexcept
+        {
+            x ^= x >> 33;
+            x *= 0xff51afd7ed558ccdull;
+            x ^= x >> 33;
+            return x;
+        }
+
+        inline std::uint64_t hash_bytes(const char *data, std::size_t n) noexcept
+        {
+            std::uint64_t result = 1469598103934665603ull;
+            for (std::size_t i = 0; i < n; ++i)
+            {
+                result ^= static_cast<unsigned char>(data[i]);
+                result *= 1099511628211ull;
+            }
+            return result;
         }
 
         inline std::size_t next_pow2(std::size_t n)

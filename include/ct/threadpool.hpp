@@ -58,21 +58,16 @@ namespace ct
 
         void wait_all()
         {
+            const std::size_t own = frames_of(this);
             mutex_.lock();
             for (;;)
             {
                 if (!jobs_.empty())
                 {
-                    Job job(detail::move(jobs_.front()));
-                    jobs_.pop();
-                    ++active_;
-                    mutex_.unlock();
-                    job();
-                    mutex_.lock();
-                    --active_;
+                    help_one();
                     continue;
                 }
-                if (active_ == 0)
+                if (active_ == own)
                     break;
                 done_cv_.wait(mutex_);
             }
@@ -115,13 +110,7 @@ namespace ct
             {
                 if (!jobs_.empty())
                 {
-                    Job job(detail::move(jobs_.front()));
-                    jobs_.pop();
-                    ++active_;
-                    mutex_.unlock();
-                    job();
-                    mutex_.lock();
-                    --active_;
+                    help_one();
                     continue;
                 }
                 mutex_.unlock();
@@ -139,6 +128,50 @@ namespace ct
         }
 
     private:
+        struct Frame
+        {
+            const ThreadPool *pool;
+            Frame *prev;
+        };
+
+        static Frame *&top_frame() noexcept
+        {
+            static thread_local Frame *top = nullptr;
+            return top;
+        }
+
+        static std::size_t frames_of(const ThreadPool *pool) noexcept
+        {
+            std::size_t n = 0;
+            for (Frame *f = top_frame(); f; f = f->prev)
+                if (f->pool == pool)
+                    ++n;
+            return n;
+        }
+
+        void run_job(Job &job)
+        {
+            Frame frame;
+            frame.pool = this;
+            frame.prev = top_frame();
+            top_frame() = &frame;
+            job();
+            top_frame() = frame.prev;
+        }
+
+        void help_one()
+        {
+            Job job(detail::move(jobs_.front()));
+            jobs_.pop();
+            ++active_;
+            mutex_.unlock();
+            run_job(job);
+            mutex_.lock();
+            --active_;
+            if (jobs_.empty())
+                done_cv_.notify_all();
+        }
+
         struct Batch
         {
             void *fn;
@@ -184,12 +217,12 @@ namespace ct
                     ++active_;
                     mutex_.unlock();
                 }
-                job();
+                run_job(job);
                 mutex_.lock();
                 --active_;
-                bool idle = jobs_.empty() && active_ == 0;
+                const bool drained = jobs_.empty();
                 mutex_.unlock();
-                if (idle)
+                if (drained)
                     done_cv_.notify_all();
             }
         }

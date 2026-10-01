@@ -25,13 +25,49 @@ namespace ct
             for (unsigned shift = 0; shift < 35; shift += 7) { std::uint8_t byte = u8(); if (!ok_ || (shift == 28 && (byte & 0xf0))) { ok_ = false; return 0; } value |= std::uint32_t(byte & 0x7f) << shift; if (!(byte & 0x80)) return value; }
             ok_ = false; return 0;
         }
-        bool string(String &out) { std::uint32_t n = u32(); if (!ok_) return false; out.resize(n); return bytes(out.data(), n); }
+        bool string(String &out) { std::uint32_t n = u32(); if (!ok_) return false; return sized(out, n); }
         bool bytes(void *dst, std::size_t n) { if (!ok_ || !stream_.read_exact(dst, n)) { ok_ = false; return false; } return true; }
-        bool bytes(Vector<std::uint8_t> &out, std::size_t n) { out.resize(n); return bytes(out.data(), n); }
+        bool bytes(Vector<std::uint8_t> &out, std::size_t n) { return sized(out, n); }
         template <typename T> bool pod(T &out) { static_assert(std::is_trivially_copyable<T>::value, "pod requires a trivially copyable type"); return bytes(&out, sizeof(T)); }
         bool ok() const noexcept { return ok_; }
         Stream &stream() noexcept { return stream_; }
     private:
+        static constexpr std::size_t kSizedChunk = 64 * 1024;
+
+        template <typename C>
+        bool sized(C &out, std::size_t n)
+        {
+            out.clear();
+            if (!ok_)
+                return false;
+            if (stream_.can_seek())
+            {
+                const std::int64_t total = stream_.size();
+                const std::int64_t here = stream_.tell();
+                if (total < 0 || here < 0 || here > total ||
+                    static_cast<std::uint64_t>(total - here) < n)
+                {
+                    ok_ = false;
+                    return false;
+                }
+                out.resize(n);
+                return bytes(out.data(), n);
+            }
+            while (n)
+            {
+                const std::size_t part = n < kSizedChunk ? n : kSizedChunk;
+                const std::size_t have = out.size();
+                out.resize(have + part);
+                if (!bytes(out.data() + have, part))
+                {
+                    out.resize(have);
+                    return false;
+                }
+                n -= part;
+            }
+            return true;
+        }
+
         template <typename T> T scalar()
         {
             T value = 0; std::uint8_t bytes_[sizeof(T)]; if (!bytes(bytes_, sizeof(bytes_))) return 0;

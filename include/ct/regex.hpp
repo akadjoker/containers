@@ -1721,7 +1721,8 @@ namespace ct
                 Fr_UndoCnt,
                 Fr_UndoLast,
                 Fr_Mark,
-                Fr_Look
+                Fr_Look,
+                Fr_AltRun
             };
 
             struct Frame
@@ -1842,7 +1843,7 @@ namespace ct
                                     touched_.push_back(static_cast<std::uint32_t>(w));
                                 memo_[w] |= mask;
                             }
-                            push(Fr_Alt, in.y, pos, 0);
+                            push_alt(in.y, pos);
                             pc = in.x;
                             continue;
                         case Op_Jmp:
@@ -2010,6 +2011,24 @@ namespace ct
                                 resumed = true;
                                 break;
                             }
+                            if (f.kind == Fr_AltRun)
+                            {
+                                pc = f.pc;
+                                pos = f.pos;
+                                const std::size_t len = f.val & 7;
+                                const std::size_t count = f.val >> 3;
+                                f.pos -= len;
+                                if (count > 2)
+                                    f.val -= 8;
+                                else
+                                {
+                                    f.kind = Fr_Alt;
+                                    f.val = 0;
+                                }
+                                stack_.push_back(f);
+                                resumed = true;
+                                break;
+                            }
                             if (f.kind == Fr_UndoCap)
                                 caps_[static_cast<std::size_t>(f.pc)] = f.val;
                             else if (f.kind == Fr_UndoCnt)
@@ -2105,6 +2124,32 @@ namespace ct
                 std::size_t steps_;
                 std::size_t threshold_;
                 std::size_t stride_;
+
+                void push_alt(std::int32_t pc, std::size_t pos)
+                {
+                    if (!stack_.empty())
+                    {
+                        Frame &top = stack_.back();
+                        if (top.pc == pc && top.pos < pos && pos - top.pos <= 4)
+                        {
+                            const std::size_t len = pos - top.pos;
+                            if (top.kind == Fr_AltRun && (top.val & 7) == len)
+                            {
+                                top.pos = pos;
+                                top.val += 8;
+                                return;
+                            }
+                            if (top.kind == Fr_Alt)
+                            {
+                                top.kind = Fr_AltRun;
+                                top.pos = pos;
+                                top.val = (std::size_t(2) << 3) | len;
+                                return;
+                            }
+                        }
+                    }
+                    push(Fr_Alt, pc, pos, 0);
+                }
 
                 void push(std::uint32_t kind, std::int32_t pc, std::size_t pos, std::size_t val)
                 {

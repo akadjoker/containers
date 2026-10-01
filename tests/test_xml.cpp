@@ -535,3 +535,50 @@ TEST(Xml, SetTailConstroiConteudoMisto)
     Xml back = parse_ok(p.dump().c_str());
     EXPECT_EQ(back.children()[0].tail(), " z");
 }
+
+TEST(Xml, AtributosRepetidosSaoErro)
+{
+    ct::Xml::Error err;
+    ct::Xml::parse("<a x='1' y='2' x='3'/>", &err);
+    ASSERT_TRUE(err);
+    EXPECT_STREQ(err.message, "atributo repetido");
+    EXPECT_EQ(err.column, 16u);
+    ct::Xml::Error ok;
+    ct::Xml x = ct::Xml::parse("<a x='1' y='2' z='3'><b x='1'/></a>", &ok);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(x.attr_int("z"), 3);
+}
+
+TEST(Xml, AtributosPrecisamDeEspacoEntreSi)
+{
+    ct::Xml::Error err;
+    ct::Xml::parse("<a x='1'y='2'/>", &err);
+    ASSERT_TRUE(err);
+    EXPECT_STREQ(err.message, "esperado espaco entre atributos");
+    ct::Xml::Error ok;
+    ct::Xml::parse("<a x='1' y='2'/>", &ok);
+    EXPECT_FALSE(ok);
+    ct::Xml::parse("<a x='1'\n\ty='2'></a>", &ok);
+    EXPECT_FALSE(ok);
+    ct::Xml::parse("<a x='1'/>", &ok);
+    EXPECT_FALSE(ok);
+    ct::Xml::parse("<a x='1'>t</a>", &ok);
+    EXPECT_FALSE(ok);
+}
+
+TEST(Xml, DoctypeComAspasEComentariosNoSubconjunto)
+{
+    ct::Xml::Error err;
+    ct::Xml a = ct::Xml::parse("<!DOCTYPE a SYSTEM \"x>y\"><a/>", &err);
+    EXPECT_FALSE(err);
+    EXPECT_EQ(a.tag(), "a");
+    ct::Xml b = ct::Xml::parse("<!DOCTYPE a PUBLIC 'p>q' \"s>t\" [ <!ENTITY e \"v>w\"> <!-- it's ] > --> ]><a/>", &err);
+    EXPECT_FALSE(err);
+    EXPECT_EQ(b.tag(), "a");
+    ct::Xml::parse("<!DOCTYPE a SYSTEM \"x><a/>", &err);
+    ASSERT_TRUE(err);
+    ct::Xml::Error plain;
+    ct::Xml c = ct::Xml::parse("<!DOCTYPE note [<!ELEMENT note (#PCDATA)>]><note>t</note>", &plain);
+    EXPECT_FALSE(plain);
+    EXPECT_EQ(c.text(), "t");
+}

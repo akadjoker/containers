@@ -729,6 +729,23 @@ namespace ct
                     if (cur == last)
                         return fail("DOCTYPE sem fecho", start);
                     const char c = *cur;
+                    if (c == '"' || c == '\'')
+                    {
+                        const char *quote_start = cur;
+                        ++cur;
+                        while (cur != last && *cur != c)
+                            ++cur;
+                        if (cur == last)
+                            return fail("literal do DOCTYPE sem fecho", quote_start);
+                        ++cur;
+                        continue;
+                    }
+                    if (c == '<' && starts_with("<!--", 4))
+                    {
+                        if (!skip_comment())
+                            return false;
+                        continue;
+                    }
                     if (c == '[')
                         ++bracket;
                     else if (c == ']')
@@ -933,8 +950,12 @@ namespace ct
                         break;
                     }
                     Xml::Attribute a;
+                    const char *name_at = cur;
                     if (!read_name(a.name))
                         return false;
+                    for (std::size_t k = 0; k < out.attrs_.size(); ++k)
+                        if (out.attrs_[k].name == a.name)
+                            return fail("atributo repetido", name_at);
                     skip_ws();
                     if (cur == last || *cur != '=')
                         return fail("esperado '=' no atributo", cur);
@@ -947,6 +968,9 @@ namespace ct
                     if (!parse_attr_value(a.value, quote))
                         return false;
                     out.attrs_.push_back(detail::move(a));
+                    if (cur != last && *cur != '>' && *cur != '/' && *cur != ' ' && *cur != '\t' &&
+                        *cur != '\n' && *cur != '\r')
+                        return fail("esperado espaco entre atributos", cur);
                 }
 
                 for (;;)

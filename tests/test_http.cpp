@@ -4,7 +4,9 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <thread>
 
 #if !defined(_WIN32)
@@ -310,3 +312,102 @@ TEST(HttpServer, AcceptFailureDoesNotSpinThePollLoop)
     server.stop();
 }
 #endif
+
+TEST(HttpParser, ChunkedBodyFedByteByByteIsLinear)
+{
+    const std::size_t total = 256 * 1024;
+    ct::String wire("POST /up HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n");
+    ct::String expected;
+    for (std::size_t sent = 0; sent < total;)
+    {
+        const std::size_t part = total - sent < 1000 ? total - sent : 1000;
+        char size_line[16]; std::snprintf(size_line, sizeof(size_line), "%zx\r\n", part);
+        wire.append(size_line);
+        for (std::size_t i = 0; i < part; ++i) { const char c = static_cast<char>('a' + (sent + i) % 26); wire.push_back(c); expected.push_back(c); }
+        wire.append("\r\n");
+        sent += part;
+    }
+    wire.append("0\r\n\r\n");
+    ct::HttpParser parser; ct::HttpRequest request;
+    const clock_t start = std::clock();
+    ct::HttpParser::State state = ct::HttpParser::NeedMore;
+    for (std::size_t i = 0; i < wire.size() && state == ct::HttpParser::NeedMore; ++i)
+        state = parser.feed(wire.data() + i, 1, request);
+    const double seconds = double(std::clock() - start) / CLOCKS_PER_SEC;
+    ASSERT_EQ(state, ct::HttpParser::Done);
+    EXPECT_EQ(request.body.size(), total);
+    EXPECT_TRUE(request.body == expected);
+    EXPECT_LT(parser.buffered(), 4096u);
+    EXPECT_LT(seconds, 5.0) << "256 KiB chunked a 1 byte por feed demorou " << seconds << " s";
+}
+
+TEST(HttpParser, ChunkedBodyAtTheBodyLimitIsAccepted)
+{
+    const std::size_t limit = 64 * 1024;
+    ct::String wire("POST /up HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+    for (std::size_t sent = 0; sent < limit; sent += 1024)
+    {
+        wire.append("400\r\n");
+        wire.append(1024, 'z');
+        wire.append("\r\n");
+    }
+    wire.append("0\r\n\r\nGET /next HTTP/1.1\r\n\r\n");
+    ct::HttpParser parser(limit, 1024); ct::HttpRequest request;
+    ct::HttpParser::State state = ct::HttpParser::NeedMore;
+    for (std::size_t at = 0; at < wire.size() && state == ct::HttpParser::NeedMore; at += 8192)
+    {
+        const std::size_t n = wire.size() - at < 8192 ? wire.size() - at : 8192;
+        state = parser.feed(wire.data() + at, n, request);
+    }
+    ASSERT_EQ(state, ct::HttpParser::Done);
+    EXPECT_EQ(request.body.size(), limit);
+    parser.reset();
+    ASSERT_EQ(parser.feed(nullptr, 0, request), ct::HttpParser::Done);
+    EXPECT_EQ(request.path, "/next");
+    ct::String over("POST /up HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n400\r\n");
+    over.append(1024, 'z'); over.append("\r\n1\r\nq\r\n0\r\n\r\n");
+    ct::HttpParser small(1024, 1024);
+    EXPECT_EQ(small.feed(over.data(), over.size(), request), ct::HttpParser::Error);
+    ct::String long_line("POST /up HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n");
+    long_line.append(2048, '1');
+    ct::HttpParser lines;
+    EXPECT_EQ(lines.feed(long_line.data(), long_line.size(), request), ct::HttpParser::Error);
+}
+
+TEST(HttpParser, HeadersFedByteByByteStayCheap)
+{
+    ct::String wire("GET / HTTP/1.1\r\n");
+    for (int i = 0; i < 100; ++i) { wire.append("X-H"); wire.append_number(i); wire.append(": "); wire.append(100, 'v'); wire.append("\r\n"); }
+    wire.append("\r\n");
+    ct::HttpParser parser; ct::HttpRequest request;
+    ct::HttpParser::State state = ct::HttpParser::NeedMore;
+    for (std::size_t i = 0; i < wire.size() && state == ct::HttpParser::NeedMore; ++i)
+        state = parser.feed(wire.data() + i, 1, request);
+    ASSERT_EQ(state, ct::HttpParser::Done);
+    EXPECT_EQ(request.headers.size(), 100u);
+    EXPECT_EQ(request.header("x-h99").size(), 100u);
+}
+
+TEST(HttpServer, IdleConnectionsAreClosedAndConnectionCountIsCapped)
+{
+    ct::Address address; ASSERT_TRUE(ct::Address::parse("127.0.0.1", 0, address));
+    ct::HttpServer server;
+    server.set_idle_timeout_ms(150);
+    server.set_max_connections(1);
+    server.route("GET", "/ping", [](const ct::HttpRequest &, ct::HttpResponse &response) { response.text("pong"); });
+    ct::NetError error = {"", 0};
+    if (!server.listen(address, &error)) GTEST_SKIP() << "HTTP server test port unavailable";
+    address = server.local_address();
+    std::thread loop([&] { server.run(); });
+    ct::TcpStream first; ASSERT_TRUE(first.connect(address, 1000)); first.set_timeout_ms(2000, 2000);
+    ct::Thread::sleep_ms(50);
+    ct::TcpStream second; ASSERT_TRUE(second.connect(address, 1000)); second.set_timeout_ms(2000, 2000);
+    char buffer[256];
+    EXPECT_EQ(second.recv(buffer, sizeof(buffer)), 0) << "a segunda ligacao devia ser fechada pelo limite";
+    ASSERT_TRUE(first.send_all("GET /ping HTTP/1.1\r\nHost: x\r\n\r\n"));
+    long n = first.recv(buffer, sizeof(buffer));
+    ASSERT_GT(n, 0);
+    EXPECT_TRUE(ct::String(buffer, static_cast<std::size_t>(n)).ends_with("pong"));
+    EXPECT_EQ(first.recv(buffer, sizeof(buffer)), 0) << "a ligacao inactiva devia ser fechada pelo idle timeout";
+    server.stop(); loop.join();
+}

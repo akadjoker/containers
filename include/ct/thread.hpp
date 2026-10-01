@@ -378,6 +378,17 @@ namespace ct
 #endif
         }
 
+        static std::uint64_t monotonic_ms() noexcept
+        {
+#if defined(_WIN32)
+            return static_cast<std::uint64_t>(GetTickCount64());
+#else
+            timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            return static_cast<std::uint64_t>(ts.tv_sec) * 1000u + static_cast<std::uint64_t>(ts.tv_nsec / 1000000L);
+#endif
+        }
+
     private:
         struct Block
         {

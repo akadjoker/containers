@@ -13,7 +13,15 @@ namespace ct
     public:
         using Handler = Function<void(const HttpRequest &, HttpResponse &)>;
 
-        explicit HttpServer(unsigned = 0) noexcept : running_(0), accept_backoff_(0) {}
+        enum : unsigned { kDefaultMaxConnections = 1024, kDefaultIdleTimeoutMs = 30000 };
+        explicit HttpServer(unsigned max_connections = kDefaultMaxConnections) noexcept
+            : running_(0), accept_backoff_(0), max_connections_(max_connections ? max_connections : kDefaultMaxConnections),
+              idle_timeout_ms_(kDefaultIdleTimeoutMs) {}
+        void set_max_connections(unsigned count) noexcept { max_connections_ = count ? count : kDefaultMaxConnections; }
+        void set_idle_timeout_ms(unsigned ms) noexcept { idle_timeout_ms_ = ms; }
+        unsigned max_connections() const noexcept { return max_connections_; }
+        unsigned idle_timeout_ms() const noexcept { return idle_timeout_ms_; }
+        std::size_t connection_count() const noexcept { return connections_.size(); }
         ~HttpServer() { stop(); }
         HttpServer(const HttpServer &) = delete;
         HttpServer &operator=(const HttpServer &) = delete;
@@ -68,16 +76,19 @@ namespace ct
             for (std::size_t i = 0; i < connections_.size(); ++i)
                 poller.add(connections_[i].stream, connections_[i].output.empty() ? Poller::Readable : Poller::Writable);
             if (poller.wait(timeout_ms) < 0) return;
+            const std::uint64_t now = Thread::monotonic_ms();
             if (accept_backoff_) --accept_backoff_;
-            else if (poller.readable(0)) accept_ready();
+            else if (poller.readable(0)) accept_ready(now);
             for (std::size_t i = connections_.size(); i-- > 0;)
             {
                 const std::size_t event = i + 1;
                 if (event >= poller.size()) continue;
+                Connection &connection = connections_[i];
                 bool keep = true;
                 if (poller.error(event)) keep = false;
-                else if (poller.readable(event) && connections_[i].output.empty()) keep = read_ready(connections_[i]);
-                else if (poller.writable(event) && !connections_[i].output.empty()) keep = write_ready(connections_[i]);
+                else if (poller.readable(event) && connection.output.empty()) { connection.last_activity = now; keep = read_ready(connection); }
+                else if (poller.writable(event) && !connection.output.empty()) { connection.last_activity = now; keep = write_ready(connection); }
+                else if (idle_timeout_ms_ && now - connection.last_activity > idle_timeout_ms_) keep = false;
                 if (!keep) connections_.erase(connections_.begin() + i);
             }
         }
@@ -93,6 +104,7 @@ namespace ct
             HttpParser parser;
             String output;
             bool close_after = false;
+            std::uint64_t last_activity = 0;
         };
 
         static StringView segment(StringView path, std::size_t &at)
@@ -123,7 +135,7 @@ namespace ct
             }
         }
 
-        void accept_ready()
+        void accept_ready(std::uint64_t now)
         {
             for (;;)
             {
@@ -133,9 +145,11 @@ namespace ct
                     if (!listener_.would_block()) accept_backoff_ = 1;
                     break;
                 }
+                if (connections_.size() >= max_connections_) continue;
                 stream.set_nonblocking(true);
                 Connection connection;
                 connection.stream = detail::move(stream);
+                connection.last_activity = now;
                 connections_.push_back(detail::move(connection));
             }
         }
@@ -300,5 +314,7 @@ namespace ct
         Vector<StaticDir> static_dirs_;
         Atomic<int> running_;
         unsigned accept_backoff_;
+        unsigned max_connections_;
+        unsigned idle_timeout_ms_;
     };
 }

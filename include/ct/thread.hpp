@@ -67,6 +67,9 @@ namespace ct
                       "ct::Atomic: so inteiros e ponteiros");
         static_assert(sizeof(T) == 4 || sizeof(T) == 8, "ct::Atomic: so 32 ou 64 bits");
 
+        using IsPointer = detail::integral_constant<bool, std::is_pointer<T>::value>;
+        using Diff = typename std::conditional<std::is_pointer<T>::value, std::ptrdiff_t, T>::type;
+
     public:
         Atomic() noexcept : v_(T()) {}
         explicit Atomic(T v) noexcept : v_(v) {}
@@ -127,12 +130,26 @@ namespace ct
             store(v);
             return v;
         }
-        T operator++() noexcept { return fetch_add(1) + 1; }
-        T operator++(int) noexcept { return fetch_add(1); }
-        T operator--() noexcept { return fetch_sub(1) - 1; }
-        T operator--(int) noexcept { return fetch_sub(1); }
-        T operator+=(T v) noexcept { return fetch_add(v) + v; }
-        T operator-=(T v) noexcept { return fetch_sub(v) - v; }
+        T operator++() noexcept { return step(1, false, IsPointer()) + 1; }
+        T operator++(int) noexcept { return step(1, false, IsPointer()); }
+        T operator--() noexcept { return step(1, true, IsPointer()) - 1; }
+        T operator--(int) noexcept { return step(1, true, IsPointer()); }
+        T operator+=(Diff v) noexcept { return step(v, false, IsPointer()) + v; }
+        T operator-=(Diff v) noexcept { return step(v, true, IsPointer()) - v; }
+
+    private:
+        T step(Diff d, bool subtract, detail::false_type) noexcept
+        {
+            return subtract ? fetch_sub(d) : fetch_add(d);
+        }
+        T step(Diff d, bool subtract, detail::true_type) noexcept
+        {
+            T current = load();
+            while (!compare_exchange(current, subtract ? current - d : current + d))
+            {
+            }
+            return current;
+        }
     };
 
     class Mutex
@@ -267,8 +284,8 @@ namespace ct
     public:
         using Fn = Function<void()>;
 
-        Thread() noexcept : joinable_(false) {}
-        explicit Thread(Fn fn) : joinable_(false) { start(detail::move(fn)); }
+        Thread() noexcept : handle_(), joinable_(false) {}
+        explicit Thread(Fn fn) : handle_(), joinable_(false) { start(detail::move(fn)); }
         Thread(Thread &&o) noexcept : handle_(o.handle_), joinable_(o.joinable_) { o.joinable_ = false; }
         Thread &operator=(Thread &&o) noexcept
         {

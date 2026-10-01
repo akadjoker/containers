@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <utility>
 #include <vector>
 
 using ct::Atomic;
@@ -329,4 +330,55 @@ TEST(ThreadPool, TwoThreadsWaitingAllAreBothWoken)
     EXPECT_EQ(released.load(), 2);
     EXPECT_EQ(pool->pending(), 0u);
     delete pool;
+}
+
+TEST(Atomic, PonteirosAvancamEmElementosENaoEmBytes)
+{
+    int values[16] = {};
+    Atomic<int *> p(values);
+    EXPECT_EQ(++p, values + 1);
+    EXPECT_EQ(p++, values + 1);
+    EXPECT_EQ(p.load(), values + 2);
+    EXPECT_EQ(p += 3, values + 5);
+    EXPECT_EQ(p -= 2, values + 3);
+    EXPECT_EQ(--p, values + 2);
+    EXPECT_EQ(p--, values + 2);
+    EXPECT_EQ(p.load(), values + 1);
+    struct Wide { char bytes[24]; } wide[8];
+    Atomic<Wide *> q(wide);
+    q += 5;
+    EXPECT_EQ(q.load(), wide + 5);
+    EXPECT_EQ(reinterpret_cast<char *>(q.load()) - reinterpret_cast<char *>(wide), 5 * 24);
+}
+
+TEST(Atomic, PonteirosSaoAtomicosEntreThreads)
+{
+    static int slots[40000];
+    Atomic<int *> cursor(slots);
+    ct::Vector<Thread> threads;
+    for (int i = 0; i < 4; ++i)
+        threads.emplace_back(Thread::Fn([&] {
+            for (int k = 0; k < 10000; ++k)
+                ++cursor;
+        }));
+    for (std::size_t i = 0; i < threads.size(); ++i)
+        threads[i].join();
+    EXPECT_EQ(cursor.load(), slots + 40000);
+}
+
+TEST(Thread, MoverUmaThreadNaoIniciadaNaoLeLixo)
+{
+    Thread idle;
+    Thread moved(std::move(idle));
+    EXPECT_FALSE(moved.joinable());
+    EXPECT_FALSE(idle.joinable());
+    Thread assigned;
+    assigned = std::move(moved);
+    EXPECT_FALSE(assigned.joinable());
+    Atomic<int> ran(0);
+    Thread live(Thread::Fn([&] { ran.store(1); }));
+    assigned = std::move(live);
+    EXPECT_TRUE(assigned.joinable());
+    assigned.join();
+    EXPECT_EQ(ran.load(), 1);
 }

@@ -172,7 +172,16 @@ namespace ct
 
     protected:
         explicit Socket(detail::SocketHandle fd) noexcept : fd_(fd), error_{"", 0} {}
-        bool open(int type, int family) noexcept { close(); fd_ = ::socket(family, type, 0); if (!valid()) { remember(); return false; } return true; }
+        static void no_sigpipe(detail::SocketHandle fd) noexcept
+        {
+#if defined(SO_NOSIGPIPE)
+            int one = 1;
+            setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char *>(&one), sizeof(one));
+#else
+            (void)fd;
+#endif
+        }
+        bool open(int type, int family) noexcept { close(); fd_ = ::socket(family, type, 0); if (!valid()) { remember(); return false; } no_sigpipe(fd_); return true; }
         bool checked(int rc) noexcept { if (rc == 0) return true; remember(); return false; }
         void remember() noexcept { const int e = detail::socket_error(); error_ = {detail::socket_error_text(e), e}; }
         detail::SocketHandle fd_;
@@ -279,6 +288,7 @@ namespace ct
             remember();
             if (!detail::interrupted(error_.code)) return false;
         }
+        no_sigpipe(fd);
         out = TcpStream(fd);
         if (peer) *peer = a;
         return true;

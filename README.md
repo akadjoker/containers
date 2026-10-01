@@ -72,7 +72,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [ptr.hpp](include/ct/ptr.hpp) | `Rc`, `Unique`, `Weak` | Smart pointers for the cases that need them |
 | [sort.hpp](include/ct/sort.hpp) | `insertion_sort`, `heap_sort`, `intro_sort`, `radix_sort` | Sorting algorithms |
 | [json.hpp](include/ct/json.hpp) | `Json` | Self-contained JSON parser/serializer |
-| [xml.hpp](include/ct/xml.hpp) | `Xml` | Self-contained XML parser |
+| [xml.hpp](include/ct/xml.hpp) | `Xml` | Self-contained XML parser; mixed content keeps its order (`text()` before the first child, `tail()` after each child) |
 | [rectpacker.hpp](include/ct/rectpacker.hpp) | `RectPacker` | 2D rectangle bin packing (texture/atlas packing) |
 | [regex.hpp](include/ct/regex.hpp) | `Regex`, `Match` | Regular expressions with Python `re` semantics (see below) |
 | [thread.hpp](include/ct/thread.hpp) | `Thread`, `Mutex`, `LockGuard`, `CondVar`, `Atomic` | Cross-platform threading primitives (pthreads / Win32), no `<thread>` |

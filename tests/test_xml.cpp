@@ -4,6 +4,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <utility>
 #include <limits>
 
 using ct::String;
@@ -486,4 +487,51 @@ TEST(Xml, ColunaDoErroIgnoraBom)
     ct::Xml::parse("<a><b></a>", &plain);
     ASSERT_TRUE(plain);
     EXPECT_EQ(err.column, plain.column);
+}
+
+TEST(Xml, ConteudoMistoMantemAOrdemNoRoundTrip)
+{
+    const char *doc = "<p>Hello <b>bold</b> world <i>it</i>!</p>";
+    Xml x = parse_ok(doc);
+    EXPECT_EQ(x.text(), "Hello ");
+    ASSERT_EQ(x.size(), 2u);
+    EXPECT_EQ(x.children()[0].tag(), "b");
+    EXPECT_EQ(x.children()[0].text(), "bold");
+    EXPECT_EQ(x.children()[0].tail(), " world ");
+    EXPECT_EQ(x.children()[1].tail(), "!");
+    EXPECT_TRUE(x.has_mixed_content());
+    EXPECT_EQ(x.dump(), doc);
+    EXPECT_EQ(x.dump(2), doc);
+    Xml again = parse_ok(x.dump(2).c_str());
+    EXPECT_EQ(again.dump(), doc);
+    Xml copy = x;
+    EXPECT_EQ(copy.dump(), doc);
+    Xml moved = std::move(copy);
+    EXPECT_EQ(moved.dump(), doc);
+}
+
+TEST(Xml, ConteudoMistoComCdataEEntidadesEEspacosSoNoMeio)
+{
+    Xml x = parse_ok("<t>a &amp; <![CDATA[<raw>]]><e/> &lt;b<f/></t>");
+    EXPECT_EQ(x.text(), "a & <raw>");
+    EXPECT_EQ(x.children()[0].tail(), " <b");
+    EXPECT_TRUE(x.children()[1].tail().empty());
+    EXPECT_EQ(x.dump(), "<t>a &amp; &lt;raw&gt;<e/> &lt;b<f/></t>");
+    Xml only_ws = parse_ok("<r>\n  <a/>\n  <b/>\n</r>");
+    EXPECT_FALSE(only_ws.has_mixed_content());
+    EXPECT_TRUE(only_ws.children()[0].tail().empty());
+    EXPECT_EQ(only_ws.dump(2), "<r>\n  <a/>\n  <b/>\n</r>");
+}
+
+TEST(Xml, SetTailConstroiConteudoMisto)
+{
+    Xml p("p");
+    p.set_text("x ");
+    Xml b("b");
+    b.set_text("y");
+    b.set_tail(" z");
+    p.add_child(std::move(b));
+    EXPECT_EQ(p.dump(), "<p>x <b>y</b> z</p>");
+    Xml back = parse_ok(p.dump().c_str());
+    EXPECT_EQ(back.children()[0].tail(), " z");
 }

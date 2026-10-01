@@ -83,6 +83,11 @@ namespace ct
         const String &text() const noexcept { return text_; }
         void set_text(String t) { text_ = detail::move(t); }
 
+        const String &tail() const noexcept { return tail_; }
+        void set_tail(String t) { tail_ = detail::move(t); }
+
+        bool has_mixed_content() const noexcept;
+
         String text_trimmed() const;
 
         const Children &children() const noexcept;
@@ -118,6 +123,7 @@ namespace ct
         Children *children_; 
 
         String text_;
+        String tail_;
 
         void ensure_children() { if (!children_) children_ = new_children(); }
 
@@ -340,13 +346,13 @@ namespace ct
 
     inline Xml::Xml(const Xml &o)
         : tag_(o.tag_), attrs_(o.attrs_),
-          children_(o.children_ ? new_children(*o.children_) : nullptr), text_(o.text_)
+          children_(o.children_ ? new_children(*o.children_) : nullptr), text_(o.text_), tail_(o.tail_)
     {
     }
 
     inline Xml::Xml(Xml &&o) noexcept
         : tag_(detail::move(o.tag_)), attrs_(detail::move(o.attrs_)),
-          children_(o.children_), text_(detail::move(o.text_))
+          children_(o.children_), text_(detail::move(o.text_)), tail_(detail::move(o.tail_))
     {
         o.children_ = nullptr;
     }
@@ -358,6 +364,7 @@ namespace ct
             tag_ = o.tag_;
             attrs_ = o.attrs_;
             text_ = o.text_;
+            tail_ = o.tail_;
             Children *nc = o.children_ ? new_children(*o.children_) : nullptr;
             del_children(children_);
             children_ = nc;
@@ -372,11 +379,24 @@ namespace ct
             tag_ = detail::move(o.tag_);
             attrs_ = detail::move(o.attrs_);
             text_ = detail::move(o.text_);
+            tail_ = detail::move(o.tail_);
             del_children(children_);
             children_ = o.children_;
             o.children_ = nullptr;
         }
         return *this;
+    }
+
+    inline bool Xml::has_mixed_content() const noexcept
+    {
+        if (!children_ || children_->empty())
+            return false;
+        if (!text_.empty())
+            return true;
+        for (std::size_t i = 0; i < children_->size(); ++i)
+            if (!(*children_)[i].tail_.empty())
+                return true;
+        return false;
     }
 
     inline Xml::~Xml() { del_children(children_); }
@@ -546,12 +566,17 @@ namespace ct
         out.push_back('>');
         if (has_text)
             detail::xml_escape_text(out, text_.data(), text_.size());
+        const bool mixed = has_mixed_content();
         for (std::size_t i = 0; has_children && i < children_->size(); ++i)
         {
-            detail::xml_newline(out, indent, level + 1);
-            (*children_)[i].dump_impl(out, indent, level + 1);
+            const Xml &child = (*children_)[i];
+            if (!mixed)
+                detail::xml_newline(out, indent, level + 1);
+            child.dump_impl(out, indent, level + 1);
+            if (!child.tail_.empty())
+                detail::xml_escape_text(out, child.tail_.data(), child.tail_.size());
         }
-        if (has_children)
+        if (has_children && !mixed)
             detail::xml_newline(out, indent, level);
         out.append("</", 2);
         out.append(tag_.data(), tag_.size());
@@ -874,6 +899,13 @@ namespace ct
                 }
             }
 
+            static String &text_target(Xml &out)
+            {
+                if (out.children_ && !out.children_->empty())
+                    return out.children_->back().tail_;
+                return out.text_;
+            }
+
             bool parse_element(Xml &out, std::size_t depth)
             {
                 if (depth > Xml::kMaxDepth)
@@ -923,7 +955,7 @@ namespace ct
                         return fail("elemento sem tag de fecho", cur);
                     if (*cur != '<')
                     {
-                        if (!parse_char_data(out.text_))
+                        if (!parse_char_data(text_target(out)))
                             return false;
                         continue;
                     }
@@ -941,8 +973,17 @@ namespace ct
                         if (close_name != out.tag_)
                             return fail("tag de fecho nao corresponde a abertura", close_at);
 
-                        if (out.children_ && xml_is_all_ws(out.text_))
-                            out.text_.clear();
+                        if (out.children_)
+                        {
+                            if (xml_is_all_ws(out.text_))
+                                out.text_.clear();
+                            for (std::size_t i = 0; i < out.children_->size(); ++i)
+                            {
+                                String &tail = (*out.children_)[i].tail_;
+                                if (xml_is_all_ws(tail))
+                                    tail.clear();
+                            }
+                        }
                         return true;
                     }
                     if (starts_with("<!--", 4))
@@ -960,7 +1001,7 @@ namespace ct
                             ++cur;
                         if (cur == last)
                             return fail("CDATA sem fecho ']]>'", start);
-                        out.text_.append(data, static_cast<std::size_t>(cur - data));
+                        text_target(out).append(data, static_cast<std::size_t>(cur - data));
                         cur += 3;
                         continue;
                     }

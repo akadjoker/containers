@@ -492,7 +492,51 @@ namespace ct
                         last = c;
                     } while (eat('|'));
                     --depth_;
-                    return alt;
+                    const int merged = merge_single_char_alt(alt);
+                    return merged >= 0 ? merged : alt;
+                }
+
+                int merge_single_char_alt(int alt)
+                {
+                    CharClass merged;
+                    for (int c = nodes_[alt].child; c >= 0; c = nodes_[c].next)
+                    {
+                        if (nodes_[c].kind != N_Concat)
+                            return -1;
+                        const int atom = nodes_[c].child;
+                        if (atom < 0 || nodes_[atom].next >= 0)
+                            return -1;
+                        const Node &nd = nodes_[atom];
+                        if (nd.kind == N_Char)
+                        {
+                            if (nd.a < 0 || nd.a >= 128)
+                                return -1;
+                            CharClass one;
+                            one.add(static_cast<std::uint32_t>(nd.a), static_cast<std::uint32_t>(nd.a));
+                            if (nd.flag)
+                                one.fold_case();
+                            merge_class(merged, one);
+                        }
+                        else if (nd.kind == N_Class)
+                        {
+                            const CharClass &cls = prog_.classes[static_cast<std::size_t>(nd.a)];
+                            if (cls.negated)
+                                return -1;
+                            merge_class(merged, cls);
+                        }
+                        else
+                            return -1;
+                    }
+                    prog_.classes.push_back(detail::move(merged));
+                    return node(N_Class, static_cast<std::int32_t>(prog_.classes.size() - 1));
+                }
+
+                static void merge_class(CharClass &into, const CharClass &from)
+                {
+                    for (int i = 0; i < 8; ++i)
+                        into.bits[i] |= from.bits[i];
+                    for (std::size_t i = 0; i < from.ranges.size(); ++i)
+                        into.ranges.push_back(from.ranges[i]);
                 }
 
                 int parse_concat()

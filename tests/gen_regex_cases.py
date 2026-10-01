@@ -55,6 +55,16 @@ CASES = [
     ("x*?", 0, "éxx", "-"),
     ("[a-z]*", 0, "ab12cd", "-"),
     (".+?", 0, "éé", "-"),
+    # alternations of single characters
+    ("(?:a|b)*c", 0, "abbac xc", None),
+    ("(?i:a|B)+x", 0, "aAbBx", None),
+    ("(?:[^a]|b)+", 0, "bcdab", None),
+    ("(?:\u00e9|a)+", 0, "\u00e9a\u00e9a", None),
+    ("(a|b)+", 0, "abba", None),
+    ("(?:a|[b-d]|_)+?e", 0, "ab_cde", None),
+    ("(?:a|b|c)+", I, "xABcabCx", None),
+    ("(?:\\d|\\s)*z", 0, "1 2 3z", None),
+    ("a|b|c", 0, "xcbax", "-"),
     # counted repeat whose mandatory iteration matches empty
     ("(|a){1,2}b", 0, "ab", None),
     ("((?<!b)++|(?>a|ab)*+.+?){1,2}(a*)*", 0, "bnn", None),

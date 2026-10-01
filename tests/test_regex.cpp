@@ -415,3 +415,32 @@ TEST(Regex, MaisDeNoventaENoveGruposEUmLimiteGrandeComErro)
     ASSERT_NE(err.message, nullptr);
     EXPECT_STREQ(err.message, "too many groups");
 }
+
+TEST(Regex, AlternanciaDeUmSoCaracterEquivaleAUmaClasse)
+{
+    Regex re = Regex::compile("(?:a|b)*c");
+    std::string text(2000000, 'a');
+    for (std::size_t i = 0; i < text.size(); i += 3)
+        text[i] = 'b';
+    text += 'c';
+    Match m;
+    ASSERT_TRUE(re.fullmatch(StringView(text.data(), text.size()), &m));
+    EXPECT_EQ(m.end(), text.size());
+    EXPECT_FALSE(re.search(StringView(text.data(), text.size() - 1)));
+    Regex icase = Regex::compile("(?i:a|B)+x");
+    EXPECT_TRUE(icase.fullmatch("aAbBx"));
+    EXPECT_FALSE(icase.fullmatch("aAcBx"));
+    Regex mixed = Regex::compile("(?:a|(?i:b))+");
+    EXPECT_TRUE(mixed.fullmatch("aBbA") == false);
+    EXPECT_TRUE(mixed.fullmatch("aBba"));
+    Regex neg = Regex::compile("(?:[^a]|b)+");
+    ASSERT_TRUE(neg.fullmatch("bcdb"));
+    EXPECT_FALSE(neg.fullmatch("bca"));
+    Regex wide = Regex::compile("(?:\xC3\xA9|a)+");
+    EXPECT_TRUE(wide.fullmatch("\xC3\xA9" "a\xC3\xA9"));
+    EXPECT_FALSE(wide.fullmatch("\xE9"));
+    Regex captured = Regex::compile("(a|b)+");
+    ASSERT_TRUE(captured.fullmatch("abba", &m));
+    EXPECT_EQ(m.start(1), 3u);
+    EXPECT_EQ(m.end(1), 4u);
+}

@@ -412,7 +412,7 @@ namespace ct
                 Vector<int> open_;
 
                 static constexpr int kMaxDepth = 200;
-                static constexpr std::size_t kMaxGroups = 100;
+                static constexpr std::size_t kMaxGroups = 1 << 15;
 
                 bool at_end() const noexcept { return i_ >= n_; }
                 char peek() const noexcept { return p_[i_]; }

@@ -392,3 +392,26 @@ TEST(Regex, MatchesVaziosNaoPartemUtf8)
     EXPECT_FALSE(nb.search(""));
     EXPECT_TRUE(nb.search("ab"));
 }
+
+TEST(Regex, MaisDeNoventaENoveGruposEUmLimiteGrandeComErro)
+{
+    String many("(a)");
+    for (int i = 1; i < 300; ++i)
+        many.append("(a)");
+    Regex re = Regex::compile(many);
+    ASSERT_TRUE(static_cast<bool>(re));
+    EXPECT_EQ(re.group_count(), 300u);
+    std::string text(300, 'a');
+    Match m;
+    ASSERT_TRUE(re.fullmatch(StringView(text.data(), text.size()), &m));
+    EXPECT_EQ(m.start(300), 299u);
+    EXPECT_EQ(m.end(300), 300u);
+    String too_many;
+    for (int i = 0; i < 40000; ++i)
+        too_many.append("()");
+    Regex::Error err;
+    Regex bad = Regex::compile(too_many, 0, &err);
+    EXPECT_FALSE(static_cast<bool>(bad));
+    ASSERT_NE(err.message, nullptr);
+    EXPECT_STREQ(err.message, "too many groups");
+}

@@ -40,3 +40,22 @@ TEST(Text, ReadAllDepoisDeReadLineDevolveORestoESaltaOBom)
     ASSERT_TRUE(ct::TextReader(short_stream).read_all(rest));
     EXPECT_EQ(rest, "ab");
 }
+
+namespace
+{
+    enum class Modo : int
+    {
+        Leitura = 4
+    };
+}
+
+TEST(TextWriter, NumberAceitaEnums)
+{
+    ct::MemoryStream out;
+    {
+        ct::TextWriter w(out);
+        w.number(Modo::Leitura);
+    }
+    ct::String text(reinterpret_cast<const char *>(out.data().data()), out.data().size());
+    EXPECT_EQ(text, "4");
+}

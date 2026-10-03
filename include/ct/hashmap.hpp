@@ -8,10 +8,21 @@
 namespace ct
 {
 
-    template <typename K, typename Enable = void>
+    template <typename K>
     struct Hash
     {
-        std::uint64_t operator()(const K &k) const { return k.hash(); }
+        std::uint64_t operator()(const K &k) const
+        {
+            return call(k, detail::integral_constant<bool, std::is_enum<K>::value>());
+        }
+
+    private:
+        static std::uint64_t call(const K &k, detail::false_type) { return k.hash(); }
+        static std::uint64_t call(const K &k, detail::true_type)
+        {
+            return detail::hash_mix(static_cast<std::uint64_t>(
+                static_cast<typename std::underlying_type<K>::type>(k)));
+        }
     };
 
     inline std::uint64_t hash_combine(std::uint64_t seed, std::uint64_t h) noexcept
@@ -73,16 +84,6 @@ namespace ct
             std::uint64_t bits;
             std::memcpy(&bits, &k, sizeof(bits));
             return detail::hash_mix(bits);
-        }
-    };
-
-    template <typename E>
-    struct Hash<E, typename detail::enable_if<std::is_enum<E>::value>::type>
-    {
-        std::uint64_t operator()(E k) const
-        {
-            return detail::hash_mix(static_cast<std::uint64_t>(
-                static_cast<typename std::underlying_type<E>::type>(k)));
         }
     };
 
@@ -235,7 +236,9 @@ namespace ct
         }
 
         template <typename Q, typename HH = H, typename = typename HH::is_transparent,
-                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
         V *find(const Q &k) noexcept
         {
             if (!size_)
@@ -244,7 +247,9 @@ namespace ct
             return meta_[i] ? &slots_[i].value : nullptr;
         }
         template <typename Q, typename HH = H, typename = typename HH::is_transparent,
-                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
         const V *find(const Q &k) const noexcept
         {
             return const_cast<HashMap *>(this)->find(k);
@@ -253,7 +258,9 @@ namespace ct
         bool contains(const K &k) const noexcept { return find(k) != nullptr; }
 
         template <typename Q, typename HH = H, typename = typename HH::is_transparent,
-                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
         bool contains(const Q &k) const noexcept
         {
             return find(k) != nullptr;

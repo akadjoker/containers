@@ -105,7 +105,9 @@ namespace ct
         }
 
         template <typename Q, typename HH = H, typename = typename HH::is_transparent,
-                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type>
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
         bool contains(const Q &k) const noexcept
         {
             if (!size_)

@@ -1093,22 +1093,28 @@ namespace ct
         }
         case Obj:
         {
-            // objeto JSON não tem ordem: compara por chave, não por posição
+            // objeto JSON não tem ordem: cada membro tem de ter um par igual por usar no outro lado
             const Object &a = *v_.o;
             const Object &b = *o.v_.o;
             if (a.size() != b.size())
                 return false;
+            Vector<std::uint8_t> used;
+            used.resize(b.size(), 0);
             for (std::size_t i = 0; i < a.size(); ++i)
             {
-                const Json *other = o.find(a[i].key);
-                if (!other || !(a[i].value == *other))
+                std::size_t hit = b.size();
+                if (!used[i] && a[i].key == b[i].key && a[i].value == b[i].value)
+                    hit = i;
+                else
+                    for (std::size_t j = 0; j < b.size(); ++j)
+                        if (!used[j] && a[i].key == b[j].key && a[i].value == b[j].value)
+                        {
+                            hit = j;
+                            break;
+                        }
+                if (hit == b.size())
                     return false;
-            }
-            for (std::size_t i = 0; i < b.size(); ++i)
-            {
-                const Json *mine = find(b[i].key);
-                if (!mine || !(b[i].value == *mine))
-                    return false;
+                used[hit] = 1;
             }
             return true;
         }

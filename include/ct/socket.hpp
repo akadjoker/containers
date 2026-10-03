@@ -42,6 +42,7 @@ namespace ct
         inline void close_socket(SocketHandle s) noexcept { closesocket(s); }
         inline bool would_block(int e) noexcept { return e == WSAEWOULDBLOCK; }
         inline bool interrupted(int e) noexcept { return e == WSAEINTR; }
+        inline bool already_connected(int e) noexcept { return e == WSAEISCONN; }
         inline const char *socket_error_text(int) noexcept { return "Winsock error"; }
         struct NetInit { NetInit() noexcept { WSADATA d; WSAStartup(MAKEWORD(2, 2), &d); } ~NetInit() { WSACleanup(); } };
         inline void ensure_net() noexcept { static NetInit init; (void)init; }
@@ -52,6 +53,7 @@ namespace ct
         inline void close_socket(SocketHandle s) noexcept { ::close(s); }
         inline bool would_block(int e) noexcept { return e == EAGAIN || e == EWOULDBLOCK; }
         inline bool interrupted(int e) noexcept { return e == EINTR; }
+        inline bool already_connected(int e) noexcept { return e == EISCONN; }
         inline const char *socket_error_text(int e) noexcept { return std::strerror(e); }
         inline void ensure_net() noexcept {}
 #endif
@@ -230,10 +232,22 @@ namespace ct
             if (!a.valid() || !open(SOCK_STREAM, a.is_v6() ? AF_INET6 : AF_INET)) { if (err) *err = error_; return false; }
             if (timeout_ms) set_timeout_ms(timeout_ms, timeout_ms);
             int rc;
-            do
+            bool retried = false;
+            for (;;)
             {
                 rc = ::connect(fd_, reinterpret_cast<const sockaddr *>(&a.storage_), a.len_);
-            } while (rc != 0 && detail::interrupted(detail::socket_error()));
+                if (rc == 0)
+                    break;
+                const int e = detail::socket_error();
+                if (detail::interrupted(e))
+                {
+                    retried = true;
+                    continue;
+                }
+                if (retried && detail::already_connected(e))
+                    rc = 0;
+                break;
+            }
             if (!checked(rc)) { if (err) *err = error_; close(); return false; }
             return true;
         }

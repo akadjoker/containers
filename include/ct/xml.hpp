@@ -3,6 +3,7 @@
 #include <clocale> 
 
 #include "detail/utils.hpp"
+#include "hashset.hpp"
 #include "string.hpp"
 #include "vector.hpp"
 
@@ -746,6 +747,12 @@ namespace ct
                             return false;
                         continue;
                     }
+                    if (c == '<' && starts_with("<?", 2))
+                    {
+                        if (!skip_pi())
+                            return false;
+                        continue;
+                    }
                     if (c == '[')
                         ++bracket;
                     else if (c == ']')
@@ -931,6 +938,8 @@ namespace ct
                 if (!read_name(out.tag_))
                     return false;
 
+                static constexpr std::size_t kLinearAttrs = 8;
+                HashSet<String> seen_attrs;
                 for (;;)
                 {
                     skip_ws();
@@ -953,9 +962,20 @@ namespace ct
                     const char *name_at = cur;
                     if (!read_name(a.name))
                         return false;
-                    for (std::size_t k = 0; k < out.attrs_.size(); ++k)
-                        if (out.attrs_[k].name == a.name)
+                    if (seen_attrs.empty() && out.attrs_.size() < kLinearAttrs)
+                    {
+                        for (std::size_t k = 0; k < out.attrs_.size(); ++k)
+                            if (out.attrs_[k].name == a.name)
+                                return fail("atributo repetido", name_at);
+                    }
+                    else
+                    {
+                        if (seen_attrs.empty())
+                            for (std::size_t k = 0; k < out.attrs_.size(); ++k)
+                                seen_attrs.insert(out.attrs_[k].name);
+                        if (!seen_attrs.insert(a.name))
                             return fail("atributo repetido", name_at);
+                    }
                     skip_ws();
                     if (cur == last || *cur != '=')
                         return fail("esperado '=' no atributo", cur);
@@ -999,13 +1019,14 @@ namespace ct
 
                         if (out.children_)
                         {
-                            if (xml_is_all_ws(out.text_))
-                                out.text_.clear();
-                            for (std::size_t i = 0; i < out.children_->size(); ++i)
+                            bool has_text = !xml_is_all_ws(out.text_);
+                            for (std::size_t i = 0; i < out.children_->size() && !has_text; ++i)
+                                has_text = !xml_is_all_ws((*out.children_)[i].tail_);
+                            if (!has_text)
                             {
-                                String &tail = (*out.children_)[i].tail_;
-                                if (xml_is_all_ws(tail))
-                                    tail.clear();
+                                out.text_.clear();
+                                for (std::size_t i = 0; i < out.children_->size(); ++i)
+                                    (*out.children_)[i].tail_.clear();
                             }
                         }
                         return true;

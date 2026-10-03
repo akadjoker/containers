@@ -3,6 +3,9 @@
 
 #include <gtest/gtest.h>
 
+#include <ctime>
+#include <string>
+
 #include <cstring>
 #include <utility>
 #include <limits>
@@ -581,4 +584,50 @@ TEST(Xml, DoctypeComAspasEComentariosNoSubconjunto)
     ct::Xml c = ct::Xml::parse("<!DOCTYPE note [<!ELEMENT note (#PCDATA)>]><note>t</note>", &plain);
     EXPECT_FALSE(plain);
     EXPECT_EQ(c.text(), "t");
+}
+
+TEST(Xml, EspacoEntreElementosEmConteudoMistoEPreservado)
+{
+    const char *doc = "<p>Hello <b>b</b> <i>i</i> world</p>";
+    Xml x = parse_ok(doc);
+    ASSERT_EQ(x.size(), 2u);
+    EXPECT_EQ(x.children()[0].tail(), " ");
+    EXPECT_EQ(x.dump(), doc);
+    Xml tail_only = parse_ok("<p><b>b</b> <i>i</i>x</p>");
+    EXPECT_EQ(tail_only.children()[0].tail(), " ");
+    EXPECT_EQ(tail_only.dump(), "<p><b>b</b> <i>i</i>x</p>");
+}
+
+TEST(Xml, MuitosAtributosNaoSaoQuadraticosEDuplicadoContinuaDetectado)
+{
+    std::string doc = "<a";
+    const int n = 40000;
+    for (int i = 0; i < n; ++i)
+        doc += " a" + std::to_string(i) + "=''";
+    doc += "/>";
+    const std::clock_t begin = std::clock();
+    Xml::Error err;
+    Xml x = Xml::parse(doc.c_str(), &err);
+    const double seconds = double(std::clock() - begin) / CLOCKS_PER_SEC;
+    EXPECT_FALSE(static_cast<bool>(err));
+    EXPECT_EQ(x.attributes().size(), static_cast<std::size_t>(n));
+    EXPECT_LT(seconds, 5.0);
+    doc.insert(doc.size() - 2, " a39999='x'");
+    Xml::Error dup;
+    Xml::parse(doc.c_str(), &dup);
+    ASSERT_TRUE(static_cast<bool>(dup));
+    EXPECT_STREQ(dup.message, "atributo repetido");
+    Xml::Error nove;
+    Xml::parse("<a b='1' c='2' d='3' e='4' f='5' g='6' h='7' i='8' j='9' b='x'/>", &nove);
+    ASSERT_TRUE(static_cast<bool>(nove));
+    EXPECT_STREQ(nove.message, "atributo repetido");
+}
+
+TEST(Xml, DoctypeComInstrucaoDeProcessamentoComAspasNoSubconjunto)
+{
+    Xml x = parse_ok("<!DOCTYPE a [<?pi it's?>]><a/>");
+    EXPECT_EQ(x.tag(), "a");
+    Xml y = parse_ok("<!DOCTYPE a [<?pi \"?>]><b/>");
+    EXPECT_EQ(y.tag(), "b");
+    parse_err("<!DOCTYPE a [<?pi it's]><a/>");
 }

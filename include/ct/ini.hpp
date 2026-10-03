@@ -17,7 +17,7 @@ namespace ct
             return lc && lc->decimal_point && lc->decimal_point[0] ? lc->decimal_point[0] : '.';
         }
 
-        inline bool ini_parse_double(const char *text, double &out) noexcept
+        inline bool ini_parse_double(const char *text, double &out)
         {
             char *end = nullptr;
             out = std::strtod(text, &end);
@@ -26,15 +26,12 @@ namespace ct
             const char dp = ini_decimal_point();
             if (dp == '.')
                 return false;
-            char local[64];
-            std::size_t n = 0;
-            for (; text[n] && n + 1 < sizeof(local); ++n)
-                local[n] = text[n] == '.' ? dp : text[n];
-            if (text[n])
-                return false;
-            local[n] = '\0';
-            out = std::strtod(local, &end);
-            return end && *end == '\0' && end != local;
+            String local(text);
+            for (char &c : local)
+                if (c == '.')
+                    c = dp;
+            out = std::strtod(local.c_str(), &end);
+            return end && *end == '\0' && end != local.c_str();
         }
 
         inline void ini_format_double(double v, String &out)
@@ -54,18 +51,20 @@ namespace ct
             out.assign(buf, static_cast<std::size_t>(n));
         }
 
+        inline bool ini_is_space(char c) noexcept
+        {
+            return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';
+        }
+
         inline bool ini_needs_quotes(StringView v) noexcept
         {
             if (v.empty())
-                return true;
-            if (v.front() == ' ' || v.front() == '\t' || v.back() == ' ' || v.back() == '\t' || v.front() == '"')
+                return false;
+            if (ini_is_space(v.front()) || ini_is_space(v.back()) || v.front() == '"')
                 return true;
             for (std::size_t i = 0; i < v.size(); ++i)
-            {
-                const char c = v[i];
-                if (c == ';' || c == '#' || c == '=' || c == ':' || c == '\\' || c == '\n' || c == '\r' || c == '\t' || c == '\0')
+                if (v[i] == '\n' || v[i] == '\r')
                     return true;
-            }
             return false;
         }
 
@@ -74,17 +73,9 @@ namespace ct
             out.push_back('"');
             for (std::size_t i = 0; i < v.size(); ++i)
             {
-                const char c = v[i];
-                switch (c)
-                {
-                case '"': out.append("\\\""); break;
-                case '\\': out.append("\\\\"); break;
-                case '\n': out.append("\\n"); break;
-                case '\r': out.append("\\r"); break;
-                case '\t': out.append("\\t"); break;
-                case '\0': out.append("\\0"); break;
-                default: out.push_back(c); break;
-                }
+                if (v[i] == '"')
+                    out.push_back('"');
+                out.push_back(v[i]);
             }
             out.push_back('"');
         }
@@ -401,36 +392,41 @@ namespace ct
             put_entry(s, key, StringView(value));
         }
 
-        static bool unquote(StringView raw, String &out)
+        static bool unquote(StringView rest, String &out, size_type &consumed)
         {
             out.clear();
-            for (std::size_t i = 1; i < raw.size(); ++i)
+            size_type i = 1;
+            for (; i < rest.size(); ++i)
             {
-                const char c = raw[i];
-                if (c == '"')
-                    return true;
-                if (c != '\\' || i + 1 >= raw.size())
+                if (rest[i] != '"')
                 {
-                    out.push_back(c);
+                    out.push_back(rest[i]);
                     continue;
                 }
-                const char e = raw[++i];
-                switch (e)
+                if (i + 1 < rest.size() && rest[i + 1] == '"')
                 {
-                case 'n': out.push_back('\n'); break;
-                case 'r': out.push_back('\r'); break;
-                case 't': out.push_back('\t'); break;
-                case '0': out.push_back('\0'); break;
-                default: out.push_back(e); break;
+                    out.push_back('"');
+                    ++i;
+                    continue;
                 }
+                break;
             }
-            return false;
+            if (i >= rest.size())
+                return false;
+            ++i;
+            while (i < rest.size() && rest[i] != '\n' && detail::ini_is_space(rest[i]))
+                ++i;
+            if (i < rest.size() && rest[i] != '\n')
+                return false;
+            consumed = i < rest.size() ? i + 1 : i;
+            return true;
         }
 
         void parse_into(StringView text)
         {
             clear();
             size_type current = npos;
+            const char *const text_end = text.data() + text.size();
             while (!text.empty())
             {
                 size_type nl = text.find('\n');
@@ -474,8 +470,14 @@ namespace ct
                     current = 0;
                 }
                 String unquoted;
-                if (!value.empty() && value.front() == '"' && unquote(value, unquoted))
+                size_type consumed = 0;
+                if (!value.empty() && value.front() == '"' &&
+                    unquote(StringView(value.data(), static_cast<size_type>(text_end - value.data())), unquoted, consumed))
+                {
                     put_entry(sections_[current], key, StringView(unquoted));
+                    const char *after = value.data() + consumed;
+                    text = StringView(after, static_cast<size_type>(text_end - after));
+                }
                 else
                     put_entry(sections_[current], key, value);
             }

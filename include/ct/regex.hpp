@@ -1296,7 +1296,8 @@ namespace ct
                             int w = width(c);
                             if (w < 0)
                                 return -1;
-                            total += w;
+                            const long long sum = static_cast<long long>(total) + w;
+                            total = sum > 0x7FFFFFFFll ? 0x7FFFFFFF : static_cast<int>(sum);
                         }
                         return total;
                     }
@@ -1322,9 +1323,8 @@ namespace ct
                         int w = width(nd.child);
                         if (w < 0)
                             return -1;
-                        if (w > 0 && nd.a > 0x7FFFFFFF / w)
-                            return -1;
-                        return w * nd.a;
+                        const long long product = static_cast<long long>(w) * nd.a;
+                        return product > 0x7FFFFFFFll ? 0x7FFFFFFF : static_cast<int>(product);
                     }
                     case N_Group:
                     case N_Atomic:
@@ -1784,7 +1784,7 @@ namespace ct
 
                 Runner(const Program &prog, StringView text)
                     : prog_(prog), s_(text.data()), n_(text.size()), memo_ready_(false), memo_on_(false),
-                      steps_(0), threshold_(0), stride_(text.size() + 1)
+                      steps_(0), threshold_(0), stride_(text.size() + 1), caps_dirty_(false)
                 {
                     caps_.resize((prog.ngroups + 1) * 2, npos);
                     cnt_.resize(prog.reps.size(), 0);
@@ -1816,8 +1816,12 @@ namespace ct
                 bool exec(std::size_t start, bool match_all, bool must_advance, std::size_t search_start)
                 {
                     stack_.clear();
-                    for (std::size_t k = 0; k < caps_.size(); ++k)
-                        caps_[k] = npos;
+                    if (caps_dirty_)
+                    {
+                        for (std::size_t k = 0; k < caps_.size(); ++k)
+                            caps_[k] = npos;
+                        caps_dirty_ = false;
+                    }
                     const Inst *code = prog_.code.data();
                     std::int32_t pc = 0;
                     std::size_t pos = start;
@@ -2039,6 +2043,7 @@ namespace ct
                                 break;
                             caps_[0] = start;
                             caps_[1] = pos;
+                            caps_dirty_ = true;
                             return true;
                         default:
                             break;
@@ -2088,7 +2093,14 @@ namespace ct
                             }
                         }
                         if (!resumed)
+                        {
+#ifdef CT_RE_CHECK_CAPS
+                            for (std::size_t k = 0; k < caps_.size(); ++k)
+                                if (caps_[k] != npos)
+                                    __builtin_trap();
+#endif
                             return false;
+                        }
                     }
                 }
 
@@ -2126,8 +2138,8 @@ namespace ct
                             }
                             else
                             {
-                                while (st < n_ && (is_continuation(s_[st]) || !prog_.first_has(static_cast<unsigned char>(s_[st]))))
-                                    ++st;
+                                while (st < n_ && !prog_.first_has(static_cast<unsigned char>(s_[st])))
+                                    st += unit_length(st);
                                 if (st >= n_)
                                     return false;
                             }
@@ -2142,16 +2154,15 @@ namespace ct
                         }
                         if (st >= n_)
                             return false;
-                        ++st;
-                        while (st < n_ && is_continuation(s_[st]))
-                            ++st;
+                        st += unit_length(st);
                     }
                 }
 
             private:
-                static bool is_continuation(char c) noexcept
+                std::size_t unit_length(std::size_t at) const noexcept
                 {
-                    return (static_cast<unsigned char>(c) & 0xC0) == 0x80;
+                    std::uint32_t cp;
+                    return utf8_decode(s_, n_, at, cp);
                 }
 
                 const Program &prog_;
@@ -2168,6 +2179,7 @@ namespace ct
                 std::size_t steps_;
                 std::size_t threshold_;
                 std::size_t stride_;
+                bool caps_dirty_;
 
                 void push_alt(std::int32_t pc, std::size_t pos)
                 {
@@ -2453,7 +2465,7 @@ namespace ct
         {
             require_valid();
             detail::re::Runner r(prog_, text);
-            std::size_t st = pos;
+            std::size_t st = pos < text.size() ? pos : text.size();
             bool must_advance = false;
             std::size_t done = 0;
             Match m;

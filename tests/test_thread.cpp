@@ -332,6 +332,59 @@ TEST(ThreadPool, TwoThreadsWaitingAllAreBothWoken)
     delete pool;
 }
 
+TEST(ThreadPool, DoisJobsComWaitAllAoMesmoTempoTerminamAmbos)
+{
+    ThreadPool *pool = new ThreadPool(2);
+    Atomic<int> started(0);
+    Atomic<int> done(0);
+    const bool ok = runs_within_ms(10000, [&] {
+        for (int j = 0; j < 2; ++j)
+        {
+            pool->submit([&] {
+                started.fetch_add(1);
+                while (started.load() < 2)
+                    Thread::yield();
+                pool->submit([&] { done.fetch_add(1); });
+                pool->wait_all();
+                done.fetch_add(1);
+            });
+        }
+        pool->wait_all();
+    });
+    ASSERT_TRUE(ok) << "dois wait_all aninhados em simultaneo ficaram bloqueados";
+    EXPECT_EQ(done.load(), 4);
+    delete pool;
+}
+
+TEST(ThreadPool, JobSubmetidoDuranteParallelForAcordaWaitAllAninhadoAdormecido)
+{
+    ThreadPool *pool = new ThreadPool(1);
+    Atomic<int> running(0);
+    Atomic<int> waiter_done(0);
+    Atomic<int> job_done(0);
+    const bool ok = runs_within_ms(10000, [&] {
+        pool->submit([&] {
+            while (running.load() == 0)
+                Thread::yield();
+            pool->wait_all();
+            waiter_done.store(1);
+        });
+        Thread::sleep_ms(50);
+        pool->parallel_for(0, 1, [&](std::size_t) {
+            running.store(1);
+            Thread::sleep_ms(200);
+            pool->submit([&] { job_done.store(1); });
+        });
+        for (int waited = 0; waited < 3000 && (waiter_done.load() == 0 || job_done.load() == 0); waited += 5)
+            Thread::sleep_ms(5);
+    });
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(waiter_done.load(), 1) << "o waiter aninhado ficou adormecido com trabalho pendente";
+    EXPECT_EQ(job_done.load(), 1);
+    pool->wait_all();
+    delete pool;
+}
+
 TEST(Atomic, PonteirosAvancamEmElementosENaoEmBytes)
 {
     int values[16] = {};

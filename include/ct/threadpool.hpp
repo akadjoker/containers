@@ -11,7 +11,7 @@ namespace ct
     public:
         using Job = Function<void()>;
 
-        explicit ThreadPool(unsigned threads = 0) : active_(0), stop_(false)
+        explicit ThreadPool(unsigned threads = 0) : active_(0), waiting_(0), sleepers_(0), stop_(false)
         {
             if (threads == 0)
             {
@@ -49,17 +49,21 @@ namespace ct
         {
             if (!job)
                 detail::fatal("ct::ThreadPool::submit: funcao vazia");
+            bool wake_sleepers;
             {
                 LockGuard g(mutex_);
                 jobs_.push(detail::move(job));
+                wake_sleepers = sleepers_ != 0;
             }
             work_cv_.notify_one();
+            if (wake_sleepers)
+                done_cv_.notify_all();
         }
 
         void wait_all()
         {
-            const std::size_t own = frames_of(this);
             mutex_.lock();
+            const std::size_t marked = mark_waiting();
             for (;;)
             {
                 if (!jobs_.empty())
@@ -67,10 +71,13 @@ namespace ct
                     help_one();
                     continue;
                 }
-                if (active_ == own)
+                if (active_ == waiting_)
                     break;
+                ++sleepers_;
                 done_cv_.wait(mutex_);
+                --sleepers_;
             }
+            unmark_waiting(marked);
             mutex_.unlock();
         }
 
@@ -91,6 +98,7 @@ namespace ct
             Batch batch;
             batch.fn = static_cast<void *>(&fn);
             std::size_t count = 0;
+            bool wake_sleepers;
             {
                 LockGuard g(mutex_);
                 for (std::size_t b = begin; b < end; b += chunk)
@@ -103,8 +111,11 @@ namespace ct
                     ++count;
                 }
                 batch.remaining.store(count);
+                wake_sleepers = sleepers_ != 0;
             }
             work_cv_.notify_all();
+            if (wake_sleepers)
+                done_cv_.notify_all();
             mutex_.lock();
             while (batch.remaining.load() != 0)
             {
@@ -132,6 +143,7 @@ namespace ct
         {
             const ThreadPool *pool;
             Frame *prev;
+            bool waiting;
         };
 
         static Frame *&top_frame() noexcept
@@ -140,13 +152,37 @@ namespace ct
             return top;
         }
 
-        static std::size_t frames_of(const ThreadPool *pool) noexcept
+        std::size_t mark_waiting()
         {
-            std::size_t n = 0;
+            std::size_t marked = 0;
             for (Frame *f = top_frame(); f; f = f->prev)
-                if (f->pool == pool)
-                    ++n;
-            return n;
+            {
+                if (f->pool != this)
+                    continue;
+                if (f->waiting)
+                    break;
+                f->waiting = true;
+                ++marked;
+            }
+            if (marked)
+            {
+                waiting_ += marked;
+                if (sleepers_ != 0)
+                    done_cv_.notify_all();
+            }
+            return marked;
+        }
+
+        void unmark_waiting(std::size_t marked)
+        {
+            waiting_ -= marked;
+            for (Frame *f = top_frame(); f && marked; f = f->prev)
+            {
+                if (f->pool != this)
+                    continue;
+                f->waiting = false;
+                --marked;
+            }
         }
 
         void run_job(Job &job)
@@ -154,6 +190,7 @@ namespace ct
             Frame frame;
             frame.pool = this;
             frame.prev = top_frame();
+            frame.waiting = false;
             top_frame() = &frame;
             job();
             top_frame() = frame.prev;
@@ -168,7 +205,7 @@ namespace ct
             run_job(job);
             mutex_.lock();
             --active_;
-            if (jobs_.empty())
+            if (sleepers_ != 0)
                 done_cv_.notify_all();
         }
 
@@ -220,9 +257,9 @@ namespace ct
                 run_job(job);
                 mutex_.lock();
                 --active_;
-                const bool drained = jobs_.empty();
+                const bool wake_sleepers = sleepers_ != 0;
                 mutex_.unlock();
-                if (drained)
+                if (wake_sleepers)
                     done_cv_.notify_all();
             }
         }
@@ -233,6 +270,8 @@ namespace ct
         Queue<Job> jobs_;
         Vector<Thread> workers_;
         std::size_t active_;
+        std::size_t waiting_;
+        std::size_t sleepers_;
         bool stop_;
     };
 }

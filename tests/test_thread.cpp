@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include <utility>
 #include <vector>
 
 using ct::Atomic;
@@ -226,4 +227,158 @@ TEST(ThreadPool, SingleWorkerStillParallelForWithCallerHelping)
     Atomic<int> n(0);
     pool.parallel_for(0, 5000, [&](std::size_t) { n.fetch_add(1); });
     EXPECT_EQ(n.load(), 5000);
+}
+
+namespace
+{
+    template <typename F>
+    bool runs_within_ms(unsigned budget_ms, F &&body)
+    {
+        Atomic<int> finished(0);
+        Thread runner([&] {
+            body();
+            finished.store(1);
+        });
+        for (unsigned waited = 0; waited < budget_ms && finished.load() == 0; waited += 5)
+            Thread::sleep_ms(5);
+        if (finished.load() == 0)
+        {
+            runner.detach();
+            return false;
+        }
+        runner.join();
+        return true;
+    }
+}
+
+TEST(ThreadPool, WaitAllFromInsideAJobDoesNotDeadlock)
+{
+    ThreadPool *pool = new ThreadPool(1);
+    Atomic<int> done(0);
+    const bool ok = runs_within_ms(10000, [&] {
+        pool->submit([&] {
+            for (int i = 0; i < 10; ++i)
+                pool->submit([&] { done.fetch_add(1); });
+            pool->wait_all();
+            done.fetch_add(1);
+        });
+        pool->wait_all();
+    });
+    ASSERT_TRUE(ok) << "wait_all chamado de dentro de um job bloqueou";
+    EXPECT_EQ(done.load(), 11);
+    delete pool;
+}
+
+TEST(ThreadPool, NestedWaitAllWaitsForItsOwnChildren)
+{
+    ThreadPool *pool = new ThreadPool(2);
+    Atomic<int> children(0);
+    Atomic<int> seen_by_parent(0);
+    const bool ok = runs_within_ms(10000, [&] {
+        pool->submit([&] {
+            for (int i = 0; i < 50; ++i)
+                pool->submit([&] {
+                    Thread::yield();
+                    children.fetch_add(1);
+                });
+            pool->wait_all();
+            seen_by_parent.store(children.load());
+        });
+        pool->wait_all();
+    });
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(seen_by_parent.load(), 50);
+    delete pool;
+}
+
+TEST(ThreadPool, TwoThreadsWaitingAllAreBothWoken)
+{
+    ThreadPool *pool = new ThreadPool(1);
+    Mutex gate;
+    CondVar gate_cv;
+    bool open = false;
+    Atomic<int> released(0);
+    const bool ok = runs_within_ms(10000, [&] {
+        pool->submit([&] {
+            LockGuard g(gate);
+            while (!open)
+                gate_cv.wait(gate);
+        });
+        pool->submit([&] {
+            LockGuard g(gate);
+            while (!open)
+                gate_cv.wait(gate);
+        });
+        Thread a([&] {
+            pool->wait_all();
+            released.fetch_add(1);
+        });
+        Thread b([&] {
+            pool->wait_all();
+            released.fetch_add(1);
+        });
+        Thread::sleep_ms(50);
+        {
+            LockGuard g(gate);
+            open = true;
+        }
+        gate_cv.notify_all();
+        a.join();
+        b.join();
+    });
+    ASSERT_TRUE(ok) << "um dos wait_all nunca acordou";
+    EXPECT_EQ(released.load(), 2);
+    EXPECT_EQ(pool->pending(), 0u);
+    delete pool;
+}
+
+TEST(Atomic, PonteirosAvancamEmElementosENaoEmBytes)
+{
+    int values[16] = {};
+    Atomic<int *> p(values);
+    EXPECT_EQ(++p, values + 1);
+    EXPECT_EQ(p++, values + 1);
+    EXPECT_EQ(p.load(), values + 2);
+    EXPECT_EQ(p += 3, values + 5);
+    EXPECT_EQ(p -= 2, values + 3);
+    EXPECT_EQ(--p, values + 2);
+    EXPECT_EQ(p--, values + 2);
+    EXPECT_EQ(p.load(), values + 1);
+    struct Wide { char bytes[24]; } wide[8];
+    Atomic<Wide *> q(wide);
+    q += 5;
+    EXPECT_EQ(q.load(), wide + 5);
+    EXPECT_EQ(reinterpret_cast<char *>(q.load()) - reinterpret_cast<char *>(wide), 5 * 24);
+}
+
+TEST(Atomic, PonteirosSaoAtomicosEntreThreads)
+{
+    static int slots[40000];
+    Atomic<int *> cursor(slots);
+    ct::Vector<Thread> threads;
+    for (int i = 0; i < 4; ++i)
+        threads.emplace_back(Thread::Fn([&] {
+            for (int k = 0; k < 10000; ++k)
+                ++cursor;
+        }));
+    for (std::size_t i = 0; i < threads.size(); ++i)
+        threads[i].join();
+    EXPECT_EQ(cursor.load(), slots + 40000);
+}
+
+TEST(Thread, MoverUmaThreadNaoIniciadaNaoLeLixo)
+{
+    Thread idle;
+    Thread moved(std::move(idle));
+    EXPECT_FALSE(moved.joinable());
+    EXPECT_FALSE(idle.joinable());
+    Thread assigned;
+    assigned = std::move(moved);
+    EXPECT_FALSE(assigned.joinable());
+    Atomic<int> ran(0);
+    Thread live(Thread::Fn([&] { ran.store(1); }));
+    assigned = std::move(live);
+    EXPECT_TRUE(assigned.joinable());
+    assigned.join();
+    EXPECT_EQ(ran.load(), 1);
 }

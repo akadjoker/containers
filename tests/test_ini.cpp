@@ -99,3 +99,110 @@ TEST(Ini, FileSaveLoad)
 
     ct::File::remove(path);
 }
+
+TEST(Ini, GettersTipadosDevolvemFallbackParaValoresNaoNumericos)
+{
+    Ini ini = Ini::parse(
+        "[s]\n"
+        "texto=abc\n"
+        "hex=0x10\n"
+        "real=3.14\n"
+        "vazio=\n"
+        "grande=99999999999999999999\n"
+        "neg=-17\n");
+    EXPECT_EQ(ini.get_int("s", "texto", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "hex", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "real", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "vazio", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "grande", 42), 42);
+    EXPECT_EQ(ini.get_int("s", "neg", 42), -17);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "texto", 2.5), 2.5);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "vazio", 2.5), 2.5);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "real", 2.5), 3.14);
+    EXPECT_DOUBLE_EQ(ini.get_double("s", "neg", 2.5), -17.0);
+}
+
+TEST(Ini, CabecalhoSemFechoNaoRedirecionaChavesParaASeccaoAnterior)
+{
+    Ini ini = Ini::parse(
+        "[s]\n"
+        "a=1\n"
+        "[t\n"
+        "z=9\n"
+        "[\n"
+        "w=2\n");
+    EXPECT_EQ(ini.get("s", "a"), "1");
+    EXPECT_EQ(ini.get("s", "z", "ausente"), "ausente");
+    EXPECT_EQ(ini.get("t", "z"), "9");
+    EXPECT_EQ(ini.get("t", "w"), "2");
+}
+
+TEST(Ini, RoundTripPreservaValoresComEspacosSeparadoresEQuebrasDeLinha)
+{
+    const char *values[] = {"line1\nline2", "  padded  ", "a;b", "k=v", "x:y", "", "\"quoted\"", "back\\slash", "tab\there", "ends with space ", "#notacomment", "normal value"};
+    Ini ini;
+    for (std::size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    {
+        String key("v");
+        key.append_number(i);
+        ini.set("s", key.c_str(), values[i]);
+    }
+    String text = ini.dump();
+    Ini back = Ini::parse(text);
+    for (std::size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    {
+        String key("v");
+        key.append_number(i);
+        EXPECT_EQ(back.get("s", key), values[i]) << "valor " << i << " em\n" << text.c_str();
+    }
+    EXPECT_EQ(back.section("s")->entries.size(), sizeof(values) / sizeof(values[0]));
+    EXPECT_TRUE(Ini::parse(back.dump()).dump() == text);
+}
+
+TEST(Ini, ValoresEntreAspasAceitamComentarioNoFimEEscapes)
+{
+    Ini ini = Ini::parse(
+        "[s]\n"
+        "a = \"x ; y\" ; comentario\n"
+        "b = \"linha1\\nlinha2\\t\\\"fim\\\"\"\n"
+        "c = \"sem fecho\n"
+        "d = plain ; fica\n");
+    EXPECT_EQ(ini.get("s", "a"), "x ; y");
+    EXPECT_EQ(ini.get("s", "b"), "linha1\nlinha2\t\"fim\"");
+    EXPECT_EQ(ini.get("s", "c"), "\"sem fecho");
+    EXPECT_EQ(ini.get("s", "d"), "plain ; fica");
+}
+
+TEST(Ini, DoublesFazemRoundTripExacto)
+{
+    const double values[] = {3.141592653589793, 123456789.0, 0.1, 1e-7, 1e300, -2.5e-300, 1.0 / 3.0, 100.0, 0.0};
+    Ini ini;
+    for (std::size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    {
+        String key("d");
+        key.append_number(i);
+        ini.set("n", key.c_str(), values[i]);
+    }
+    EXPECT_EQ(ini.get("n", "d1"), "123456789");
+    EXPECT_EQ(ini.get("n", "d2"), "0.1");
+    EXPECT_EQ(ini.get("n", "d7"), "100");
+    Ini back = Ini::parse(ini.dump());
+    for (std::size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    {
+        String key("d");
+        key.append_number(i);
+        EXPECT_EQ(back.get_double("n", key, -1.0), values[i]) << "valor " << i;
+    }
+}
+
+TEST(Ini, ChavesESeccoesInvalidasSaoFatais)
+{
+    Ini ini;
+    EXPECT_DEATH(ini.set("s", "a=b", "1"), "");
+    EXPECT_DEATH(ini.set("s", "a:b", "1"), "");
+    EXPECT_DEATH(ini.set("s", "", "1"), "");
+    EXPECT_DEATH(ini.set("s", "a\nb", "1"), "");
+    EXPECT_DEATH(ini.set("x]y", "a", "1"), "");
+    ini.set("ok", "key with spaces", "1");
+    EXPECT_EQ(Ini::parse(ini.dump()).get("ok", "key with spaces"), "1");
+}

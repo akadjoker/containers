@@ -791,13 +791,29 @@ namespace ct
         return type_ == Bool ? v_.b : def;
     }
 
+    namespace detail
+    {
+        inline bool json_real_fits_int(double d) noexcept
+        {
+            return d == d && d >= -9223372036854775808.0 && d < 9223372036854775808.0;
+        }
+
+        inline bool json_real_fits_uint(double d) noexcept
+        {
+            return d == d && d >= 0.0 && d < 18446744073709551616.0;
+        }
+    }
+
     inline std::int64_t Json::as_int(std::int64_t def) const noexcept
     {
         switch (type_)
         {
         case Int: return v_.i;
-        case Uint: return static_cast<std::int64_t>(v_.u);
-        case Real: return static_cast<std::int64_t>(v_.d);
+        case Uint:
+            return v_.u <= static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())
+                       ? static_cast<std::int64_t>(v_.u)
+                       : def;
+        case Real: return detail::json_real_fits_int(v_.d) ? static_cast<std::int64_t>(v_.d) : def;
         default: return def;
         }
     }
@@ -806,9 +822,9 @@ namespace ct
     {
         switch (type_)
         {
-        case Int: return static_cast<std::uint64_t>(v_.i);
+        case Int: return v_.i >= 0 ? static_cast<std::uint64_t>(v_.i) : def;
         case Uint: return v_.u;
-        case Real: return static_cast<std::uint64_t>(v_.d);
+        case Real: return detail::json_real_fits_uint(v_.d) ? static_cast<std::uint64_t>(v_.d) : def;
         default: return def;
         }
     }
@@ -1079,12 +1095,19 @@ namespace ct
         {
             // objeto JSON não tem ordem: compara por chave, não por posição
             const Object &a = *v_.o;
-            if (a.size() != o.v_.o->size())
+            const Object &b = *o.v_.o;
+            if (a.size() != b.size())
                 return false;
             for (std::size_t i = 0; i < a.size(); ++i)
             {
-                const Json *other = o.find(a[i].key.c_str());
+                const Json *other = o.find(a[i].key);
                 if (!other || !(a[i].value == *other))
+                    return false;
+            }
+            for (std::size_t i = 0; i < b.size(); ++i)
+            {
+                const Json *mine = find(b[i].key);
+                if (!mine || !(b[i].value == *mine))
                     return false;
             }
             return true;
@@ -1576,11 +1599,12 @@ namespace ct
         }
 
         detail::JsonParser ps(text, text + len);
-        // BOM UTF-8: aparece em ficheiros gerados no Windows e não é whitespace
+        std::size_t bom = 0;
         if (len >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
             static_cast<unsigned char>(text[1]) == 0xBB &&
             static_cast<unsigned char>(text[2]) == 0xBF)
-            ps.cur += 3;
+            bom = 3;
+        ps.cur += bom;
 
         Json root;
         if (ps.parse_value(root))
@@ -1599,14 +1623,14 @@ namespace ct
                 err->offset = off;
                 err->line = 1;
                 err->column = 1;
-                for (std::size_t i = 0; i < off && i < len; ++i)
+                for (std::size_t i = bom; i < off && i < len; ++i)
                 {
                     if (text[i] == '\n')
                     {
                         ++err->line;
                         err->column = 1;
                     }
-                    else
+                    else if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80)
                         ++err->column;
                 }
             }

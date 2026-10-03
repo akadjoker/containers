@@ -3,6 +3,10 @@
 
 #include <gtest/gtest.h>
 
+#include <cstring>
+#include <utility>
+#include <limits>
+
 using ct::String;
 using ct::Xml;
 
@@ -436,4 +440,145 @@ TEST(Xml, ParseFromCtString)
     Xml y = Xml::parse(s, &err);
     EXPECT_FALSE(static_cast<bool>(err));
     EXPECT_EQ(y.tag(), "root");
+}
+
+TEST(Xml, AttrIntEAttrUintNaoFazemOverflow)
+{
+    ct::Xml x = ct::Xml::parse(
+        "<a min='-9223372036854775808' max='9223372036854775807' over='9223372036854775808' "
+        "under='-9223372036854775809' huge='99999999999999999999' big='1e30' neg='-1e30' "
+        "umax='18446744073709551615' uover='18446744073709551616' ok='12.75'/>");
+    ASSERT_EQ(x.tag(), "a");
+    EXPECT_EQ(x.attr_int("min"), std::numeric_limits<std::int64_t>::min());
+    EXPECT_EQ(x.attr_int("max"), std::numeric_limits<std::int64_t>::max());
+    EXPECT_EQ(x.attr_int("over", -1), -1);
+    EXPECT_EQ(x.attr_int("under", -1), -1);
+    EXPECT_EQ(x.attr_int("huge", -1), -1);
+    EXPECT_EQ(x.attr_int("big", -1), -1);
+    EXPECT_EQ(x.attr_int("neg", -1), -1);
+    EXPECT_EQ(x.attr_int("ok"), 12);
+    EXPECT_EQ(x.attr_uint("umax"), std::numeric_limits<std::uint64_t>::max());
+    EXPECT_EQ(x.attr_uint("uover", 5u), 5u);
+    EXPECT_EQ(x.attr_uint("huge", 5u), 5u);
+    EXPECT_EQ(x.attr_uint("big", 5u), 5u);
+    EXPECT_EQ(x.attr_uint("ok"), 12u);
+}
+
+TEST(Xml, ErroDeStreamNaoApontaParaOStream)
+{
+    ct::Xml::Error error;
+    {
+        ct::FileStream closed;
+        ct::Xml x = ct::parse_xml(closed, &error);
+        EXPECT_TRUE(x.empty());
+    }
+    ASSERT_TRUE(error);
+    EXPECT_GT(std::strlen(error.message), 0u);
+}
+
+TEST(Xml, ColunaDoErroIgnoraBom)
+{
+    ct::Xml::Error err;
+    ct::Xml::parse("\xEF\xBB\xBF<a><b></a>", &err);
+    ASSERT_TRUE(err);
+    EXPECT_EQ(err.line, 1u);
+    EXPECT_LT(err.column, 12u);
+    ct::Xml::Error plain;
+    ct::Xml::parse("<a><b></a>", &plain);
+    ASSERT_TRUE(plain);
+    EXPECT_EQ(err.column, plain.column);
+}
+
+TEST(Xml, ConteudoMistoMantemAOrdemNoRoundTrip)
+{
+    const char *doc = "<p>Hello <b>bold</b> world <i>it</i>!</p>";
+    Xml x = parse_ok(doc);
+    EXPECT_EQ(x.text(), "Hello ");
+    ASSERT_EQ(x.size(), 2u);
+    EXPECT_EQ(x.children()[0].tag(), "b");
+    EXPECT_EQ(x.children()[0].text(), "bold");
+    EXPECT_EQ(x.children()[0].tail(), " world ");
+    EXPECT_EQ(x.children()[1].tail(), "!");
+    EXPECT_TRUE(x.has_mixed_content());
+    EXPECT_EQ(x.dump(), doc);
+    EXPECT_EQ(x.dump(2), doc);
+    Xml again = parse_ok(x.dump(2).c_str());
+    EXPECT_EQ(again.dump(), doc);
+    Xml copy = x;
+    EXPECT_EQ(copy.dump(), doc);
+    Xml moved = std::move(copy);
+    EXPECT_EQ(moved.dump(), doc);
+}
+
+TEST(Xml, ConteudoMistoComCdataEEntidadesEEspacosSoNoMeio)
+{
+    Xml x = parse_ok("<t>a &amp; <![CDATA[<raw>]]><e/> &lt;b<f/></t>");
+    EXPECT_EQ(x.text(), "a & <raw>");
+    EXPECT_EQ(x.children()[0].tail(), " <b");
+    EXPECT_TRUE(x.children()[1].tail().empty());
+    EXPECT_EQ(x.dump(), "<t>a &amp; &lt;raw&gt;<e/> &lt;b<f/></t>");
+    Xml only_ws = parse_ok("<r>\n  <a/>\n  <b/>\n</r>");
+    EXPECT_FALSE(only_ws.has_mixed_content());
+    EXPECT_TRUE(only_ws.children()[0].tail().empty());
+    EXPECT_EQ(only_ws.dump(2), "<r>\n  <a/>\n  <b/>\n</r>");
+}
+
+TEST(Xml, SetTailConstroiConteudoMisto)
+{
+    Xml p("p");
+    p.set_text("x ");
+    Xml b("b");
+    b.set_text("y");
+    b.set_tail(" z");
+    p.add_child(std::move(b));
+    EXPECT_EQ(p.dump(), "<p>x <b>y</b> z</p>");
+    Xml back = parse_ok(p.dump().c_str());
+    EXPECT_EQ(back.children()[0].tail(), " z");
+}
+
+TEST(Xml, AtributosRepetidosSaoErro)
+{
+    ct::Xml::Error err;
+    ct::Xml::parse("<a x='1' y='2' x='3'/>", &err);
+    ASSERT_TRUE(err);
+    EXPECT_STREQ(err.message, "atributo repetido");
+    EXPECT_EQ(err.column, 16u);
+    ct::Xml::Error ok;
+    ct::Xml x = ct::Xml::parse("<a x='1' y='2' z='3'><b x='1'/></a>", &ok);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(x.attr_int("z"), 3);
+}
+
+TEST(Xml, AtributosPrecisamDeEspacoEntreSi)
+{
+    ct::Xml::Error err;
+    ct::Xml::parse("<a x='1'y='2'/>", &err);
+    ASSERT_TRUE(err);
+    EXPECT_STREQ(err.message, "esperado espaco entre atributos");
+    ct::Xml::Error ok;
+    ct::Xml::parse("<a x='1' y='2'/>", &ok);
+    EXPECT_FALSE(ok);
+    ct::Xml::parse("<a x='1'\n\ty='2'></a>", &ok);
+    EXPECT_FALSE(ok);
+    ct::Xml::parse("<a x='1'/>", &ok);
+    EXPECT_FALSE(ok);
+    ct::Xml::parse("<a x='1'>t</a>", &ok);
+    EXPECT_FALSE(ok);
+}
+
+TEST(Xml, DoctypeComAspasEComentariosNoSubconjunto)
+{
+    ct::Xml::Error err;
+    ct::Xml a = ct::Xml::parse("<!DOCTYPE a SYSTEM \"x>y\"><a/>", &err);
+    EXPECT_FALSE(err);
+    EXPECT_EQ(a.tag(), "a");
+    ct::Xml b = ct::Xml::parse("<!DOCTYPE a PUBLIC 'p>q' \"s>t\" [ <!ENTITY e \"v>w\"> <!-- it's ] > --> ]><a/>", &err);
+    EXPECT_FALSE(err);
+    EXPECT_EQ(b.tag(), "a");
+    ct::Xml::parse("<!DOCTYPE a SYSTEM \"x><a/>", &err);
+    ASSERT_TRUE(err);
+    ct::Xml::Error plain;
+    ct::Xml c = ct::Xml::parse("<!DOCTYPE note [<!ELEMENT note (#PCDATA)>]><note>t</note>", &plain);
+    EXPECT_FALSE(plain);
+    EXPECT_EQ(c.text(), "t");
 }

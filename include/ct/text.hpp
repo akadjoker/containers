@@ -17,7 +17,14 @@ namespace ct
             while ((c = get()) != -1) { if (c == '\n') return true; if (c == '\r') { if (peek() == '\n') get(); return true; } out.append(1, static_cast<char>(c)); }
             return !out.empty();
         }
-        bool read_all(String &out) { out.clear(); char buf[4096]; for (;;) { std::size_t n = stream_.read(buf, sizeof(buf)); if (!n) break; out.append(buf, n); } return !stream_.error(); }
+        bool read_all(String &out)
+        {
+            out.clear(); init();
+            while (pending_begin_ < pending_end_) out.append(1, static_cast<char>(pending_[pending_begin_++]));
+            if (begin_ < end_) { out.append(buffer_ + begin_, end_ - begin_); begin_ = end_ = 0; }
+            for (;;) { std::size_t n = stream_.read(buffer_, sizeof(buffer_)); if (!n) break; out.append(buffer_, n); }
+            return !stream_.error();
+        }
         bool read_word(String &out)
         {
             out.clear(); int c; while ((c = get()) != -1 && std::isspace(static_cast<unsigned char>(c))) {}
@@ -55,9 +62,8 @@ namespace ct
         TextWriter &write(StringView text) { append(text.data(), text.size()); return *this; }
         TextWriter &write(char c) { append(&c, 1); return *this; }
         TextWriter &line(StringView text = "") { write(text); return write('\n'); }
-        TextWriter &number(long long value) { String text; text.append_number(value); return write(text); }
-        TextWriter &number(int value) { return number(static_cast<long long>(value)); }
-        TextWriter &number(unsigned value) { String text; text.append_number(value); return write(text); }
+        template <typename I, typename = typename detail::enable_if<std::is_integral<I>::value>::type>
+        TextWriter &number(I value) { String text; text.append_number(value); return write(text); }
         TextWriter &number(double value, int precision = 6) { String text; text.append_number(value, precision); return write(text); }
         TextWriter &fmt(const char *format, ...)
         {

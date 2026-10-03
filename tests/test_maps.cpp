@@ -1,12 +1,14 @@
 #include <ct/flatmap.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/hashset.hpp>
+#include <ct/slotmap.hpp>
 #include <ct/treemap.hpp>
 #include <ct/string.hpp>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <map>
 #include <string>
 #include <unordered_map>
@@ -692,4 +694,142 @@ TEST(HashSet, InsertWithInternalKeyDoesNotRehash)
     EXPECT_EQ(s.size(), 12u);
     EXPECT_EQ(s.capacity(), capacity);
     EXPECT_TRUE(s.contains(key));
+}
+
+namespace
+{
+    enum class Cor : std::uint8_t { Vermelho, Verde, Azul };
+    enum Antigo { A0 = -1, A1 = 7 };
+
+    struct Chave2
+    {
+        int a;
+        int b;
+        bool operator==(const Chave2 &o) const { return a == o.a && b == o.b; }
+    };
+    struct HashChave2
+    {
+        std::uint64_t operator()(const Chave2 &k) const
+        {
+            return ct::hash_combine(ct::Hash<int>()(k.a), ct::Hash<int>()(k.b));
+        }
+    };
+}
+
+TEST(HashKeys, FloatingPointBoolAndEnumKeys)
+{
+    ct::HashMap<double, int> d;
+    d.put(0.0, 1);
+    d.put(-0.0, 2);
+    d.put(1.5, 3);
+    EXPECT_EQ(d.size(), 2u);
+    EXPECT_EQ(*d.find(0.0), 2);
+    EXPECT_EQ(*d.find(-0.0), 2);
+    ct::HashMap<float, int> f;
+    for (int i = 0; i < 1000; ++i)
+        f.put(static_cast<float>(i) * 0.25f, i);
+    f.put(-0.0f, -1);
+    EXPECT_EQ(f.size(), 1000u);
+    EXPECT_EQ(*f.find(0.0f), -1);
+    EXPECT_EQ(*f.find(249.75f), 999);
+    EXPECT_EQ(f.find(0.1f), nullptr);
+    ct::HashMap<bool, int> b;
+    b.put(true, 1);
+    b.put(false, 0);
+    EXPECT_EQ(*b.find(true), 1);
+    EXPECT_EQ(*b.find(false), 0);
+    ct::HashMap<Cor, int> c;
+    c.put(Cor::Azul, 3);
+    c.put(Cor::Verde, 2);
+    EXPECT_EQ(*c.find(Cor::Azul), 3);
+    EXPECT_EQ(c.find(Cor::Vermelho), nullptr);
+    ct::HashSet<Antigo> s;
+    s.insert(A0);
+    s.insert(A1);
+    EXPECT_TRUE(s.contains(A0));
+    EXPECT_TRUE(s.contains(A1));
+    EXPECT_EQ(s.size(), 2u);
+    ct::HashMap<wchar_t, int> w;
+    w.put(L'x', 1);
+    EXPECT_EQ(*w.find(L'x'), 1);
+}
+
+TEST(HashKeys, HandleStringViewAndCompositeKeys)
+{
+    ct::SlotMap<int> slots;
+    ct::HashMap<ct::Handle<int>, int> by_handle;
+    ct::Vector<ct::Handle<int>> handles;
+    for (int i = 0; i < 500; ++i)
+    {
+        handles.push_back(slots.insert(i));
+        by_handle.put(handles.back(), i * 2);
+    }
+    for (int i = 0; i < 500; ++i)
+        EXPECT_EQ(*by_handle.find(handles[static_cast<std::size_t>(i)]), i * 2);
+    EXPECT_EQ(by_handle.find(ct::Handle<int>(3, 99)), nullptr);
+
+    const char text[] = "alpha beta gamma";
+    ct::HashMap<ct::StringView, int> views;
+    views.put(ct::StringView(text, 5), 1);
+    views.put(ct::StringView(text + 6, 4), 2);
+    EXPECT_EQ(*views.find(ct::StringView("alpha")), 1);
+    EXPECT_EQ(*views.find(ct::StringView("beta")), 2);
+    EXPECT_EQ(views.find(ct::StringView("gamma")), nullptr);
+
+    ct::HashMap<Chave2, int, HashChave2> composite;
+    for (int i = 0; i < 40; ++i)
+        for (int j = 0; j < 40; ++j)
+            composite.put(Chave2{i, j}, i * 100 + j);
+    EXPECT_EQ(composite.size(), 1600u);
+    EXPECT_EQ(*composite.find(Chave2{7, 9}), 709);
+    EXPECT_EQ(composite.find(Chave2{40, 0}), nullptr);
+    EXPECT_NE(ct::hash_combine(1, 2), ct::hash_combine(2, 1));
+}
+
+TEST(HashKeys, StringStringViewAndLiteralsHashTheSame)
+{
+    const char *samples[] = {"", "a", "uma string bem maior que o limite do SSO de vinte e tres"};
+    for (const char *sample : samples)
+    {
+        ct::String owned(sample);
+        const std::uint64_t expected = owned.hash();
+        EXPECT_EQ(ct::Hash<ct::String>()(owned), expected);
+        EXPECT_EQ(ct::Hash<ct::String>()(ct::StringView(sample)), expected);
+        EXPECT_EQ(ct::Hash<ct::String>()(sample), expected);
+        EXPECT_EQ(ct::Hash<ct::StringView>()(ct::StringView(sample)), expected);
+    }
+}
+
+TEST(HashKeys, TransparentLookupOfStringKeysWithoutBuildingStrings)
+{
+    ct::HashMap<ct::String, int> map;
+    const char *long_key = "uma chave bem maior que o limite do SSO de vinte e tres";
+    map.put(ct::String("curta"), 1);
+    map.put(ct::String(long_key), 2);
+    for (int i = 0; i < 200; ++i)
+        map.put(ct::String("k") + ct::String::number(i), i);
+    EXPECT_EQ(*map.find("curta"), 1);
+    EXPECT_EQ(*map.find(long_key), 2);
+    EXPECT_EQ(map.find(ct::StringView(long_key, 10)), nullptr);
+    EXPECT_EQ(*map.find(ct::StringView("k77")), 77);
+    EXPECT_TRUE(map.contains("k199"));
+    EXPECT_FALSE(map.contains("k200"));
+    EXPECT_FALSE(map.contains(ct::StringView("")));
+    const ct::HashMap<ct::String, int> &view = map;
+    EXPECT_EQ(*view.find("curta"), 1);
+    EXPECT_EQ(*view.find(ct::String("curta")), 1);
+    ct::HashMap<ct::String, int> empty;
+    EXPECT_EQ(empty.find("x"), nullptr);
+    EXPECT_FALSE(empty.contains("x"));
+
+    ct::HashSet<ct::String> set;
+    set.insert(ct::String("alpha"));
+    set.insert(ct::String(long_key));
+    EXPECT_TRUE(set.contains("alpha"));
+    EXPECT_TRUE(set.contains(long_key));
+    EXPECT_TRUE(set.contains(ct::StringView("alpha")));
+    EXPECT_FALSE(set.contains("beta"));
+    EXPECT_TRUE(set.contains(ct::String("alpha")));
+    ct::HashSet<ct::String> none;
+    EXPECT_FALSE(none.contains("alpha"));
 }

@@ -4,6 +4,9 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <ctime>
+#include <random>
+#include <vector>
 
 namespace
 {
@@ -103,4 +106,56 @@ TEST(RectPacker, InvalidPageLimitsProduceNoPages)
 {
     EXPECT_TRUE(Packer::pack_pages({{1, 1, 1}}, 0, 64).empty());
     EXPECT_TRUE(Packer::pack_pages({{1, 1, 1}}, 64, -1).empty());
+}
+
+TEST(RectPacker, FuzzNuncaSobrepoeEColocaCadaIdUmaVez)
+{
+    std::mt19937 rng(7);
+    for (int round = 0; round < 25; ++round)
+    {
+        const int count = 1 + static_cast<int>(rng() % 300);
+        const int32_t cap = 1 << (5 + rng() % 6);
+        const int32_t padding = static_cast<int32_t>(rng() % 3);
+        ct::Vector<Packer::Input> inputs;
+        for (int i = 0; i < count; ++i)
+            inputs.push_back({i, static_cast<int32_t>(1 + rng() % (cap / 2)), static_cast<int32_t>(1 + rng() % (cap / 2))});
+        const ct::Vector<Packer::Page> pages = Packer::pack_pages(inputs, cap, cap, padding);
+        std::vector<int> seen(static_cast<std::size_t>(count), 0);
+        for (const Packer::Page &page : pages)
+        {
+            expect_valid_page(page, padding);
+            EXPECT_LE(page.atlas_width, cap);
+            EXPECT_LE(page.atlas_height, cap);
+            for (const Packer::PlacedRect &rect : page.placed)
+            {
+                ASSERT_GE(rect.id, 0);
+                ASSERT_LT(rect.id, count);
+                ++seen[static_cast<std::size_t>(rect.id)];
+                EXPECT_EQ(rect.width, inputs[static_cast<std::size_t>(rect.id)].width);
+                EXPECT_EQ(rect.height, inputs[static_cast<std::size_t>(rect.id)].height);
+            }
+        }
+        for (int i = 0; i < count; ++i)
+        {
+            const bool fits = inputs[static_cast<std::size_t>(i)].width + padding <= cap && inputs[static_cast<std::size_t>(i)].height + padding <= cap;
+            EXPECT_EQ(seen[static_cast<std::size_t>(i)], fits ? 1 : 0) << "id " << i;
+        }
+    }
+}
+
+TEST(RectPacker, MilharesDeSpritesEmpacotamEmTempoRazoavel)
+{
+    std::mt19937 rng(1);
+    ct::Vector<Packer::Input> inputs;
+    for (int i = 0; i < 3000; ++i)
+        inputs.push_back({i, static_cast<int32_t>(8 + rng() % 120), static_cast<int32_t>(8 + rng() % 120)});
+    const clock_t start = std::clock();
+    const ct::Vector<Packer::Page> pages = Packer::pack_pages(inputs, 4096, 4096, 1);
+    const double seconds = double(std::clock() - start) / CLOCKS_PER_SEC;
+    ASSERT_FALSE(pages.empty());
+    std::size_t placed = 0;
+    for (const Packer::Page &page : pages)
+        placed += page.placed.size();
+    EXPECT_EQ(placed, 3000u);
+    EXPECT_LT(seconds, 10.0) << "3000 sprites a 4096 demoraram " << seconds << " s";
 }

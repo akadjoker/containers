@@ -41,6 +41,7 @@ namespace ct
         inline int socket_error() noexcept { return WSAGetLastError(); }
         inline void close_socket(SocketHandle s) noexcept { closesocket(s); }
         inline bool would_block(int e) noexcept { return e == WSAEWOULDBLOCK; }
+        inline bool interrupted(int e) noexcept { return e == WSAEINTR; }
         inline const char *socket_error_text(int) noexcept { return "Winsock error"; }
         struct NetInit { NetInit() noexcept { WSADATA d; WSAStartup(MAKEWORD(2, 2), &d); } ~NetInit() { WSACleanup(); } };
         inline void ensure_net() noexcept { static NetInit init; (void)init; }
@@ -50,12 +51,18 @@ namespace ct
         inline int socket_error() noexcept { return errno; }
         inline void close_socket(SocketHandle s) noexcept { ::close(s); }
         inline bool would_block(int e) noexcept { return e == EAGAIN || e == EWOULDBLOCK; }
+        inline bool interrupted(int e) noexcept { return e == EINTR; }
         inline const char *socket_error_text(int e) noexcept { return std::strerror(e); }
         inline void ensure_net() noexcept {}
 #endif
         inline void set_error(NetError *out, int code) noexcept
         {
             if (out) { out->code = code; out->message = socket_error_text(code); }
+        }
+        inline int io_chunk(std::size_t n) noexcept
+        {
+            const std::size_t limit = static_cast<std::size_t>((std::numeric_limits<int>::max)());
+            return static_cast<int>(n < limit ? n : limit);
         }
     }
 
@@ -165,7 +172,16 @@ namespace ct
 
     protected:
         explicit Socket(detail::SocketHandle fd) noexcept : fd_(fd), error_{"", 0} {}
-        bool open(int type, int family) noexcept { close(); fd_ = ::socket(family, type, 0); if (!valid()) { remember(); return false; } return true; }
+        static void no_sigpipe(detail::SocketHandle fd) noexcept
+        {
+#if defined(SO_NOSIGPIPE)
+            int one = 1;
+            setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, reinterpret_cast<const char *>(&one), sizeof(one));
+#else
+            (void)fd;
+#endif
+        }
+        bool open(int type, int family) noexcept { close(); fd_ = ::socket(family, type, 0); if (!valid()) { remember(); return false; } no_sigpipe(fd_); return true; }
         bool checked(int rc) noexcept { if (rc == 0) return true; remember(); return false; }
         void remember() noexcept { const int e = detail::socket_error(); error_ = {detail::socket_error_text(e), e}; }
         detail::SocketHandle fd_;
@@ -213,7 +229,13 @@ namespace ct
         {
             if (!a.valid() || !open(SOCK_STREAM, a.is_v6() ? AF_INET6 : AF_INET)) { if (err) *err = error_; return false; }
             if (timeout_ms) set_timeout_ms(timeout_ms, timeout_ms);
-            if (!checked(::connect(fd_, reinterpret_cast<const sockaddr *>(&a.storage_), a.len_))) { if (err) *err = error_; close(); return false; } return true;
+            int rc;
+            do
+            {
+                rc = ::connect(fd_, reinterpret_cast<const sockaddr *>(&a.storage_), a.len_);
+            } while (rc != 0 && detail::interrupted(detail::socket_error()));
+            if (!checked(rc)) { if (err) *err = error_; close(); return false; }
+            return true;
         }
         long send(const void *data, std::size_t n) noexcept
         {
@@ -222,9 +244,26 @@ namespace ct
 #else
             const int flags = 0;
 #endif
-            const auto r = ::send(fd_, static_cast<const char *>(data), static_cast<int>(n), flags); if (r < 0) remember(); return static_cast<long>(r);
+            const int chunk = detail::io_chunk(n);
+            for (;;)
+            {
+                const auto r = ::send(fd_, static_cast<const char *>(data), chunk, flags);
+                if (r >= 0) return static_cast<long>(r);
+                remember();
+                if (!detail::interrupted(error_.code)) return static_cast<long>(r);
+            }
         }
-        long recv(void *data, std::size_t n) noexcept { const auto r = ::recv(fd_, static_cast<char *>(data), static_cast<int>(n), 0); if (r < 0) remember(); return static_cast<long>(r); }
+        long recv(void *data, std::size_t n) noexcept
+        {
+            const int chunk = detail::io_chunk(n);
+            for (;;)
+            {
+                const auto r = ::recv(fd_, static_cast<char *>(data), chunk, 0);
+                if (r >= 0) return static_cast<long>(r);
+                remember();
+                if (!detail::interrupted(error_.code)) return static_cast<long>(r);
+            }
+        }
         bool send_all(StringView data) noexcept { std::size_t sent = 0; while (sent < data.size()) { long n = send(data.data() + sent, data.size() - sent); if (n <= 0) return false; sent += static_cast<std::size_t>(n); } return true; }
         bool recv_exact(void *data, std::size_t n) noexcept { std::size_t got = 0; while (got < n) { long r = recv(static_cast<char *>(data) + got, n - got); if (r <= 0) return false; got += static_cast<std::size_t>(r); } return true; }
         bool shutdown_write() noexcept { return checked(::shutdown(fd_,
@@ -237,14 +276,52 @@ namespace ct
         Address peer() const noexcept { Address a; a.len_ = sizeof(a.storage_); if (!valid() || getpeername(fd_, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_) != 0) a.len_ = 0; return a; }
     private: friend class TcpListener; explicit TcpStream(detail::SocketHandle fd) noexcept : Socket(fd) {};
     };
-    inline bool TcpListener::accept(TcpStream &out, Address *peer) noexcept { Address a; a.len_ = sizeof(a.storage_); detail::SocketHandle fd = ::accept(fd_, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_); if (fd == detail::invalid_socket) { remember(); return false; } out = TcpStream(fd); if (peer) *peer = a; return true; }
+    inline bool TcpListener::accept(TcpStream &out, Address *peer) noexcept
+    {
+        Address a;
+        detail::SocketHandle fd;
+        for (;;)
+        {
+            a.len_ = sizeof(a.storage_);
+            fd = ::accept(fd_, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_);
+            if (fd != detail::invalid_socket) break;
+            remember();
+            if (!detail::interrupted(error_.code)) return false;
+        }
+        no_sigpipe(fd);
+        out = TcpStream(fd);
+        if (peer) *peer = a;
+        return true;
+    }
 
     class UdpSocket : public Socket
     {
     public:
         bool bind(const Address &a, NetError *err = nullptr) noexcept { if (!a.valid() || !open(SOCK_DGRAM, a.is_v6() ? AF_INET6 : AF_INET) || !checked(::bind(fd_, reinterpret_cast<const sockaddr *>(&a.storage_), a.len_))) { if (err) *err = error_; return false; } return true; }
-        long send_to(const void *data, std::size_t n, const Address &to) noexcept { const auto r = ::sendto(fd_, static_cast<const char *>(data), static_cast<int>(n), 0, reinterpret_cast<const sockaddr *>(&to.storage_), to.len_); if (r < 0) remember(); return static_cast<long>(r); }
-        long recv_from(void *data, std::size_t n, Address *from = nullptr) noexcept { Address a; a.len_ = sizeof(a.storage_); const auto r = ::recvfrom(fd_, static_cast<char *>(data), static_cast<int>(n), 0, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_); if (r < 0) remember(); else if (from) *from = a; return static_cast<long>(r); }
+        long send_to(const void *data, std::size_t n, const Address &to) noexcept
+        {
+            const int chunk = detail::io_chunk(n);
+            for (;;)
+            {
+                const auto r = ::sendto(fd_, static_cast<const char *>(data), chunk, 0, reinterpret_cast<const sockaddr *>(&to.storage_), to.len_);
+                if (r >= 0) return static_cast<long>(r);
+                remember();
+                if (!detail::interrupted(error_.code)) return static_cast<long>(r);
+            }
+        }
+        long recv_from(void *data, std::size_t n, Address *from = nullptr) noexcept
+        {
+            const int chunk = detail::io_chunk(n);
+            for (;;)
+            {
+                Address a;
+                a.len_ = sizeof(a.storage_);
+                const auto r = ::recvfrom(fd_, static_cast<char *>(data), chunk, 0, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_);
+                if (r >= 0) { if (from) *from = a; return static_cast<long>(r); }
+                remember();
+                if (!detail::interrupted(error_.code)) return static_cast<long>(r);
+            }
+        }
         bool set_broadcast(bool enabled = true) noexcept { int v = enabled ? 1 : 0; return checked(setsockopt(fd_, SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char *>(&v), sizeof(v))); }
     };
 
@@ -263,11 +340,15 @@ namespace ct
             Vector<pollfd> p; p.resize(entries_.size());
 #endif
             for (std::size_t i = 0; i < entries_.size(); ++i) { p[i].fd = entries_[i].socket->fd_; p[i].events = static_cast<short>((entries_[i].events & Readable ? POLLIN : 0) | (entries_[i].events & Writable ? POLLOUT : 0)); p[i].revents = 0; entries_[i].ready = 0; }
+            int r;
+            do
+            {
 #if defined(_WIN32)
-            int r = WSAPoll(p.data(), static_cast<ULONG>(p.size()), static_cast<int>(timeout_ms));
+                r = WSAPoll(p.data(), static_cast<ULONG>(p.size()), static_cast<int>(timeout_ms));
 #else
-            int r = ::poll(p.data(), static_cast<nfds_t>(p.size()), static_cast<int>(timeout_ms));
+                r = ::poll(p.data(), static_cast<nfds_t>(p.size()), static_cast<int>(timeout_ms));
 #endif
+            } while (r < 0 && detail::interrupted(detail::socket_error()));
             if (r < 0) return -1;
             for (std::size_t i = 0; i < entries_.size(); ++i) { if (p[i].revents & (POLLIN | POLLHUP)) entries_[i].ready |= Readable; if (p[i].revents & POLLOUT) entries_[i].ready |= Writable; if (p[i].revents & (POLLERR | POLLNVAL)) entries_[i].ready |= Error; } return r;
         }

@@ -29,8 +29,14 @@ namespace ct
         template <typename D,
                   typename = typename detail::enable_if<
                       std::is_convertible<D *, T *>::value>::type>
-        Unique(Unique<D> &&o) noexcept : p_(o.release())
+        Unique(Unique<D> &&o) noexcept : p_(nullptr)
         {
+            static_assert(std::is_same<D, T>::value || std::has_virtual_destructor<T>::value,
+                          "ct::Unique: upcast exige destrutor virtual na base");
+            D *d = o.release();
+            p_ = d;
+            if (static_cast<const void *>(p_) != static_cast<const void *>(d))
+                detail::fatal("ct::Unique: upcast com ajuste de ponteiro (heranca multipla) nao e suportado");
         }
 
         Unique &operator=(Unique &&o) noexcept

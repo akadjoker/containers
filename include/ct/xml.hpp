@@ -83,6 +83,11 @@ namespace ct
         const String &text() const noexcept { return text_; }
         void set_text(String t) { text_ = detail::move(t); }
 
+        const String &tail() const noexcept { return tail_; }
+        void set_tail(String t) { tail_ = detail::move(t); }
+
+        bool has_mixed_content() const noexcept;
+
         String text_trimmed() const;
 
         const Children &children() const noexcept;
@@ -118,6 +123,7 @@ namespace ct
         Children *children_; 
 
         String text_;
+        String tail_;
 
         void ensure_children() { if (!children_) children_ = new_children(); }
 
@@ -147,6 +153,31 @@ namespace ct
         {
             const char *dp = std::localeconv()->decimal_point;
             return (dp && *dp) ? *dp : '.';
+        }
+
+        inline bool xml_parse_digits(const char *&p, std::uint64_t &mag)
+        {
+            bool fits = true;
+            mag = 0;
+            for (; xml_is_digit(*p); ++p)
+            {
+                const std::uint64_t digit = static_cast<std::uint64_t>(*p - '0');
+                if (mag > ((std::numeric_limits<std::uint64_t>::max)() - digit) / 10)
+                    fits = false;
+                else
+                    mag = mag * 10 + digit;
+            }
+            return fits;
+        }
+
+        inline bool xml_real_fits_int(double d) noexcept
+        {
+            return d == d && d >= -9223372036854775808.0 && d < 9223372036854775808.0;
+        }
+
+        inline bool xml_real_fits_uint(double d) noexcept
+        {
+            return d == d && d >= 0.0 && d < 18446744073709551616.0;
         }
 
         inline double xml_strtod_locale(const char *s)
@@ -183,18 +214,29 @@ namespace ct
         if (!detail::xml_is_digit(*p))
             return def;
         std::uint64_t mag = 0;
-        const char *digits_start = p;
-        for (; detail::xml_is_digit(*p); ++p)
-            mag = mag * 10 + static_cast<unsigned>(*p - '0');
+        const bool fits = detail::xml_parse_digits(p, mag);
         if (*p == '\0')
-            return neg ? -static_cast<std::int64_t>(mag) : static_cast<std::int64_t>(mag);
+        {
+            const std::uint64_t limit =
+                static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)());
+            if (!fits)
+                return def;
+            if (neg)
+            {
+                if (mag <= limit)
+                    return -static_cast<std::int64_t>(mag);
+                if (mag == limit + 1)
+                    return (std::numeric_limits<std::int64_t>::min)();
+                return def;
+            }
+            return mag <= limit ? static_cast<std::int64_t>(mag) : def;
+        }
         if (*p == '.' || *p == 'e' || *p == 'E')
         {
-
-            static_cast<void>(digits_start);
-            return static_cast<std::int64_t>(detail::xml_strtod_locale(v->c_str()));
+            const double d = detail::xml_strtod_locale(v->c_str());
+            return detail::xml_real_fits_int(d) ? static_cast<std::int64_t>(d) : def;
         }
-        return def; 
+        return def;
     }
 
     inline std::uint64_t Xml::attr_uint(const char *name, std::uint64_t def) const noexcept
@@ -208,12 +250,14 @@ namespace ct
         if (!detail::xml_is_digit(*p))
             return def;
         std::uint64_t mag = 0;
-        for (; detail::xml_is_digit(*p); ++p)
-            mag = mag * 10 + static_cast<unsigned>(*p - '0');
+        const bool fits = detail::xml_parse_digits(p, mag);
         if (*p == '\0')
-            return mag;
+            return fits ? mag : def;
         if (*p == '.' || *p == 'e' || *p == 'E')
-            return static_cast<std::uint64_t>(detail::xml_strtod_locale(v->c_str()));
+        {
+            const double d = detail::xml_strtod_locale(v->c_str());
+            return detail::xml_real_fits_uint(d) ? static_cast<std::uint64_t>(d) : def;
+        }
         return def;
     }
 
@@ -302,13 +346,13 @@ namespace ct
 
     inline Xml::Xml(const Xml &o)
         : tag_(o.tag_), attrs_(o.attrs_),
-          children_(o.children_ ? new_children(*o.children_) : nullptr), text_(o.text_)
+          children_(o.children_ ? new_children(*o.children_) : nullptr), text_(o.text_), tail_(o.tail_)
     {
     }
 
     inline Xml::Xml(Xml &&o) noexcept
         : tag_(detail::move(o.tag_)), attrs_(detail::move(o.attrs_)),
-          children_(o.children_), text_(detail::move(o.text_))
+          children_(o.children_), text_(detail::move(o.text_)), tail_(detail::move(o.tail_))
     {
         o.children_ = nullptr;
     }
@@ -320,6 +364,7 @@ namespace ct
             tag_ = o.tag_;
             attrs_ = o.attrs_;
             text_ = o.text_;
+            tail_ = o.tail_;
             Children *nc = o.children_ ? new_children(*o.children_) : nullptr;
             del_children(children_);
             children_ = nc;
@@ -334,11 +379,24 @@ namespace ct
             tag_ = detail::move(o.tag_);
             attrs_ = detail::move(o.attrs_);
             text_ = detail::move(o.text_);
+            tail_ = detail::move(o.tail_);
             del_children(children_);
             children_ = o.children_;
             o.children_ = nullptr;
         }
         return *this;
+    }
+
+    inline bool Xml::has_mixed_content() const noexcept
+    {
+        if (!children_ || children_->empty())
+            return false;
+        if (!text_.empty())
+            return true;
+        for (std::size_t i = 0; i < children_->size(); ++i)
+            if (!(*children_)[i].tail_.empty())
+                return true;
+        return false;
     }
 
     inline Xml::~Xml() { del_children(children_); }
@@ -508,12 +566,17 @@ namespace ct
         out.push_back('>');
         if (has_text)
             detail::xml_escape_text(out, text_.data(), text_.size());
+        const bool mixed = has_mixed_content();
         for (std::size_t i = 0; has_children && i < children_->size(); ++i)
         {
-            detail::xml_newline(out, indent, level + 1);
-            (*children_)[i].dump_impl(out, indent, level + 1);
+            const Xml &child = (*children_)[i];
+            if (!mixed)
+                detail::xml_newline(out, indent, level + 1);
+            child.dump_impl(out, indent, level + 1);
+            if (!child.tail_.empty())
+                detail::xml_escape_text(out, child.tail_.data(), child.tail_.size());
         }
-        if (has_children)
+        if (has_children && !mixed)
             detail::xml_newline(out, indent, level);
         out.append("</", 2);
         out.append(tag_.data(), tag_.size());
@@ -666,6 +729,23 @@ namespace ct
                     if (cur == last)
                         return fail("DOCTYPE sem fecho", start);
                     const char c = *cur;
+                    if (c == '"' || c == '\'')
+                    {
+                        const char *quote_start = cur;
+                        ++cur;
+                        while (cur != last && *cur != c)
+                            ++cur;
+                        if (cur == last)
+                            return fail("literal do DOCTYPE sem fecho", quote_start);
+                        ++cur;
+                        continue;
+                    }
+                    if (c == '<' && starts_with("<!--", 4))
+                    {
+                        if (!skip_comment())
+                            return false;
+                        continue;
+                    }
                     if (c == '[')
                         ++bracket;
                     else if (c == ']')
@@ -836,6 +916,13 @@ namespace ct
                 }
             }
 
+            static String &text_target(Xml &out)
+            {
+                if (out.children_ && !out.children_->empty())
+                    return out.children_->back().tail_;
+                return out.text_;
+            }
+
             bool parse_element(Xml &out, std::size_t depth)
             {
                 if (depth > Xml::kMaxDepth)
@@ -863,8 +950,12 @@ namespace ct
                         break;
                     }
                     Xml::Attribute a;
+                    const char *name_at = cur;
                     if (!read_name(a.name))
                         return false;
+                    for (std::size_t k = 0; k < out.attrs_.size(); ++k)
+                        if (out.attrs_[k].name == a.name)
+                            return fail("atributo repetido", name_at);
                     skip_ws();
                     if (cur == last || *cur != '=')
                         return fail("esperado '=' no atributo", cur);
@@ -877,6 +968,9 @@ namespace ct
                     if (!parse_attr_value(a.value, quote))
                         return false;
                     out.attrs_.push_back(detail::move(a));
+                    if (cur != last && *cur != '>' && *cur != '/' && *cur != ' ' && *cur != '\t' &&
+                        *cur != '\n' && *cur != '\r')
+                        return fail("esperado espaco entre atributos", cur);
                 }
 
                 for (;;)
@@ -885,7 +979,7 @@ namespace ct
                         return fail("elemento sem tag de fecho", cur);
                     if (*cur != '<')
                     {
-                        if (!parse_char_data(out.text_))
+                        if (!parse_char_data(text_target(out)))
                             return false;
                         continue;
                     }
@@ -903,8 +997,17 @@ namespace ct
                         if (close_name != out.tag_)
                             return fail("tag de fecho nao corresponde a abertura", close_at);
 
-                        if (out.children_ && xml_is_all_ws(out.text_))
-                            out.text_.clear();
+                        if (out.children_)
+                        {
+                            if (xml_is_all_ws(out.text_))
+                                out.text_.clear();
+                            for (std::size_t i = 0; i < out.children_->size(); ++i)
+                            {
+                                String &tail = (*out.children_)[i].tail_;
+                                if (xml_is_all_ws(tail))
+                                    tail.clear();
+                            }
+                        }
                         return true;
                     }
                     if (starts_with("<!--", 4))
@@ -922,7 +1025,7 @@ namespace ct
                             ++cur;
                         if (cur == last)
                             return fail("CDATA sem fecho ']]>'", start);
-                        out.text_.append(data, static_cast<std::size_t>(cur - data));
+                        text_target(out).append(data, static_cast<std::size_t>(cur - data));
                         cur += 3;
                         continue;
                     }
@@ -958,11 +1061,12 @@ namespace ct
         }
 
         detail::XmlParser ps(text, text + len);
-
+        std::size_t bom = 0;
         if (len >= 3 && static_cast<unsigned char>(text[0]) == 0xEF &&
             static_cast<unsigned char>(text[1]) == 0xBB &&
             static_cast<unsigned char>(text[2]) == 0xBF)
-            ps.cur += 3;
+            bom = 3;
+        ps.cur += bom;
 
         Xml root;
         if (ps.skip_misc())
@@ -985,14 +1089,14 @@ namespace ct
                 err->offset = off;
                 err->line = 1;
                 err->column = 1;
-                for (std::size_t i = 0; i < off && i < len; ++i)
+                for (std::size_t i = bom; i < off && i < len; ++i)
                 {
                     if (text[i] == '\n')
                     {
                         ++err->line;
                         err->column = 1;
                     }
-                    else
+                    else if ((static_cast<unsigned char>(text[i]) & 0xC0) != 0x80)
                         ++err->column;
                 }
             }

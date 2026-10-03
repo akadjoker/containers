@@ -792,3 +792,65 @@ TEST(Json, CenaRealDoRadion)
     if (ficheiros == 0)
         GTEST_SKIP() << "sem cenas do Radion a mao (usa CT_SCENE_JSON=<ficheiro>)";
 }
+
+TEST(Json, ErroDeStreamNaoApontaParaOStream)
+{
+    Json::Error error;
+    {
+        ct::FileStream closed;
+        Json value = ct::parse_json(closed, &error);
+        EXPECT_TRUE(value.is_null());
+    }
+    ASSERT_TRUE(error);
+    EXPECT_GT(std::strlen(error.message), 0u);
+    EXPECT_EQ(error.line, 1u);
+}
+
+TEST(Json, AsIntEAsUintDevolvemFallbackForaDaGama)
+{
+    EXPECT_EQ(Json(1e300).as_int(-7), -7);
+    EXPECT_EQ(Json(-1e300).as_int(-7), -7);
+    EXPECT_EQ(Json(std::numeric_limits<double>::quiet_NaN()).as_int(-7), -7);
+    EXPECT_EQ(Json(std::numeric_limits<double>::infinity()).as_uint(9), 9u);
+    EXPECT_EQ(Json(-1.5).as_uint(9), 9u);
+    EXPECT_EQ(Json(-1).as_uint(9), 9u);
+    EXPECT_EQ(Json(std::numeric_limits<std::uint64_t>::max()).as_int(-7), -7);
+    EXPECT_EQ(Json(9007199254740992.0).as_int(), 9007199254740992);
+    EXPECT_EQ(Json(-9223372036854775808.0).as_int(), std::numeric_limits<std::int64_t>::min());
+    EXPECT_EQ(Json(9223372036854775808.0).as_int(-7), -7);
+    EXPECT_EQ(Json(18446744073709551616.0).as_uint(9), 9u);
+    EXPECT_EQ(parse_ok("18446744073709551616").as_int(-7), -7);
+}
+
+TEST(Json, IgualdadeDeObjectosESimetricaEAceitaChavesComNul)
+{
+    Json a = parse_ok(R"({"a":1,"a":1})");
+    Json b = parse_ok(R"({"a":1,"b":1})");
+    EXPECT_FALSE(a == b);
+    EXPECT_FALSE(b == a);
+    Json k1 = parse_ok(R"({"a\u0000b":1})");
+    Json k2 = parse_ok(R"({"a\u0000b":1})");
+    Json k3 = parse_ok(R"({"a":1})");
+    EXPECT_TRUE(k1 == k1);
+    EXPECT_TRUE(k1 == k2);
+    EXPECT_FALSE(k1 == k3);
+    EXPECT_FALSE(k3 == k1);
+}
+
+TEST(Json, ColunaDoErroIgnoraBomEContaCodePoints)
+{
+    Json::Error err;
+    Json::parse("\xEF\xBB\xBF{x", &err);
+    ASSERT_TRUE(err);
+    EXPECT_EQ(err.line, 1u);
+    EXPECT_EQ(err.column, 2u);
+    Json::Error err2;
+    Json::parse("{\"\xC3\xA9\xC3\xA9\":x}", &err2);
+    ASSERT_TRUE(err2);
+    EXPECT_EQ(err2.column, 7u);
+    Json::Error err3;
+    Json::parse("{\n \"k\": ]", &err3);
+    ASSERT_TRUE(err3);
+    EXPECT_EQ(err3.line, 2u);
+    EXPECT_EQ(err3.column, 7u);
+}

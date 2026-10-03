@@ -244,3 +244,45 @@ TEST(Pool, DeallocateDePonteiroForaDoPoolEFatal)
     pool.deallocate(dentro);
     EXPECT_DEATH(pool.deallocate(dentro), "");
 }
+
+namespace
+{
+    struct AlocadorSimples
+    {
+        static int vivos;
+        void *allocate(std::size_t bytes, std::size_t align)
+        {
+            ++vivos;
+            void *p = nullptr;
+            if (posix_memalign(&p, align < sizeof(void *) ? sizeof(void *) : align, bytes))
+                std::abort();
+            return p;
+        }
+        void deallocate(void *p, std::size_t)
+        {
+            --vivos;
+            std::free(p);
+        }
+    };
+    int AlocadorSimples::vivos = 0;
+}
+
+TEST(Pool, FuncionaComAlocadorSoComAllocateEDeallocate)
+{
+    {
+        ct::Pool<int, AlocadorSimples> pool(4);
+        std::vector<int *> itens;
+        for (int i = 0; i < 200; ++i)
+            itens.push_back(pool.create(i));
+        for (int i = 0; i < 200; ++i)
+            EXPECT_EQ(*itens[i], i);
+        for (int *p : itens)
+            pool.destroy(p);
+        ct::Pool<int, AlocadorSimples> movido(std::move(pool));
+        EXPECT_EQ(movido.live(), 0u);
+        int *p = movido.create(5);
+        EXPECT_EQ(*p, 5);
+        movido.destroy(p);
+    }
+    EXPECT_EQ(AlocadorSimples::vivos, 0);
+}

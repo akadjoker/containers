@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 using ct::Ini;
 using ct::String;
 
@@ -139,7 +141,7 @@ TEST(Ini, CabecalhoSemFechoNaoRedirecionaChavesParaASeccaoAnterior)
 
 TEST(Ini, RoundTripPreservaValoresComEspacosSeparadoresEQuebrasDeLinha)
 {
-    const char *values[] = {"line1\nline2", "  padded  ", "a;b", "k=v", "x:y", "", "\"quoted\"", "back\\slash", "tab\there", "ends with space ", "#notacomment", "normal value"};
+    const char *values[] = {"line1\nline2", "  padded  ", "a;b", "k=v", "x:y", "", "\"quoted\"", "back\\slash", "tab\there", "ends with space ", "#notacomment", "normal value", "crlf\r\nlinha", "\vvert", "fim\f", "\"", "\"\"", "dois\n\nvazios\n", "C:\\dir\\novo"};
     Ini ini;
     for (std::size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
     {
@@ -159,18 +161,45 @@ TEST(Ini, RoundTripPreservaValoresComEspacosSeparadoresEQuebrasDeLinha)
     EXPECT_TRUE(Ini::parse(back.dump()).dump() == text);
 }
 
-TEST(Ini, ValoresEntreAspasAceitamComentarioNoFimEEscapes)
+TEST(Ini, ValoresComAspasDuplicadasEMultilinha)
 {
     Ini ini = Ini::parse(
         "[s]\n"
-        "a = \"x ; y\" ; comentario\n"
-        "b = \"linha1\\nlinha2\\t\\\"fim\\\"\"\n"
-        "c = \"sem fecho\n"
-        "d = plain ; fica\n");
+        "a = \"x ; y\"\n"
+        "b = \"diz \"\"ola\"\"\"\n"
+        "c = \"linha1\nlinha2\"   \n"
+        "d = after\n");
     EXPECT_EQ(ini.get("s", "a"), "x ; y");
-    EXPECT_EQ(ini.get("s", "b"), "linha1\nlinha2\t\"fim\"");
-    EXPECT_EQ(ini.get("s", "c"), "\"sem fecho");
-    EXPECT_EQ(ini.get("s", "d"), "plain ; fica");
+    EXPECT_EQ(ini.get("s", "b"), "diz \"ola\"");
+    EXPECT_EQ(ini.get("s", "c"), "linha1\nlinha2");
+    EXPECT_EQ(ini.get("s", "d"), "after");
+}
+
+TEST(Ini, FicheirosAntigosSemEscapesFicamIntactos)
+{
+    Ini ini = Ini::parse(
+        "[paths]\n"
+        "dir = C:\\users\\new\\tmp\n"
+        "cmd = \"quoted\" tail\n"
+        "inline = plain ; fica\n"
+        "open = \"sem fecho\n"
+        "next = 1\n"
+        "q = \"x\" ; nota\n");
+    EXPECT_EQ(ini.get("paths", "dir"), "C:\\users\\new\\tmp");
+    EXPECT_EQ(ini.get("paths", "cmd"), "\"quoted\" tail");
+    EXPECT_EQ(ini.get("paths", "inline"), "plain ; fica");
+    EXPECT_EQ(ini.get("paths", "open"), "\"sem fecho");
+    EXPECT_EQ(ini.get("paths", "next"), "1");
+    EXPECT_EQ(ini.get("paths", "q"), "\"x\" ; nota");
+}
+
+TEST(Ini, DoubleComTextoLongo)
+{
+    Ini ini;
+    ini.set("s", "k", String(80, '1'));
+    EXPECT_GT(ini.get_double("s", "k", -1.0), 1e70);
+    ini.set("s", "d", String("0.") + String(100, '3'));
+    EXPECT_NEAR(ini.get_double("s", "d", -1.0), 1.0 / 3.0, 1e-12);
 }
 
 TEST(Ini, DoublesFazemRoundTripExacto)
@@ -205,4 +234,41 @@ TEST(Ini, ChavesESeccoesInvalidasSaoFatais)
     EXPECT_DEATH(ini.set("x]y", "a", "1"), "");
     ini.set("ok", "key with spaces", "1");
     EXPECT_EQ(Ini::parse(ini.dump()).get("ok", "key with spaces"), "1");
+}
+
+TEST(Ini, RoundTripAleatorioComValoresDificeis)
+{
+    const char alphabet[] = {'a', 'b', ' ', '\t', '\n', '\r', '\v', '\f', '"', '\'', ';', '#', '=', ':', '\\', '[', ']', 'x'};
+    unsigned state = 12345u;
+    auto next = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return state >> 8;
+    };
+    for (int round = 0; round < 300; ++round)
+    {
+        Ini ini;
+        std::vector<String> values;
+        const int count = 1 + static_cast<int>(next() % 6);
+        for (int k = 0; k < count; ++k)
+        {
+            String value;
+            const unsigned length = next() % 12;
+            for (unsigned i = 0; i < length; ++i)
+                value.push_back(alphabet[next() % sizeof(alphabet)]);
+            values.push_back(value);
+            String key("k");
+            key.append_number(k);
+            ini.set("sec", key.c_str(), value);
+        }
+        String text = ini.dump();
+        Ini back = Ini::parse(text);
+        for (int k = 0; k < count; ++k)
+        {
+            String key("k");
+            key.append_number(k);
+            ASSERT_EQ(back.get("sec", key), values[static_cast<std::size_t>(k)]) << "ronda " << round << " chave " << k << "\n" << text.c_str();
+        }
+        ASSERT_EQ(back.section("sec")->entries.size(), static_cast<std::size_t>(count)) << text.c_str();
+        ASSERT_TRUE(Ini::parse(back.dump()).dump() == text);
+    }
 }

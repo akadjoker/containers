@@ -61,14 +61,14 @@ TEST(Binary, PrefixoDeTamanhoMaiorQueOStreamFalhaSemAlocar)
         ct::String out("lixo");
         EXPECT_FALSE(reader.string(out));
         EXPECT_FALSE(reader.ok());
-        EXPECT_LT(out.capacity(), 1024u);
+        EXPECT_LE(out.capacity(), 8192u);
     }
     {
         ct::MemoryStream memory(bytes, sizeof(bytes));
         ct::BinaryReader reader(memory);
         ct::Vector<std::uint8_t> out;
         EXPECT_FALSE(reader.bytes(out, 0xffffffffu));
-        EXPECT_LT(out.capacity(), 1024u);
+        EXPECT_LE(out.capacity(), 8192u);
     }
     {
         SoLeitura raw(bytes, sizeof(bytes));
@@ -76,7 +76,7 @@ TEST(Binary, PrefixoDeTamanhoMaiorQueOStreamFalhaSemAlocar)
         ct::String out;
         EXPECT_FALSE(reader.string(out));
         EXPECT_FALSE(reader.ok());
-        EXPECT_LT(out.capacity(), 128u * 1024u);
+        EXPECT_LE(out.capacity(), 8192u);
     }
 }
 
@@ -93,4 +93,93 @@ TEST(Binary, StringGrandeEmStreamNaoPosicionavel)
     ASSERT_TRUE(reader.string(out));
     EXPECT_EQ(out.size(), big.size());
     EXPECT_TRUE(out == big);
+}
+
+TEST(Binary, StringEmStreamSemSizeNemTellFunciona)
+{
+    ct::MemoryStream memory;
+    {
+        ct::BinaryWriter writer(memory);
+        writer.string("ola");
+        writer.u32(42);
+    }
+    ct::Vector<std::uint8_t> raw = memory.take();
+    SoLeitura stream(raw.data(), raw.size());
+    ct::BinaryReader reader(stream);
+    ct::String out;
+    ASSERT_TRUE(reader.string(out));
+    EXPECT_EQ(out, "ola");
+    EXPECT_EQ(reader.u32(), 42u);
+    EXPECT_TRUE(reader.ok());
+}
+
+namespace
+{
+    class ContaConsultas : public ct::MemoryStream
+    {
+    public:
+        ContaConsultas(const void *data, std::size_t n) : ct::MemoryStream(data, n), consultas(0) {}
+        std::int64_t tell() const override
+        {
+            ++consultas;
+            return ct::MemoryStream::tell();
+        }
+        std::int64_t size() const override
+        {
+            ++consultas;
+            return ct::MemoryStream::size();
+        }
+        mutable int consultas;
+    };
+}
+
+TEST(Binary, StringsCurtasNaoConsultamTamanhoNemPosicaoDoStream)
+{
+    ct::MemoryStream memory;
+    {
+        ct::BinaryWriter writer(memory);
+        for (int i = 0; i < 1000; ++i)
+            writer.string("abcdefgh");
+    }
+    ct::Vector<std::uint8_t> raw = memory.take();
+    ContaConsultas stream(raw.data(), raw.size());
+    ct::BinaryReader reader(stream);
+    ct::String out;
+    for (int i = 0; i < 1000; ++i)
+    {
+        ASSERT_TRUE(reader.string(out));
+        EXPECT_EQ(out.size(), 8u);
+    }
+    EXPECT_EQ(stream.consultas, 0);
+}
+
+TEST(Binary, ManyStringsRoundTripThroughFileStream)
+{
+    const char *path = "/tmp/ct_binary_many.bin";
+    {
+        ct::FileStream out(path, ct::FileStream::Write);
+        ct::BinaryWriter writer(out);
+        for (int i = 0; i < 5000; ++i)
+        {
+            ct::String s;
+            s.append_number(i);
+            s.append(ct::String(static_cast<std::size_t>(i % 70000), 'q'));
+            writer.string(s);
+        }
+        ASSERT_TRUE(writer.ok());
+    }
+    ct::FileStream in(path, ct::FileStream::Read);
+    ct::BinaryReader reader(in);
+    for (int i = 0; i < 5000; ++i)
+    {
+        ct::String s;
+        ASSERT_TRUE(reader.string(s)) << i;
+        ct::String expect;
+        expect.append_number(i);
+        expect.append(ct::String(static_cast<std::size_t>(i % 70000), 'q'));
+        ASSERT_TRUE(s == expect) << i;
+    }
+    ct::String extra;
+    EXPECT_FALSE(reader.string(extra));
+    ct::File::remove(path);
 }

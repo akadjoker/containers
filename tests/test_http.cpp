@@ -3,11 +3,14 @@
 #include <ct/http_server.hpp>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <string>
 #include <thread>
+#include <vector>
 
 #if !defined(_WIN32)
 #include <sys/stat.h>
@@ -156,6 +159,13 @@ TEST(HttpParser, DecodesPercentEncodedPathButKeepsQueryAndEncodedSlash)
     ct::HttpParser a; ASSERT_EQ(a.feed(ok, sizeof(ok) - 1, request), ct::HttpParser::Done);
     EXPECT_EQ(request.path, "/a b/../c%2Fd");
     EXPECT_EQ(request.query, "x=%20y");
+    const char lower[] = "GET /a%2fb%252Fc HTTP/1.1\r\n\r\n";
+    ct::HttpParser lo; ASSERT_EQ(lo.feed(lower, sizeof(lower) - 1, request), ct::HttpParser::Done);
+    EXPECT_EQ(request.path, "/a%2Fb%25" "2Fc");
+    const char ctl[] = "GET /a%0d%0aSet-Cookie:%20x%1b HTTP/1.1\r\n\r\n";
+    ct::HttpParser cc; EXPECT_EQ(cc.feed(ctl, sizeof(ctl) - 1, request), ct::HttpParser::Error);
+    const char del[] = "GET /a%7f HTTP/1.1\r\n\r\n";
+    ct::HttpParser dd; EXPECT_EQ(dd.feed(del, sizeof(del) - 1, request), ct::HttpParser::Error);
     const char bad_hex[] = "GET /a%zz HTTP/1.1\r\n\r\n";
     ct::HttpParser b; EXPECT_EQ(b.feed(bad_hex, sizeof(bad_hex) - 1, request), ct::HttpParser::Error);
     const char nul[] = "GET /a%00b HTTP/1.1\r\n\r\n";
@@ -410,4 +420,136 @@ TEST(HttpServer, IdleConnectionsAreClosedAndConnectionCountIsCapped)
     EXPECT_TRUE(ct::String(buffer, static_cast<std::size_t>(n)).ends_with("pong"));
     EXPECT_EQ(first.recv(buffer, sizeof(buffer)), 0) << "a ligacao inactiva devia ser fechada pelo idle timeout";
     server.stop(); loop.join();
+}
+
+TEST(HttpParser, MuitosChunksPequenosNumSoFeedNaoSaoQuadraticos)
+{
+    std::string message = "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n";
+    const int chunks = 200000;
+    for (int i = 0; i < chunks; ++i)
+        message += "1\r\nx\r\n";
+    message += "0\r\n\r\n";
+    ct::HttpParser parser(8 * 1024 * 1024, 16 * 1024);
+    ct::HttpRequest request;
+    const std::clock_t begin = std::clock();
+    ASSERT_EQ(parser.feed(message.data(), message.size(), request), ct::HttpParser::Done);
+    const double seconds = double(std::clock() - begin) / CLOCKS_PER_SEC;
+    EXPECT_EQ(request.body.size(), static_cast<std::size_t>(chunks));
+    EXPECT_LT(seconds, 5.0);
+}
+
+TEST(HttpParser, ResetNoMeioDeUmaMensagemMantemOsBytesRecebidos)
+{
+    ct::HttpParser parser;
+    ct::HttpRequest request;
+    const std::string first = "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n";
+    EXPECT_EQ(parser.feed(first.data(), first.size(), request), ct::HttpParser::NeedMore);
+    parser.reset();
+    EXPECT_EQ(parser.buffered(), first.size());
+    const std::string rest = "0\r\n\r\n";
+    ASSERT_EQ(parser.feed(rest.data(), rest.size(), request), ct::HttpParser::Done);
+    EXPECT_EQ(request.body, "abc");
+}
+
+TEST(HttpParser, ResetDepoisDeErroDescartaOQueEstavaNoBuffer)
+{
+    ct::HttpParser parser;
+    ct::HttpRequest request;
+    const std::string bad = "GET / HTTP/1.1\r\nContent-Length: x\r\n\r\nrest";
+    EXPECT_EQ(parser.feed(bad.data(), bad.size(), request), ct::HttpParser::Error);
+    parser.reset();
+    EXPECT_EQ(parser.buffered(), 0u);
+    const std::string good = "GET /ok HTTP/1.1\r\n\r\n";
+    ASSERT_EQ(parser.feed(good.data(), good.size(), request), ct::HttpParser::Done);
+    EXPECT_EQ(request.path, "/ok");
+}
+
+TEST(HttpParser, RespostasToleramTransferEncodingNaoChunkedEContentLengthComChunked)
+{
+    {
+        ct::HttpParser parser;
+        ct::HttpResponse response;
+        const std::string message = "HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nGZDATA";
+        ASSERT_EQ(parser.feed(message.data(), message.size(), response), ct::HttpParser::NeedMore);
+        ASSERT_EQ(parser.finish(response), ct::HttpParser::Done);
+        EXPECT_EQ(response.body, "GZDATA");
+    }
+    {
+        ct::HttpParser parser;
+        ct::HttpResponse response;
+        const std::string message = "HTTP/1.1 200 OK\r\nTransfer-Encoding: identity\r\n\r\nplain";
+        ASSERT_EQ(parser.feed(message.data(), message.size(), response), ct::HttpParser::NeedMore);
+        ASSERT_EQ(parser.finish(response), ct::HttpParser::Done);
+        EXPECT_EQ(response.body, "plain");
+    }
+    {
+        ct::HttpParser parser;
+        ct::HttpResponse response;
+        const std::string message = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n";
+        ASSERT_EQ(parser.feed(message.data(), message.size(), response), ct::HttpParser::Done);
+        EXPECT_EQ(response.body, "hello");
+    }
+}
+
+TEST(HttpParser, PedidosContinuamEstritosComTransferEncoding)
+{
+    ct::HttpRequest request;
+    const std::string both = "POST / HTTP/1.1\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n";
+    ct::HttpParser a;
+    EXPECT_EQ(a.feed(both.data(), both.size(), request), ct::HttpParser::Error);
+    const std::string gzip = "POST / HTTP/1.1\r\nTransfer-Encoding: gzip\r\n\r\n";
+    ct::HttpParser b;
+    EXPECT_EQ(b.feed(gzip.data(), gzip.size(), request), ct::HttpParser::Error);
+}
+
+TEST(HttpParser, MensagensEncadeadasPartidasEmQualquerFronteira)
+{
+    const std::string message =
+        "POST /a%20b HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n3;ext=1\r\nabc\r\n0\r\n\r\n"
+        "GET /two HTTP/1.1\r\nContent-Length: 3\r\n\r\nxyz"
+        "GET /three HTTP/1.1\r\n\r\n";
+    for (std::size_t step = 1; step <= message.size(); ++step)
+    {
+        ct::HttpParser parser;
+        std::vector<std::string> seen;
+        ct::HttpRequest request;
+        for (std::size_t i = 0; i < message.size(); i += step)
+        {
+            const std::size_t n = (std::min)(step, message.size() - i);
+            ct::HttpParser::State state = parser.feed(message.data() + i, n, request);
+            while (state == ct::HttpParser::Done)
+            {
+                seen.push_back(std::string(request.path.c_str()) + "|" + std::string(request.body.data(), request.body.size()));
+                parser.reset();
+                request = ct::HttpRequest();
+                state = parser.feed(nullptr, 0, request);
+            }
+            ASSERT_NE(state, ct::HttpParser::Error) << "passo " << step << ": " << parser.error();
+        }
+        ASSERT_EQ(seen.size(), 3u) << "passo " << step;
+        EXPECT_EQ(seen[0], "/a b|helloabc");
+        EXPECT_EQ(seen[1], "/two|xyz");
+        EXPECT_EQ(seen[2], "/three|");
+    }
+}
+
+TEST(HttpParser, ResetEmQualquerPontoDeUmCorpoChunkedNaoPerdeBytes)
+{
+    const std::string message =
+        "POST / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n2\r\nef\r\n0\r\n\r\n";
+    for (std::size_t cut = 1; cut < message.size(); ++cut)
+    {
+        ct::HttpParser parser;
+        ct::HttpRequest request;
+        ct::HttpParser::State state = parser.feed(message.data(), cut, request);
+        if (state == ct::HttpParser::Error)
+            FAIL() << "erro antes do reset em " << cut;
+        if (state == ct::HttpParser::NeedMore)
+        {
+            parser.reset();
+            state = parser.feed(message.data() + cut, message.size() - cut, request);
+        }
+        ASSERT_EQ(state, ct::HttpParser::Done) << "corte " << cut;
+        EXPECT_EQ(request.body, "abcdef") << "corte " << cut;
+    }
 }

@@ -62,7 +62,7 @@ namespace ct
         TextWriter &write(StringView text) { append(text.data(), text.size()); return *this; }
         TextWriter &write(char c) { append(&c, 1); return *this; }
         TextWriter &line(StringView text = "") { write(text); return write('\n'); }
-        template <typename I, typename = typename detail::enable_if<std::is_integral<I>::value>::type>
+        template <typename I, typename = typename detail::enable_if<std::is_integral<I>::value || std::is_enum<I>::value>::type>
         TextWriter &number(I value) { String text; text.append_number(value); return write(text); }
         TextWriter &number(double value, int precision = 6) { String text; text.append_number(value, precision); return write(text); }
         TextWriter &fmt(const char *format, ...)

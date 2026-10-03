@@ -473,3 +473,41 @@ TEST(StringMisc, IteradoresInversosFuncionamComStd)
     EXPECT_EQ(*(v.rbegin() + 1), 2);
     EXPECT_EQ(v.rbegin()[2], 3);
 }
+
+namespace
+{
+    enum class Nivel : short
+    {
+        Baixo = -3,
+        Alto = 7
+    };
+    enum Antigo
+    {
+        Um = 1,
+        Dois
+    };
+}
+
+TEST(String, NumberAceitaEnums)
+{
+    EXPECT_EQ(ct::String::number(Nivel::Baixo), "-3");
+    EXPECT_EQ(ct::String::number(Nivel::Alto), "7");
+    EXPECT_EQ(ct::String::number(Dois), "2");
+    ct::String s;
+    s.append_number(Um);
+    s.append_number(Nivel::Alto);
+    EXPECT_EQ(s, "17");
+}
+
+TEST(String, NposTemTipoSizeTEPodeSerLidoPorValorEReferencia)
+{
+    ct::String s("hello");
+    auto pos = ct::String::npos;
+    static_assert(std::is_same<decltype(pos), std::size_t>::value, "npos e size_t");
+    pos = s.find("l");
+    EXPECT_EQ(pos, 2u);
+    const std::size_t &ref = ct::String::npos;
+    EXPECT_EQ(ref, static_cast<std::size_t>(-1));
+    EXPECT_EQ((std::min)(ct::String::npos, std::size_t(5)), 5u);
+    EXPECT_EQ(s.find("z"), ct::String::npos);
+}

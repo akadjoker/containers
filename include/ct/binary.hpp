@@ -32,7 +32,7 @@ namespace ct
         bool ok() const noexcept { return ok_; }
         Stream &stream() noexcept { return stream_; }
     private:
-        static constexpr std::size_t kSizedChunk = 64 * 1024;
+        static constexpr std::size_t kSizedFirstChunk = 4096;
 
         template <typename C>
         bool sized(C &out, std::size_t n)
@@ -40,23 +40,11 @@ namespace ct
             out.clear();
             if (!ok_)
                 return false;
-            if (stream_.can_seek())
-            {
-                const std::int64_t total = stream_.size();
-                const std::int64_t here = stream_.tell();
-                if (total < 0 || here < 0 || here > total ||
-                    static_cast<std::uint64_t>(total - here) < n)
-                {
-                    ok_ = false;
-                    return false;
-                }
-                out.resize(n);
-                return bytes(out.data(), n);
-            }
             while (n)
             {
-                const std::size_t part = n < kSizedChunk ? n : kSizedChunk;
                 const std::size_t have = out.size();
+                const std::size_t step = have > kSizedFirstChunk ? have : kSizedFirstChunk;
+                const std::size_t part = n < step ? n : step;
                 out.resize(have + part);
                 if (!bytes(out.data() + have, part))
                 {

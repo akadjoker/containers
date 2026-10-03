@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 
@@ -133,4 +134,58 @@ TEST(Stream, FileSizeNaoLimpaEof)
     EXPECT_EQ(f.read(buf, 8), 0u);
     f.close();
     EXPECT_TRUE(ct::File::remove(path));
+}
+
+TEST(Stream, SubstreamAcompanhaBaseQueCresce)
+{
+    ct::MemoryStream base;
+    ASSERT_TRUE(base.write_all("abc", 3));
+    ct::SubStream sub(base, 0, 100);
+    char buf[16] = {};
+    EXPECT_EQ(sub.read(buf, sizeof(buf)), 3u);
+    EXPECT_EQ(std::memcmp(buf, "abc", 3), 0);
+    EXPECT_TRUE(sub.eof());
+    EXPECT_EQ(sub.size(), 3);
+    EXPECT_EQ(sub.read(buf, sizeof(buf)), 0u);
+    EXPECT_EQ(sub.error(), nullptr);
+    ASSERT_TRUE(base.seek(0, ct::Seek::End));
+    ASSERT_TRUE(base.write_all("defg", 4));
+    EXPECT_EQ(sub.size(), 7);
+    EXPECT_FALSE(sub.eof());
+    EXPECT_EQ(sub.read(buf, sizeof(buf)), 4u);
+    EXPECT_EQ(std::memcmp(buf, "defg", 4), 0);
+    EXPECT_EQ(sub.error(), nullptr);
+}
+
+TEST(Stream, SubstreamComOffsetAlemDaBaseEFimSemErro)
+{
+    ct::MemoryStream base;
+    ASSERT_TRUE(base.write_all("abc", 3));
+    ct::SubStream sub(base, 10, 5);
+    char c;
+    EXPECT_EQ(sub.read(&c, 1), 0u);
+    EXPECT_EQ(sub.error(), nullptr);
+    EXPECT_TRUE(sub.eof());
+}
+
+TEST(Stream, SubstreamSobreFicheiroQueCresce)
+{
+    const char *path = "/tmp/ct_substream_grow.bin";
+    ASSERT_TRUE(ct::File::write_all(path, "abc", 3));
+    ct::FileStream reader(path, ct::FileStream::Read);
+    ASSERT_TRUE(reader.is_open());
+    ct::SubStream sub(reader, 0, 100);
+    char buf[16] = {};
+    EXPECT_EQ(sub.read(buf, sizeof(buf)), 3u);
+    {
+        std::FILE *f = std::fopen(path, "ab");
+        ASSERT_NE(f, nullptr);
+        std::fwrite("defg", 1, 4, f);
+        std::fclose(f);
+    }
+    std::memset(buf, 0, sizeof(buf));
+    EXPECT_EQ(sub.read(buf, sizeof(buf)), 4u);
+    EXPECT_EQ(std::memcmp(buf, "defg", 4), 0);
+    EXPECT_EQ(sub.size(), 7);
+    ct::File::remove(path);
 }

@@ -73,8 +73,9 @@ namespace ct
                 const int hi = http_hex_digit(in[i + 1]), lo = http_hex_digit(in[i + 2]);
                 if (hi < 0 || lo < 0) return false;
                 const char decoded = static_cast<char>(hi * 16 + lo);
-                if (decoded == '\0') return false;
-                if (decoded == '/') { out.append(in.data() + i, 3); i += 2; continue; }
+                if (static_cast<unsigned char>(decoded) < 0x20 || decoded == 0x7f) return false;
+                if (decoded == '/') { out.append("%2F", 3); i += 2; continue; }
+                if (decoded == '%') { out.append("%25", 3); i += 2; continue; }
                 out.push_back(decoded);
                 i += 2;
             }
@@ -158,7 +159,9 @@ namespace ct
         State finish(HttpResponse &out) { return state_ == NeedMore ? response(out, true) : state_; }
         void reset()
         {
-            if (consumed_ <= data_.size()) data_.erase(0, consumed_); else data_.clear();
+            if (state_ == Done && consumed_ <= data_.size()) data_.erase(0, consumed_);
+            else if (state_ == Error) data_.clear();
+            else if (head_done_ && head_.chunked && !decoded_.empty()) restore_decoded_chunks();
             state_ = NeedMore; consumed_ = 0; error_ = nullptr;
             head_done_ = false; blank_scan_ = 0; chunk_at_ = 0; decoded_.clear();
             request_ = HttpRequest(); response_ = HttpResponse();
@@ -170,6 +173,24 @@ namespace ct
     private:
         struct Head { std::size_t body, length; bool chunked, has_length; };
         bool fail(const char *s) { state_ = Error; error_ = s; return false; }
+        void compact_chunks()
+        {
+            if (chunk_at_ <= head_.body) return;
+            data_.erase(head_.body, chunk_at_ - head_.body);
+            chunk_at_ = head_.body;
+        }
+        void restore_decoded_chunks()
+        {
+            char digits[2 * sizeof(std::size_t) + 3];
+            std::size_t n = 0;
+            for (std::size_t v = decoded_.size(); v; v >>= 4) digits[n++] = "0123456789abcdef"[v & 15];
+            String chunk;
+            while (n) chunk.push_back(digits[--n]);
+            chunk.append("\r\n");
+            chunk.append(decoded_);
+            chunk.append("\r\n");
+            data_.insert(head_.body, chunk);
+        }
         bool append(const char *p, std::size_t n)
         {
             if (state_ == Error) return false;
@@ -197,16 +218,18 @@ namespace ct
             if (data_.size() > max_headers_) fail(too_long);
             return false;
         }
-        bool headers(std::size_t at, Vector<HttpHeader> &out, Head &head)
+        bool headers(std::size_t at, Vector<HttpHeader> &out, Head &head, bool strict)
         {
             out.clear(); head.length = 0; head.chunked = false; head.has_length = false;
+            bool has_encoding = false;
             for (;;)
             {
                 std::size_t end = crlf(at);
                 if (end == String::npos) return fail("malformed HTTP headers");
                 if (end == at)
                 {
-                    if (head.has_length && head.chunked) return fail("Content-Length with Transfer-Encoding");
+                    if (strict && head.has_length && head.chunked) return fail("Content-Length with Transfer-Encoding");
+                    if (has_encoding) head.has_length = false;
                     head.body = end + 2;
                     return true;
                 }
@@ -229,8 +252,16 @@ namespace ct
                 }
                 if (detail::http_iequal(name, "Transfer-Encoding"))
                 {
-                    if (head.chunked || !detail::http_last_token_is(value, "chunked")) return fail("unsupported Transfer-Encoding");
-                    head.chunked = true;
+                    if (strict)
+                    {
+                        if (head.chunked || !detail::http_last_token_is(value, "chunked")) return fail("unsupported Transfer-Encoding");
+                        head.chunked = true;
+                    }
+                    else
+                    {
+                        has_encoding = true;
+                        head.chunked = detail::http_last_token_is(value, "chunked");
+                    }
                 }
                 at = end + 2;
             }
@@ -245,7 +276,7 @@ namespace ct
             for (;;)
             {
                 std::size_t end = crlf(chunk_at_);
-                if (end == String::npos) { if (data_.size() - chunk_at_ > kMaxChunkLine) return fail("invalid chunk size"), Error; return NeedMore; }
+                if (end == String::npos) { if (data_.size() - chunk_at_ > kMaxChunkLine) return fail("invalid chunk size"), Error; compact_chunks(); return NeedMore; }
                 if (end - chunk_at_ > kMaxChunkLine) return fail("invalid chunk size"), Error;
                 std::size_t size = 0, digits = 0;
                 for (std::size_t i = chunk_at_; i < end && data_[i] != ';'; ++i)
@@ -260,15 +291,15 @@ namespace ct
                 std::size_t at = end + 2;
                 if (!size)
                 {
-                    if (data_.size() < at + 2) return NeedMore;
+                    if (data_.size() < at + 2) { compact_chunks(); return NeedMore; }
                     if (data_[at] != '\r' || data_[at + 1] != '\n') return fail("chunk trailers are not supported"), Error;
                     out = detail::move(decoded_); decoded_.clear(); consumed_ = at + 2; state_ = Done; return Done;
                 }
                 if (decoded_.size() > max_body_ - size) return fail("HTTP body exceeds limit"), Error;
-                if (data_.size() < at + size + 2) return NeedMore;
+                if (data_.size() < at + size + 2) { compact_chunks(); return NeedMore; }
                 if (data_[at + size] != '\r' || data_[at + size + 1] != '\n') return fail("malformed HTTP chunk"), Error;
                 decoded_.append(data_.data() + at, size);
-                data_.erase(chunk_at_, at + size + 2 - chunk_at_);
+                chunk_at_ = at + size + 2;
             }
         }
         State request(HttpRequest &out)
@@ -285,7 +316,7 @@ namespace ct
                 if (q != StringView::npos) value.query.assign(target.data() + q + 1, target.size() - q - 1);
                 if (!detail::http_percent_decode_path(raw_path, value.path)) return fail("invalid percent-encoding in request path"), Error;
                 value.version.assign(data_.data() + b + 1, end - b - 1); if (value.version != "HTTP/1.0" && value.version != "HTTP/1.1") return fail("unsupported HTTP version"), Error;
-                if (!headers(end + 2, value.headers, head_)) return state_;
+                if (!headers(end + 2, value.headers, head_, true)) return state_;
                 request_ = detail::move(value); head_done_ = true; chunk_at_ = head_.body; decoded_.clear();
             }
             State result = body(request_.body); if (result == Done) out = detail::move(request_); return result;
@@ -302,7 +333,7 @@ namespace ct
                 for (std::size_t i = a + 1; i < a + 4; ++i) if (data_[i] < '0' || data_[i] > '9') return fail("invalid HTTP status"), Error;
                 value.status = (data_[a + 1] - '0') * 100 + (data_[a + 2] - '0') * 10 + data_[a + 3] - '0';
                 if (a + 4 < end) { if (data_[a + 4] != ' ') return fail("malformed status line"), Error; value.reason.assign(data_.data() + a + 5, end - a - 5); }
-                if (!headers(end + 2, value.headers, head_)) return state_;
+                if (!headers(end + 2, value.headers, head_, false)) return state_;
                 response_ = detail::move(value); head_done_ = true; chunk_at_ = head_.body; decoded_.clear();
                 const bool no_body = head_response_ || (response_.status >= 100 && response_.status < 200) || response_.status == 204 || response_.status == 304;
                 if (no_body) { consumed_ = head_.body; state_ = Done; out = detail::move(response_); return Done; }

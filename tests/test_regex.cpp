@@ -351,14 +351,15 @@ TEST(Regex, ContadorDeRepeticaoDemasiadoGrandeEErro)
     EXPECT_TRUE(static_cast<bool>(ok));
 }
 
-TEST(Regex, LookBehindComLarguraEnormeNaoFazOverflow)
+TEST(Regex, LookBehindComLarguraEnormeSaturaEmVezDeFazerOverflow)
 {
     Regex::Error err;
     Regex re = Regex::compile("(?<=(?:ab){2000000000})x", 0, &err);
-    EXPECT_FALSE(static_cast<bool>(re));
-    EXPECT_NE(err.message, nullptr);
+    ASSERT_TRUE(static_cast<bool>(re));
+    EXPECT_FALSE(re.search("abababx"));
     Regex nested = Regex::compile("(?<=(?:(?:ab){70000}){70000})x", 0, &err);
-    EXPECT_FALSE(static_cast<bool>(nested));
+    ASSERT_TRUE(static_cast<bool>(nested));
+    EXPECT_FALSE(nested.search("abababx"));
 }
 
 TEST(Regex, RepeticoesContadasAninhadasCompilamEmTempoLinear)
@@ -443,4 +444,69 @@ TEST(Regex, AlternanciaDeUmSoCaracterEquivaleAUmaClasse)
     ASSERT_TRUE(captured.fullmatch("abba", &m));
     EXPECT_EQ(m.start(1), 3u);
     EXPECT_EQ(m.end(1), 4u);
+}
+
+TEST(Regex, SearchComecaEmBytesDeContinuacaoSoltos)
+{
+    Match m;
+    Regex high = Regex::compile("[\\x80-\\xff]");
+    ASSERT_TRUE(high.search("\x80", &m));
+    EXPECT_EQ(m.start(), 0u);
+    EXPECT_EQ(m.end(), 1u);
+    EXPECT_EQ(high.finditer("\x80").size(), 1u);
+    Regex nonword = Regex::compile("\\W");
+    ASSERT_TRUE(nonword.search("\x80", &m));
+    EXPECT_EQ(m.start(), 0u);
+    Regex not_a = Regex::compile("[^a]");
+    ASSERT_TRUE(not_a.search("a\x80", &m));
+    EXPECT_EQ(m.start(), 1u);
+    EXPECT_EQ(m.end(), 2u);
+    EXPECT_EQ(Regex::compile("x*").sub("\x80\x80", "-"), String("-\x80-\x80-"));
+    EXPECT_EQ(Regex::compile("[\\x80-\\xff]").split("\xe2\x82").size(), 3u);
+    Regex any = Regex::compile(".");
+    EXPECT_EQ(any.finditer("\xc3\xa9").size(), 1u);
+    EXPECT_EQ(Regex::compile("x*").sub("\xc3\xa9", "-"), String("-\xc3\xa9-"));
+}
+
+TEST(Regex, FinditerComPosAlemDoFimEncostaAoFim)
+{
+    Regex end = Regex::compile("$");
+    Match m;
+    ASSERT_TRUE(end.search("abc", &m, 10));
+    EXPECT_EQ(m.start(), 3u);
+    ct::Vector<Match> all = end.finditer("abc", 10);
+    ASSERT_EQ(all.size(), 1u);
+    EXPECT_EQ(all[0].start(), 3u);
+    EXPECT_EQ(end.findall("abc", 10).size(), 1u);
+}
+
+TEST(Regex, LargurasDeLookBehindSomadasNaoFazemOverflow)
+{
+    Regex a = Regex::compile("(?<=a{2147483647}a)b");
+    EXPECT_FALSE(a.search("aab"));
+    Regex b = Regex::compile("(?<=(?:aa){1073741824})b");
+    EXPECT_FALSE(b.search("aab"));
+    Regex c = Regex::compile("(?<!a{2147483647}a)b");
+    EXPECT_TRUE(c.search("aab"));
+}
+
+TEST(Regex, MuitosGruposNaoPenalizamPosicoesOndeNadaFoiCapturado)
+{
+    String pattern = ".z";
+    for (int i = 0; i < 20000; ++i)
+        pattern += "()";
+    Regex re = Regex::compile(pattern);
+    ASSERT_TRUE(static_cast<bool>(re));
+    std::string text(200000, 'a');
+    const std::clock_t begin = std::clock();
+    EXPECT_FALSE(re.search(StringView(text.data(), text.size())));
+    const double seconds = double(std::clock() - begin) / CLOCKS_PER_SEC;
+    EXPECT_LT(seconds, 5.0);
+    Match m;
+    ASSERT_TRUE(re.search("aaz", &m));
+    EXPECT_EQ(m.start(), 1u);
+    EXPECT_EQ(m.end(), 3u);
+    EXPECT_EQ(m.start(20000), 3u);
+    ASSERT_TRUE(re.search("bz", &m));
+    EXPECT_EQ(m.start(), 0u);
 }

@@ -6,7 +6,21 @@
 namespace ct
 {
 
-    class String : private HeapAlloc
+    namespace detail
+    {
+        template <typename T>
+        struct StringNpos
+        {
+            static constexpr T npos = static_cast<T>(-1);
+        };
+
+#if !defined(__cpp_inline_variables)
+        template <typename T>
+        constexpr T StringNpos<T>::npos;
+#endif
+    }
+
+    class String : private HeapAlloc, public detail::StringNpos<std::size_t>
     {
         struct HeapRep
         {
@@ -47,7 +61,7 @@ namespace ct
         using size_type = std::size_t;
         using iterator = char *;
         using const_iterator = const char *;
-        enum : size_type { npos = static_cast<size_type>(-1) };
+        using detail::StringNpos<std::size_t>::npos;
 
         String() noexcept : storage_()
         {
@@ -415,6 +429,14 @@ namespace ct
             return append_integral(v, detail::integral_constant<bool, std::is_signed<I>::value>{});
         }
 
+        template <typename E,
+                  typename = typename detail::enable_if<std::is_enum<E>::value>::type,
+                  typename = void>
+        String &append_number(E v)
+        {
+            return append_number(static_cast<typename std::underlying_type<E>::type>(v));
+        }
+
         String &append_number(double v, int precision = 6)
         {
             char tmp[64];
@@ -436,6 +458,15 @@ namespace ct
         template <typename I,
                   typename = typename detail::enable_if<std::is_integral<I>::value>::type>
         static String number(I v)
+        {
+            String s;
+            s.append_number(v);
+            return s;
+        }
+        template <typename E,
+                  typename = typename detail::enable_if<std::is_enum<E>::value>::type,
+                  typename = void>
+        static String number(E v)
         {
             String s;
             s.append_number(v);

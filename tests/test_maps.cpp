@@ -833,3 +833,68 @@ TEST(HashKeys, TransparentLookupOfStringKeysWithoutBuildingStrings)
     ct::HashSet<ct::String> none;
     EXPECT_FALSE(none.contains("alpha"));
 }
+
+TEST(HashMapTransparent, AceitaStdStringEVectorDeCharSemAmbiguidade)
+{
+    ct::HashMap<ct::String, int> m;
+    m.put(ct::String("abc"), 1);
+    ct::HashSet<ct::String> s;
+    s.insert(ct::String("abc"));
+    std::string k = "abc";
+    ct::Vector<char> vk;
+    vk.push_back('a');
+    vk.push_back('b');
+    vk.push_back('c');
+    ASSERT_NE(m.find(ct::String(k.c_str())), nullptr);
+    EXPECT_TRUE(m.contains(ct::StringView(k.data(), k.size())));
+    EXPECT_TRUE(m.contains("abc"));
+    EXPECT_FALSE(m.contains("abd"));
+    EXPECT_TRUE(s.contains(ct::StringView("abc")));
+    EXPECT_TRUE(s.contains("abc"));
+}
+
+namespace
+{
+    enum class Tom : std::uint8_t
+    {
+        Vermelho = 1,
+        Verde = 2
+    };
+    enum Plano
+    {
+        Frente,
+        Tras
+    };
+}
+
+TEST(HashMapTransparent, ChavesEnumUsamHashDeUmParametro)
+{
+    ct::HashMap<Tom, int> m;
+    m.put(Tom::Vermelho, 10);
+    m.put(Tom::Verde, 20);
+    ct::HashMap<Plano, int> p;
+    p.put(Frente, 1);
+    p.put(Tras, 2);
+    ASSERT_NE(m.find(Tom::Verde), nullptr);
+    EXPECT_EQ(*m.find(Tom::Verde), 20);
+    EXPECT_EQ(*p.find(Tras), 2);
+    ct::HashSet<Tom> s;
+    s.insert(Tom::Verde);
+    EXPECT_TRUE(s.contains(Tom::Verde));
+    EXPECT_FALSE(s.contains(Tom::Vermelho));
+}
+
+namespace
+{
+    template <typename K, template <typename> class H>
+    struct UsaHashDeUmParametro
+    {
+        H<K> hash;
+    };
+}
+
+TEST(HashMapTransparent, HashAceitaTemplateTemplateComUmParametro)
+{
+    UsaHashDeUmParametro<int, ct::Hash> u;
+    EXPECT_EQ(u.hash(3), ct::Hash<int>()(3));
+}

@@ -854,3 +854,17 @@ TEST(Json, ColunaDoErroIgnoraBomEContaCodePoints)
     EXPECT_EQ(err3.line, 2u);
     EXPECT_EQ(err3.column, 7u);
 }
+
+TEST(Json, ObjetosComChavesRepetidasComparamPorMulticonjunto)
+{
+    Json a = parse_ok(R"({"x":1,"x":1,"y":1})");
+    Json b = parse_ok(R"({"x":1,"y":1,"y":1})");
+    EXPECT_FALSE(a == b);
+    EXPECT_FALSE(b == a);
+    Json c = parse_ok(R"({"y":1,"x":1,"x":1})");
+    EXPECT_TRUE(a == c);
+    Json d = parse_ok(R"({"x":1,"x":2})");
+    Json e = parse_ok(R"({"x":2,"x":1})");
+    EXPECT_TRUE(d == e);
+    EXPECT_FALSE(d == parse_ok(R"({"x":1,"x":1})"));
+}

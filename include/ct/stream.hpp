@@ -181,29 +181,26 @@ namespace ct
     class SubStream : public Stream
     {
     public:
-        SubStream(Stream &base, std::int64_t offset, std::int64_t length) : base_(base), offset_(offset < 0 ? 0 : offset), length_(0), pos_(0)
+        SubStream(Stream &base, std::int64_t offset, std::int64_t length) : base_(base), offset_(offset < 0 ? 0 : offset), length_(0), pos_(0), hit_end_(false)
         {
             const std::int64_t limit = std::numeric_limits<std::int64_t>::max();
             if (length < 0) length = 0;
             if (length > limit - offset_) length = limit - offset_;
-            if (base_.can_seek())
-            {
-                const std::int64_t total = base_.size();
-                if (total >= 0)
-                {
-                    const std::int64_t available = offset_ < total ? total - offset_ : 0;
-                    if (length > available) length = available;
-                }
-            }
             length_ = length;
         }
         std::size_t read(void *dst, std::size_t n) override
         {
             if (!is_open()) { set_error("substream is closed"); return 0; }
+            hit_end_ = false;
             if (pos_ >= length_) return 0;
-            if (!base_.seek(offset_ + pos_, Seek::Set)) { set_error(base_.error() ? base_.error() : "substream seek failed"); return 0; }
+            if (!base_.seek(offset_ + pos_, Seek::Set))
+            {
+                if (past_base_end(offset_ + pos_)) { hit_end_ = true; return 0; }
+                set_error(base_.error() ? base_.error() : "substream seek failed");
+                return 0;
+            }
             std::int64_t left = length_ - pos_; n = n < static_cast<std::size_t>(left) ? n : static_cast<std::size_t>(left);
-            std::size_t r = base_.read(dst, n); if (r != n && base_.error()) set_error(base_.error()); pos_ += static_cast<std::int64_t>(r); return r;
+            std::size_t r = base_.read(dst, n); if (r != n) { if (base_.error()) set_error(base_.error()); else hit_end_ = true; } pos_ += static_cast<std::int64_t>(r); return r;
         }
         std::size_t write(const void *, std::size_t) override { set_error("substream is read-only"); return 0; }
         bool seek(std::int64_t offset, Seek origin) override
@@ -211,17 +208,32 @@ namespace ct
             std::int64_t base = origin == Seek::Set ? 0 : origin == Seek::Cur ? pos_ : length_;
             if (offset > 0 && base > std::numeric_limits<std::int64_t>::max() - offset) return false;
             if (offset < 0 && base < std::numeric_limits<std::int64_t>::min() - offset) return false;
-            std::int64_t next = base + offset; if (next < 0 || next > length_) return false; pos_ = next; return true;
+            std::int64_t next = base + offset; if (next < 0 || next > length_) return false; pos_ = next; hit_end_ = false; return true;
         }
         std::int64_t tell() const override { return pos_; }
-        std::int64_t size() const override { return length_; }
+        std::int64_t size() const override { return available_length(); }
         void close() override { closed_ = true; }
         bool is_open() const override { return !closed_ && base_.is_open(); }
-        bool eof() const override { return pos_ >= length_; }
+        bool eof() const override { return (!base_.can_seek() && hit_end_) || pos_ >= available_length(); }
         bool can_read() const override { return is_open() && base_.can_read(); }
         bool can_write() const override { return false; }
         bool can_seek() const override { return is_open() && base_.can_seek(); }
-    private: Stream &base_; std::int64_t offset_, length_, pos_; bool closed_ = false;
+    private:
+        bool past_base_end(std::int64_t at) const
+        {
+            if (!base_.can_seek()) return false;
+            const std::int64_t total = base_.size();
+            return total >= 0 && at > total;
+        }
+        std::int64_t available_length() const
+        {
+            if (!base_.can_seek()) return length_;
+            const std::int64_t total = base_.size();
+            if (total < 0) return length_;
+            const std::int64_t available = offset_ < total ? total - offset_ : 0;
+            return length_ < available ? length_ : available;
+        }
+        Stream &base_; std::int64_t offset_, length_, pos_; bool hit_end_; bool closed_ = false;
     };
 
     struct StreamCallbacks

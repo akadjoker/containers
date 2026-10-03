@@ -2,6 +2,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 using ct::Ini;
 using ct::String;
 
@@ -232,4 +234,41 @@ TEST(Ini, ChavesESeccoesInvalidasSaoFatais)
     EXPECT_DEATH(ini.set("x]y", "a", "1"), "");
     ini.set("ok", "key with spaces", "1");
     EXPECT_EQ(Ini::parse(ini.dump()).get("ok", "key with spaces"), "1");
+}
+
+TEST(Ini, RoundTripAleatorioComValoresDificeis)
+{
+    const char alphabet[] = {'a', 'b', ' ', '\t', '\n', '\r', '\v', '\f', '"', '\'', ';', '#', '=', ':', '\\', '[', ']', 'x'};
+    unsigned state = 12345u;
+    auto next = [&state]() {
+        state = state * 1664525u + 1013904223u;
+        return state >> 8;
+    };
+    for (int round = 0; round < 300; ++round)
+    {
+        Ini ini;
+        std::vector<String> values;
+        const int count = 1 + static_cast<int>(next() % 6);
+        for (int k = 0; k < count; ++k)
+        {
+            String value;
+            const unsigned length = next() % 12;
+            for (unsigned i = 0; i < length; ++i)
+                value.push_back(alphabet[next() % sizeof(alphabet)]);
+            values.push_back(value);
+            String key("k");
+            key.append_number(k);
+            ini.set("sec", key.c_str(), value);
+        }
+        String text = ini.dump();
+        Ini back = Ini::parse(text);
+        for (int k = 0; k < count; ++k)
+        {
+            String key("k");
+            key.append_number(k);
+            ASSERT_EQ(back.get("sec", key), values[static_cast<std::size_t>(k)]) << "ronda " << round << " chave " << k << "\n" << text.c_str();
+        }
+        ASSERT_EQ(back.section("sec")->entries.size(), static_cast<std::size_t>(count)) << text.c_str();
+        ASSERT_TRUE(Ini::parse(back.dump()).dump() == text);
+    }
 }

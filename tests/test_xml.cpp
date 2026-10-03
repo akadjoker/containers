@@ -631,3 +631,64 @@ TEST(Xml, DoctypeComInstrucaoDeProcessamentoComAspasNoSubconjunto)
     EXPECT_EQ(y.tag(), "b");
     parse_err("<!DOCTYPE a [<?pi it's]><a/>");
 }
+
+namespace
+{
+    unsigned xml_rng_state = 99u;
+    unsigned xml_rng()
+    {
+        xml_rng_state = xml_rng_state * 1664525u + 1013904223u;
+        return xml_rng_state >> 8;
+    }
+
+    String xml_random_text()
+    {
+        const char *pieces[] = {"a", "b ", " ", "x&amp;y", "&lt;t&gt;", "  z", "w\n", "."};
+        String out;
+        const unsigned n = xml_rng() % 3;
+        for (unsigned i = 0; i < n; ++i)
+            out.append(pieces[xml_rng() % 8]);
+        return out;
+    }
+
+    void xml_random_tree(String &out, int depth)
+    {
+        out.append("<n");
+        const unsigned attrs = xml_rng() % 12;
+        for (unsigned i = 0; i < attrs; ++i)
+        {
+            out.append(" a");
+            out.append_number(i);
+            out.append("=\"v");
+            out.append_number(xml_rng() % 10);
+            out.append("\"");
+        }
+        out.append(">");
+        out.append(xml_random_text());
+        const unsigned children = depth < 3 ? xml_rng() % 4 : 0;
+        for (unsigned c = 0; c < children; ++c)
+        {
+            xml_random_tree(out, depth + 1);
+            out.append(xml_random_text());
+        }
+        out.append("</n>");
+    }
+}
+
+TEST(Xml, ArvoresAleatoriasDeConteudoMistoFazemRoundTrip)
+{
+    for (int round = 0; round < 300; ++round)
+    {
+        String source;
+        xml_random_tree(source, 0);
+        Xml::Error err;
+        Xml first = Xml::parse(source.c_str(), &err);
+        ASSERT_FALSE(static_cast<bool>(err)) << source.c_str();
+        String once = first.dump();
+        Xml second = Xml::parse(once.c_str(), &err);
+        ASSERT_FALSE(static_cast<bool>(err)) << once.c_str();
+        ASSERT_EQ(second.dump(), once) << source.c_str();
+        Xml copy = first;
+        ASSERT_EQ(copy.dump(), once);
+    }
+}

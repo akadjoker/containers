@@ -435,3 +435,33 @@ TEST(Thread, MoverUmaThreadNaoIniciadaNaoLeLixo)
     assigned.join();
     EXPECT_EQ(ran.load(), 1);
 }
+
+TEST(ThreadPool, TempestadeDeWaitAllAninhadosTerminaSempre)
+{
+    for (int round = 0; round < 20; ++round)
+    {
+        ThreadPool *pool = new ThreadPool(1 + static_cast<unsigned>(round % 3));
+        Atomic<int> done(0);
+        const bool ok = runs_within_ms(20000, [&] {
+            for (int a = 0; a < 6; ++a)
+            {
+                pool->submit([&, a] {
+                    for (int b = 0; b < 4; ++b)
+                        pool->submit([&, b] {
+                            pool->submit([&] { done.fetch_add(1); });
+                            if (b % 2)
+                                pool->wait_all();
+                            done.fetch_add(1);
+                        });
+                    if (a % 2)
+                        pool->wait_all();
+                    pool->parallel_for(0, 8, [&](std::size_t) { done.fetch_add(1); });
+                });
+            }
+            pool->wait_all();
+        });
+        ASSERT_TRUE(ok) << "ronda " << round << " ficou bloqueada";
+        EXPECT_EQ(done.load(), 6 * 4 * 2 + 6 * 8) << "ronda " << round;
+        delete pool;
+    }
+}

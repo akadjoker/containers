@@ -152,3 +152,34 @@ TEST(Binary, StringsCurtasNaoConsultamTamanhoNemPosicaoDoStream)
     }
     EXPECT_EQ(stream.consultas, 0);
 }
+
+TEST(Binary, ManyStringsRoundTripThroughFileStream)
+{
+    const char *path = "/tmp/ct_binary_many.bin";
+    {
+        ct::FileStream out(path, ct::FileStream::Write);
+        ct::BinaryWriter writer(out);
+        for (int i = 0; i < 5000; ++i)
+        {
+            ct::String s;
+            s.append_number(i);
+            s.append(ct::String(static_cast<std::size_t>(i % 70000), 'q'));
+            writer.string(s);
+        }
+        ASSERT_TRUE(writer.ok());
+    }
+    ct::FileStream in(path, ct::FileStream::Read);
+    ct::BinaryReader reader(in);
+    for (int i = 0; i < 5000; ++i)
+    {
+        ct::String s;
+        ASSERT_TRUE(reader.string(s)) << i;
+        ct::String expect;
+        expect.append_number(i);
+        expect.append(ct::String(static_cast<std::size_t>(i % 70000), 'q'));
+        ASSERT_TRUE(s == expect) << i;
+    }
+    ct::String extra;
+    EXPECT_FALSE(reader.string(extra));
+    ct::File::remove(path);
+}

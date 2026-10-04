@@ -71,6 +71,7 @@ add_executable(ct_tests
   tests/test_json.cpp
   tests/test_span.cpp
   tests/test_slotmap.cpp
+  tests/test_slotmap32.cpp
   tests/test_ptr.cpp
   tests/test_xml.cpp
   tests/test_function.cpp
@@ -117,6 +118,7 @@ set(CT_PUBLIC_HEADERS
   ct/stream.hpp
   ct/text.hpp
   ct/slotmap.hpp
+  ct/slotmap32.hpp
   ct/sort.hpp
   ct/span.hpp
   ct/stack.hpp

@@ -43,7 +43,7 @@ namespace ct
             HeapRep heap;
             SmallRep small;
 
-            Storage() {}
+            Storage() : heap() {}
             ~Storage() {}
         };
 
@@ -228,6 +228,10 @@ namespace ct
                 grow_to(n);
         }
 
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
         void resize(size_type n, char c = '\0')
         {
             const size_type current = size();
@@ -239,10 +243,6 @@ namespace ct
             set_size(n);
         }
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-#endif
         void push_back(char c)
         {
             const size_type current = size();
@@ -264,6 +264,14 @@ namespace ct
             set_size(size() - 1);
         }
 
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Warray-bounds"
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#if __GNUC__ >= 11
+#pragma GCC diagnostic ignored "-Wstringop-overread"
+#endif
+#endif
         String &append(const char *p, size_type n)
         {
             if (n == 0)
@@ -301,6 +309,9 @@ namespace ct
             set_size(current + n);
             return *this;
         }
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 
         String &operator+=(const String &s) { return append(s); }
         String &operator+=(const char *s) { return append(s); }

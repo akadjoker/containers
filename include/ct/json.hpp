@@ -113,6 +113,7 @@ namespace ct
             return json_strtod_locale(start, static_cast<std::size_t>(end - start));
         }
 
+#if defined(LDBL_MANT_DIG) && LDBL_MANT_DIG >= 64
         inline long double json_pow10l(int e)
         {
             static const long double kSmall[10] = {1e0L, 1e1L, 1e2L, 1e3L, 1e4L,
@@ -124,6 +125,7 @@ namespace ct
                 1e270L, 1e280L, 1e290L, 1e300L, 1e310L, 1e320L, 1e330L, 1e340L, 1e350L};
             return kSmall[e % 10] * kBig[e / 10];
         }
+#endif
 
         inline int json_format_digits(char *buf, bool neg, std::uint64_t d, int digits,
                                       int k, int prec)

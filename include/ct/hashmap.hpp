@@ -320,6 +320,53 @@ namespace ct
             return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
         }
 
+        class const_iterator
+        {
+            const Entry *e_;
+            const std::uint8_t *m_;
+            const std::uint8_t *mend_;
+
+        public:
+            const_iterator(const Entry *e, const std::uint8_t *m, const std::uint8_t *mend)
+                : e_(e), m_(m), mend_(mend)
+            {
+                skip();
+            }
+            const Entry &operator*() const { return *e_; }
+            const Entry *operator->() const { return e_; }
+            const_iterator &operator++()
+            {
+                ++e_;
+                ++m_;
+                skip();
+                return *this;
+            }
+            bool operator==(const const_iterator &o) const { return m_ == o.m_; }
+            bool operator!=(const const_iterator &o) const { return m_ != o.m_; }
+
+        private:
+            void skip()
+            {
+                while (m_ != mend_ && !*m_)
+                {
+                    ++m_;
+                    ++e_;
+                }
+            }
+        };
+
+        const_iterator begin() const noexcept
+        {
+            return const_iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr);
+        }
+        const_iterator end() const noexcept
+        {
+            const std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
+            return const_iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
+        }
+        const_iterator cbegin() const noexcept { return begin(); }
+        const_iterator cend() const noexcept { return end(); }
+
     private:
         Entry *slots_;
         std::uint8_t *meta_; 

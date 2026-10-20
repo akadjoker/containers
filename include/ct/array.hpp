@@ -8,6 +8,7 @@ namespace ct
     template <typename T, std::size_t N>
     struct Array
     {
+        static_assert(N > 0, "ct::Array<T, 0> nao e suportado");
 
         T elems[N];
 

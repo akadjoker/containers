@@ -62,12 +62,13 @@ namespace ct
         {
             Page page;
             Vector<RectItem> remaining;
+            Vector<unsigned char> placed_flags;
         };
 
         static int32_t next_power_of_two(int32_t value);
         static int32_t largest_power_of_two_at_most(int32_t value);
         static bool contains(const FreeRect &outer, const FreeRect &inner);
-        static void prune_free_rects(Vector<FreeRect> &free_rects);
+        static void prune_free_rects(Vector<FreeRect> &free_rects, size_t first_new);
         static int find_best_free_rect(const Vector<FreeRect> &free_rects, int32_t width,
                                        int32_t height);
         static bool intersects(const FreeRect &free_rect, int32_t x, int32_t y,
@@ -118,23 +119,36 @@ namespace ct
                inner.y + inner.h <= outer.y + outer.h;
     }
 
-    void RectPacker::prune_free_rects(Vector<FreeRect> &free_rects)
+    void RectPacker::prune_free_rects(Vector<FreeRect> &free_rects, size_t first_new)
     {
-        for (size_t i = 0; i < free_rects.size(); ++i)
+        const size_t count = free_rects.size();
+        if (first_new >= count)
+            return;
+        Vector<unsigned char> removed(count, 0);
+        for (size_t i = 0; i < count; ++i)
         {
-            bool removed = false;
-            for (size_t j = 0; j < free_rects.size(); ++j)
+            const size_t from = i < first_new ? first_new : 0;
+            for (size_t j = from; j < count; ++j)
             {
-                if (i != j && contains(free_rects[j], free_rects[i]))
+                if (i == j || removed[j])
+                    continue;
+                if (contains(free_rects[j], free_rects[i]))
                 {
-                    free_rects.erase(free_rects.begin() + i);
-                    removed = true;
+                    removed[i] = 1;
                     break;
                 }
             }
-            if (removed)
-                --i;
         }
+        size_t kept = 0;
+        for (size_t i = 0; i < count; ++i)
+        {
+            if (removed[i])
+                continue;
+            if (kept != i)
+                free_rects[kept] = free_rects[i];
+            ++kept;
+        }
+        free_rects.resize(kept);
     }
 
     int RectPacker::find_best_free_rect(const Vector<FreeRect> &free_rects, int32_t width,
@@ -181,30 +195,36 @@ namespace ct
     void RectPacker::split_free_rects(Vector<FreeRect> &free_rects, int32_t x, int32_t y,
                                       int32_t width, int32_t height)
     {
-        for (size_t i = 0; i < free_rects.size();)
+        const size_t count = free_rects.size();
+        size_t kept = 0;
+        Vector<FreeRect> added;
+        const int32_t right = x + width;
+        const int32_t bottom = y + height;
+        for (size_t i = 0; i < count; ++i)
         {
             const FreeRect free_rect = free_rects[i];
             if (!intersects(free_rect, x, y, width, height))
             {
-                ++i;
+                if (kept != i)
+                    free_rects[kept] = free_rect;
+                ++kept;
                 continue;
             }
-
-            free_rects.erase(free_rects.begin() + i);
-            const int32_t right = x + width;
-            const int32_t bottom = y + height;
             const int32_t free_right = free_rect.x + free_rect.w;
             const int32_t free_bottom = free_rect.y + free_rect.h;
             if (y > free_rect.y)
-                free_rects.push_back({free_rect.x, free_rect.y, free_rect.w, y - free_rect.y});
+                added.push_back({free_rect.x, free_rect.y, free_rect.w, y - free_rect.y});
             if (bottom < free_bottom)
-                free_rects.push_back({free_rect.x, bottom, free_rect.w, free_bottom - bottom});
+                added.push_back({free_rect.x, bottom, free_rect.w, free_bottom - bottom});
             if (x > free_rect.x)
-                free_rects.push_back({free_rect.x, free_rect.y, x - free_rect.x, free_rect.h});
+                added.push_back({free_rect.x, free_rect.y, x - free_rect.x, free_rect.h});
             if (right < free_right)
-                free_rects.push_back({right, free_rect.y, free_right - right, free_rect.h});
+                added.push_back({right, free_rect.y, free_right - right, free_rect.h});
         }
-        prune_free_rects(free_rects);
+        free_rects.resize(kept);
+        for (const FreeRect &rect : added)
+            free_rects.push_back(rect);
+        prune_free_rects(free_rects, kept);
     }
 
     RectPacker::PackResult RectPacker::try_pack(const Vector<RectItem> &items, int32_t width,
@@ -215,9 +235,11 @@ namespace ct
         result.page.atlas_height = height;
         Vector<FreeRect> free_rects;
         free_rects.push_back({0, 0, width, height});
+        result.placed_flags.resize(items.size(), 0);
 
-        for (const RectItem &item : items)
+        for (size_t i = 0; i < items.size(); ++i)
         {
+            const RectItem &item = items[i];
             const int index = find_best_free_rect(free_rects, item.w, item.h);
             if (index < 0)
             {
@@ -229,6 +251,7 @@ namespace ct
             const int32_t y = free_rects[static_cast<size_t>(index)].y;
             split_free_rects(free_rects, x, y, item.w, item.h);
             result.page.placed.push_back({item.id, x, y, item.w, item.h});
+            result.placed_flags[i] = 1;
         }
         return result;
     }
@@ -242,26 +265,18 @@ namespace ct
 
         Vector<RectItem> placed_items;
         placed_items.reserve(remaining.size() - maximum.remaining.size());
-        Vector<RectItem> unplaced = maximum.remaining;
-        for (const RectItem &item : remaining)
-        {
-            size_t match = 0;
-            while (match < unplaced.size() &&
-                   (unplaced[match].id != item.id || unplaced[match].w != item.w ||
-                    unplaced[match].h != item.h))
-                ++match;
-            if (match == unplaced.size())
-                placed_items.push_back(item);
-            else
-                unplaced.erase(unplaced.begin() + match);
-        }
+        for (size_t i = 0; i < remaining.size(); ++i)
+            if (maximum.placed_flags[i])
+                placed_items.push_back(remaining[i]);
 
         int32_t minimum_width = placed_items[0].w;
         int32_t minimum_height = placed_items[0].h;
+        int64_t used_area = 0;
         for (const RectItem &item : placed_items)
         {
             minimum_width = minimum_width > item.w ? minimum_width : item.w;
             minimum_height = minimum_height > item.h ? minimum_height : item.h;
+            used_area += static_cast<int64_t>(item.w) * item.h;
         }
 
         const int32_t first_width = next_power_of_two(minimum_width);
@@ -277,15 +292,18 @@ namespace ct
                 const int32_t best_longest_side = best.atlas_width > best.atlas_height
                                                       ? best.atlas_width
                                                       : best.atlas_height;
-                if (area <= best_area)
+                if (area <= best_area && area >= used_area)
                 {
                     PackResult candidate = try_pack(placed_items, width, height);
-                    if (candidate.remaining.empty() &&
-                        (area < best_area ||
-                         (area == best_area && longest_side < best_longest_side)))
+                    if (candidate.remaining.empty())
                     {
-                        best = static_cast<Page &&>(candidate.page);
-                        best_area = area;
+                        if (area < best_area ||
+                            (area == best_area && longest_side < best_longest_side))
+                        {
+                            best = static_cast<Page &&>(candidate.page);
+                            best_area = area;
+                        }
+                        break;
                     }
                 }
                 if (height == max_height)

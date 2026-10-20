@@ -32,8 +32,9 @@ namespace ct
 
     public:
         explicit Pool(std::size_t slots_per_chunk = default_slots(), const Alloc &alloc = Alloc())
-            : Alloc(alloc), chunks_(nullptr), free_(nullptr), cur_(nullptr), end_(nullptr),
-              slots_per_chunk_(slots_per_chunk ? slots_per_chunk : 1), live_(0), capacity_(0)
+            : Alloc(alloc), chunks_(nullptr), index_(nullptr), index_size_(0), index_cap_(0), free_(nullptr), cur_(nullptr),
+              end_(nullptr), slots_per_chunk_(slots_per_chunk ? slots_per_chunk : 1), live_(0),
+              capacity_(0)
         {
             if (slots_per_chunk_ > max_slots())
                 detail::fatal("ct::Pool: numero de slots invalido");
@@ -49,11 +50,13 @@ namespace ct
         Pool &operator=(const Pool &) = delete;
 
         Pool(Pool &&o) noexcept
-            : Alloc(static_cast<Alloc &&>(o)), chunks_(o.chunks_), free_(o.free_), cur_(o.cur_),
-              end_(o.end_), slots_per_chunk_(o.slots_per_chunk_), live_(o.live_),
-              capacity_(o.capacity_)
+            : Alloc(static_cast<Alloc &&>(o)), chunks_(o.chunks_), index_(o.index_),
+              index_size_(o.index_size_), index_cap_(o.index_cap_), free_(o.free_), cur_(o.cur_), end_(o.end_), slots_per_chunk_(o.slots_per_chunk_),
+              live_(o.live_), capacity_(o.capacity_)
         {
             o.chunks_ = nullptr;
+            o.index_ = nullptr;
+            o.index_size_ = o.index_cap_ = 0;
             o.free_ = nullptr;
             o.cur_ = o.end_ = nullptr;
             o.live_ = 0;
@@ -68,6 +71,9 @@ namespace ct
                 release_chunks();
                 static_cast<Alloc &>(*this) = static_cast<Alloc &&>(o);
                 chunks_ = o.chunks_;
+                index_ = o.index_;
+                index_size_ = o.index_size_;
+                index_cap_ = o.index_cap_;
                 free_ = o.free_;
                 cur_ = o.cur_;
                 end_ = o.end_;
@@ -75,6 +81,8 @@ namespace ct
                 live_ = o.live_;
                 capacity_ = o.capacity_;
                 o.chunks_ = nullptr;
+                o.index_ = nullptr;
+                o.index_size_ = o.index_cap_ = 0;
                 o.free_ = nullptr;
                 o.cur_ = o.end_ = nullptr;
                 o.live_ = 0;
@@ -155,6 +163,9 @@ namespace ct
 
     private:
         Chunk *chunks_;
+        Chunk **index_;
+        std::size_t index_size_;
+        std::size_t index_cap_;
         FreeSlot *free_;
         char *cur_;
         char *end_;
@@ -173,17 +184,35 @@ namespace ct
             return reinterpret_cast<char *>((value + kAlign - 1) & ~(kAlign - 1));
         }
 
+        static std::uintptr_t address(const void *p) noexcept
+        {
+            return reinterpret_cast<std::uintptr_t>(p);
+        }
+
+        std::size_t index_upper_bound(std::uintptr_t pointer) const noexcept
+        {
+            std::size_t lo = 0;
+            std::size_t hi = index_size_;
+            while (lo < hi)
+            {
+                const std::size_t mid = lo + (hi - lo) / 2;
+                if (pointer < address(index_[mid]->data))
+                    hi = mid;
+                else
+                    lo = mid + 1;
+            }
+            return lo;
+        }
+
         Chunk *find_chunk(const T *p) const
         {
-            const std::uintptr_t pointer = reinterpret_cast<std::uintptr_t>(p);
-            for (Chunk *chunk = chunks_; chunk; chunk = chunk->next)
-            {
-                const std::uintptr_t begin = reinterpret_cast<std::uintptr_t>(chunk->data);
-                const std::uintptr_t end = begin + slots_per_chunk_ * kSlot;
-                if (pointer >= begin && pointer < end)
-                    return chunk;
-            }
-            return nullptr;
+            const std::uintptr_t pointer = address(p);
+            const std::size_t at = index_upper_bound(pointer);
+            if (at == 0)
+                return nullptr;
+            Chunk *chunk = index_[at - 1];
+            const std::uintptr_t end = address(chunk->data) + slots_per_chunk_ * kSlot;
+            return pointer < end ? chunk : nullptr;
         }
 
         std::uint8_t &state_ref(T *p) const
@@ -239,6 +268,10 @@ namespace ct
                 chunk = next;
             }
             chunks_ = nullptr;
+            if (index_)
+                allocator().deallocate(index_, index_cap_ * sizeof(Chunk *));
+            index_ = nullptr;
+            index_size_ = index_cap_ = 0;
             free_ = nullptr;
             cur_ = end_ = nullptr;
             capacity_ = 0;
@@ -255,16 +288,40 @@ namespace ct
                 !detail::checked_add(total, slots_bytes, total) ||
                 !detail::checked_add(total, slots_per_chunk_, total))
                 detail::fatal("ct::Pool: tamanho invalido");
+            grow_index();
             void *memory = allocator().allocate(total, alignof(Chunk));
             Chunk *chunk = ::new (memory) Chunk();
             chunk->next = chunks_;
             chunk->data = aligned_data(chunk);
             chunk->states = reinterpret_cast<std::uint8_t *>(chunk->data + slots_bytes);
             std::memset(chunk->states, 2, slots_per_chunk_);
+            const std::size_t at = index_upper_bound(address(chunk->data));
+            if (at < index_size_)
+                std::memmove(index_ + at + 1, index_ + at, (index_size_ - at) * sizeof(Chunk *));
+            index_[at] = chunk;
+            ++index_size_;
             chunks_ = chunk;
             cur_ = chunk->data;
             end_ = cur_ + slots_bytes;
             capacity_ += slots_per_chunk_;
+        }
+
+        void grow_index()
+        {
+            if (index_size_ < index_cap_)
+                return;
+            std::size_t cap = index_cap_ ? index_cap_ * 2 : 8;
+            std::size_t bytes = 0;
+            if (cap < index_cap_ || !detail::checked_mul(cap, sizeof(Chunk *), bytes))
+                detail::fatal("ct::Pool: capacidade excedida");
+            Chunk **grown = static_cast<Chunk **>(allocator().allocate(bytes, alignof(Chunk *)));
+            if (index_)
+            {
+                std::memcpy(grown, index_, index_size_ * sizeof(Chunk *));
+                allocator().deallocate(index_, index_cap_ * sizeof(Chunk *));
+            }
+            index_ = grown;
+            index_cap_ = cap;
         }
 
         Alloc &allocator() { return static_cast<Alloc &>(*this); }

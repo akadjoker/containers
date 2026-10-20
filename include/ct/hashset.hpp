@@ -104,6 +104,25 @@ namespace ct
             return meta_[probe(k)] != 0;
         }
 
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
+        bool contains(const Q &k) const noexcept
+        {
+            if (!size_)
+                return false;
+            const H &hasher = *static_cast<const H *>(this);
+            size_type i = static_cast<size_type>(hasher(k)) & mask_;
+            while (meta_[i])
+            {
+                if (hasher.equal(slots_[i], k))
+                    return true;
+                i = (i + 1) & mask_;
+            }
+            return false;
+        }
+
         template <typename KK>
         bool insert(KK &&k)
         {

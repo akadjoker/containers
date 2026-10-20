@@ -103,7 +103,7 @@ namespace ct
         using ManageFn = void (*)(Op, Function *self, Function *other);
         using InvokeFn = R (*)(void *, Args...);
 
-        unsigned char buf_[kSboSize];
+        alignas(kSboAlign) unsigned char buf_[kSboSize];
         void *heap_;
         bool on_heap_;
         InvokeFn invoke_;

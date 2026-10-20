@@ -385,3 +385,41 @@ TEST(Weak, QuebraCiclos)
     }
     EXPECT_EQ(Nodo::vivos, 0);
 }
+
+namespace
+{
+    struct BaseA
+    {
+        virtual ~BaseA() {}
+        std::uint64_t a = 1;
+    };
+    struct BaseB
+    {
+        virtual ~BaseB() {}
+        std::uint64_t b = 2;
+    };
+    struct Multipla : BaseA, BaseB
+    {
+        std::uint64_t c = 3;
+    };
+}
+
+TEST(Unique, UpcastParaBasePrimariaMantemOPonteiro)
+{
+    Unique<Multipla> m = make_unique<Multipla>();
+    Multipla *raw = m.get();
+    Unique<BaseA> a(std::move(m));
+    EXPECT_EQ(static_cast<const void *>(a.get()), static_cast<const void *>(raw));
+    EXPECT_EQ(a->a, 1u);
+}
+
+TEST(Unique, UpcastComAjusteDePonteiroEFatal)
+{
+    EXPECT_DEATH(
+        {
+            Unique<Multipla> m = make_unique<Multipla>();
+            Unique<BaseB> b(std::move(m));
+            (void)b;
+        },
+        "");
+}

@@ -2,7 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -373,4 +375,19 @@ TEST(DequeMisc, EqualityAndSwap) {
     EXPECT_EQ(x[0], 7);
     ASSERT_EQ(y.size(), 1u);
     EXPECT_EQ(y[0], 9);
+}
+
+TEST(DequeMisc, IteradoresFuncionamComAlgoritmosStd) {
+    ct::Deque<int> d;
+    for (int i = 0; i < 5; ++i) d.push_front(i);
+    for (int i = 5; i < 40; ++i) d.push_back(i);
+    for (int i = 0; i < 10; ++i) d.pop_front();
+    std::sort(d.begin(), d.end(), std::greater<int>());
+    EXPECT_TRUE(std::is_sorted(d.begin(), d.end(), std::greater<int>()));
+    std::reverse(d.begin(), d.end());
+    EXPECT_TRUE(std::is_sorted(d.begin(), d.end()));
+    EXPECT_EQ(std::distance(d.begin(), d.end()), static_cast<std::ptrdiff_t>(d.size()));
+    std::sort(d.rbegin(), d.rend());
+    EXPECT_TRUE(std::is_sorted(d.begin(), d.end(), std::greater<int>()));
+    EXPECT_EQ(*std::min_element(d.begin(), d.end()), d.back());
 }

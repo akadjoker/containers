@@ -38,6 +38,22 @@ namespace
     }
 
     template <typename T>
+    std::uint64_t ct_stable_sort_copy(const ct::Vector<T> &src)
+    {
+        ct::Vector<T> v(src);
+        ct::stable_sort(v.begin(), v.end());
+        return static_cast<std::uint64_t>(v[v.size() / 2]);
+    }
+
+    template <typename T>
+    std::uint64_t std_stable_sort_copy(const ct::Vector<T> &src)
+    {
+        ct::Vector<T> v(src);
+        std::stable_sort(v.begin(), v.end());
+        return static_cast<std::uint64_t>(v[v.size() / 2]);
+    }
+
+    template <typename T>
     std::uint64_t std_sort_copy(const ct::Vector<T> &src)
     {
         ct::Vector<T> v(src);
@@ -110,6 +126,17 @@ int main()
         s = s * 1664525u + 1013904223u;
         return static_cast<int>(s % 256); 
     });
+
+    bench::header("estavel (merge sort com buffer n/2) vs std::stable_sort");
+    bench::compare("10M int aleatorios (stable)",
+                   [&] { bench::sink += ct_stable_sort_copy(rnd_int); },
+                   [&] { bench::sink += std_stable_sort_copy(rnd_int); });
+    bench::compare("10M int ja ordenados (stable)",
+                   [&] { bench::sink += ct_stable_sort_copy(sorted_int); },
+                   [&] { bench::sink += std_stable_sort_copy(sorted_int); });
+    bench::compare("10M int gama 0..255 (stable)",
+                   [&] { bench::sink += ct_stable_sort_copy(small_range); },
+                   [&] { bench::sink += std_stable_sort_copy(small_range); });
 
     bench::header("numeros (caminho radix O(n))");
     bench::compare("10M int aleatorios",

@@ -2,6 +2,9 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdint>
+#include <utility>
+
 using ct::Function;
 
 namespace
@@ -168,4 +171,35 @@ TEST(Function, VoidReturn)
     Function<void(int)> f = [&seen](int x) { seen = x; };
     f(42);
     EXPECT_EQ(seen, 42);
+}
+namespace
+{
+    struct alignas(16) Vec4
+    {
+        float v[4];
+    };
+
+    struct SomaVec4
+    {
+        Vec4 a;
+        float operator()() const { return a.v[0] + a.v[1] + a.v[2] + a.v[3]; }
+    };
+
+    struct ComPrefixo
+    {
+        std::uint64_t antes;
+        Function<float()> f;
+    };
+}
+
+TEST(Function, SboRespeitaAlinhamentoDoAlvo)
+{
+    static_assert(sizeof(SomaVec4) <= Function<float()>::kSboSize, "teste pressupoe SBO");
+    static_assert(alignof(Function<float()>) >= alignof(SomaVec4), "SBO tem de alinhar o alvo");
+    ComPrefixo h{1, SomaVec4{{{1.f, 2.f, 3.f, 4.f}}}};
+    EXPECT_EQ(h.f(), 10.f);
+    Function<float()> copia = h.f;
+    EXPECT_EQ(copia(), 10.f);
+    Function<float()> movida = std::move(copia);
+    EXPECT_EQ(movida(), 10.f);
 }

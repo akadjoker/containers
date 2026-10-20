@@ -2,27 +2,33 @@
 #pragma once
 
 #include "detail/utils.hpp"
+#include "span.hpp"
+#include "string.hpp"
 
 namespace ct
 {
 
-    namespace detail
-    {
-
-        inline std::uint64_t hash_mix(std::uint64_t x)
-        {
-            x ^= x >> 33;
-            x *= 0xff51afd7ed558ccdull;
-            x ^= x >> 33;
-            return x;
-        }
-    } 
-
     template <typename K>
     struct Hash
     {
-        std::uint64_t operator()(const K &k) const { return k.hash(); }
+        std::uint64_t operator()(const K &k) const
+        {
+            return call(k, detail::integral_constant<bool, std::is_enum<K>::value>());
+        }
+
+    private:
+        static std::uint64_t call(const K &k, detail::false_type) { return k.hash(); }
+        static std::uint64_t call(const K &k, detail::true_type)
+        {
+            return detail::hash_mix(static_cast<std::uint64_t>(
+                static_cast<typename std::underlying_type<K>::type>(k)));
+        }
     };
+
+    inline std::uint64_t hash_combine(std::uint64_t seed, std::uint64_t h) noexcept
+    {
+        return seed ^ (h + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2));
+    }
 
 #define CT_INT_HASH(T)                                                    \
     template <>                                                           \
@@ -44,7 +50,73 @@ namespace ct
     CT_INT_HASH(unsigned long)
     CT_INT_HASH(long long)
     CT_INT_HASH(unsigned long long)
+    CT_INT_HASH(wchar_t)
+    CT_INT_HASH(char16_t)
+    CT_INT_HASH(char32_t)
 #undef CT_INT_HASH
+
+    template <>
+    struct Hash<bool>
+    {
+        std::uint64_t operator()(bool k) const { return detail::hash_mix(k ? 1u : 0u); }
+    };
+
+    template <>
+    struct Hash<float>
+    {
+        std::uint64_t operator()(float k) const
+        {
+            if (k == 0.0f)
+                k = 0.0f;
+            std::uint32_t bits;
+            std::memcpy(&bits, &k, sizeof(bits));
+            return detail::hash_mix(bits);
+        }
+    };
+
+    template <>
+    struct Hash<double>
+    {
+        std::uint64_t operator()(double k) const
+        {
+            if (k == 0.0)
+                k = 0.0;
+            std::uint64_t bits;
+            std::memcpy(&bits, &k, sizeof(bits));
+            return detail::hash_mix(bits);
+        }
+    };
+
+    template <>
+    struct Hash<StringView>
+    {
+        std::uint64_t operator()(StringView s) const noexcept
+        {
+            return detail::hash_bytes(s.data(), s.size());
+        }
+    };
+
+    template <>
+    struct Hash<String>
+    {
+        using is_transparent = void;
+
+        std::uint64_t operator()(const String &s) const noexcept
+        {
+            return detail::hash_bytes(s.data(), s.size());
+        }
+        std::uint64_t operator()(StringView s) const noexcept
+        {
+            return detail::hash_bytes(s.data(), s.size());
+        }
+        std::uint64_t operator()(const char *s) const noexcept { return (*this)(StringView(s)); }
+
+        static bool equal(const String &a, StringView b) noexcept
+        {
+            return a.size() == b.size() && (b.size() == 0 || std::memcmp(a.data(), b.data(), b.size()) == 0);
+        }
+        static bool equal(const String &a, const char *b) noexcept { return equal(a, StringView(b)); }
+    };
 
     template <typename T>
     struct Hash<T *>
@@ -163,7 +235,36 @@ namespace ct
             return const_cast<HashMap *>(this)->find(k);
         }
 
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
+        V *find(const Q &k) noexcept
+        {
+            if (!size_)
+                return nullptr;
+            size_type i = probe_as(k);
+            return meta_[i] ? &slots_[i].value : nullptr;
+        }
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
+        const V *find(const Q &k) const noexcept
+        {
+            return const_cast<HashMap *>(this)->find(k);
+        }
+
         bool contains(const K &k) const noexcept { return find(k) != nullptr; }
+
+        template <typename Q, typename HH = H, typename = typename HH::is_transparent,
+                  typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
+                  typename = decltype(detail::declval<const HH &>()(detail::declval<const Q &>())),
+                  typename = decltype(HH::equal(detail::declval<const K &>(), detail::declval<const Q &>()))>
+        bool contains(const Q &k) const noexcept
+        {
+            return find(k) != nullptr;
+        }
 
         const V &get(const K &k, const V &fallback) const noexcept
         {
@@ -275,6 +376,41 @@ namespace ct
                 rehash(want);
         }
 
+        class const_iterator
+        {
+            const Entry *e_;
+            const std::uint8_t *m_;
+            const std::uint8_t *mend_;
+
+        public:
+            const_iterator(const Entry *e, const std::uint8_t *m, const std::uint8_t *mend)
+                : e_(e), m_(m), mend_(mend)
+            {
+                skip();
+            }
+            const Entry &operator*() const { return *e_; }
+            const Entry *operator->() const { return e_; }
+            const_iterator &operator++()
+            {
+                ++e_;
+                ++m_;
+                skip();
+                return *this;
+            }
+            bool operator==(const const_iterator &o) const { return m_ == o.m_; }
+            bool operator!=(const const_iterator &o) const { return m_ != o.m_; }
+
+        private:
+            void skip()
+            {
+                while (m_ != mend_ && !*m_)
+                {
+                    ++m_;
+                    ++e_;
+                }
+            }
+        };
+
         class iterator
         {
             Entry *e_;
@@ -299,6 +435,8 @@ namespace ct
             bool operator==(const iterator &o) const { return m_ == o.m_; }
             bool operator!=(const iterator &o) const { return m_ != o.m_; }
 
+            operator const_iterator() const { return const_iterator(e_, m_, mend_); }
+
         private:
             void skip()
             {
@@ -319,6 +457,17 @@ namespace ct
             std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
             return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
         }
+        const_iterator begin() const noexcept
+        {
+            return const_iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr);
+        }
+        const_iterator end() const noexcept
+        {
+            const std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
+            return const_iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
+        }
+        const_iterator cbegin() const noexcept { return begin(); }
+        const_iterator cend() const noexcept { return end(); }
 
         class const_iterator
         {
@@ -376,7 +525,7 @@ namespace ct
         template <typename KK, typename VV>
         CT_NOINLINE V &put_slow(KK &&k, VV &&v)
         {
-            if (slots_)
+            if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
                 size_type i = probe(k);
                 if (meta_[i])
@@ -398,7 +547,7 @@ namespace ct
 
         CT_NOINLINE V &index_slow(const K &k)
         {
-            if (slots_)
+            if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
                 size_type i = probe(k);
                 if (meta_[i])
@@ -423,8 +572,28 @@ namespace ct
             if (!slots_)
                 return true;
             const size_type capacity = mask_ + 1;
+            /* A table must NEVER be 100% full: probe() stops only at the key
+               or at an empty slot, so a full table and a missing key spin
+               forever. For capacity 2 (reserve(1), e.g. a copy of a 1-entry
+               map) `capacity - capacity / 4` IS the whole table, which let
+               the second insert fill it and the third hang. */
             return size_ == (std::numeric_limits<size_type>::max)() ||
+                   size_ + 1 >= capacity ||
                    size_ + 1 > capacity - capacity / 4;
+        }
+
+        template <typename Q>
+        size_type probe_as(const Q &k) const
+        {
+            const H &hasher = *static_cast<const H *>(this);
+            size_type i = static_cast<size_type>(hasher(k)) & mask_;
+            while (meta_[i])
+            {
+                if (hasher.equal(slots_[i].key, k))
+                    return i;
+                i = (i + 1) & mask_;
+            }
+            return i;
         }
 
         size_type probe(const K &k) const

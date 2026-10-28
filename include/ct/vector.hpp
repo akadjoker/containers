@@ -177,6 +177,24 @@ namespace ct
         {
             return data_ ? static_cast<size_type>(end_ - data_) : 0;
         }
+
+        static constexpr size_type npos = static_cast<size_type>(-1);
+
+        // Where the first element equal to value is, or npos.
+        template <class U>
+        size_type index_of(const U &value) const
+        {
+            for (const T *p = data_; p != end_; ++p)
+                if (*p == value)
+                    return static_cast<size_type>(p - data_);
+            return npos;
+        }
+
+        template <class U>
+        bool contains(const U &value) const
+        {
+            return index_of(value) != npos;
+        }
         size_type capacity() const noexcept
         {
             return data_ ? static_cast<size_type>(cap_ - data_) : 0;
@@ -516,6 +534,9 @@ namespace ct
             cap_ = p + new_cap;
         }
     };
+
+    template <typename T, typename Alloc>
+    constexpr typename Vector<T, Alloc>::size_type Vector<T, Alloc>::npos;
 
     template <typename T, typename A1, typename A2>
     inline bool operator==(const Vector<T, A1> &a, const Vector<T, A2> &b)

@@ -364,3 +364,18 @@ TEST(VectorAlgo, Swap) {
     EXPECT_EQ(a, (ct::Vector<int>{3}));
     EXPECT_EQ(b, (ct::Vector<int>{1, 2}));
 }
+
+TEST(VectorAlgo, ContainsAndIndexOf) {
+    ct::Vector<int> v{4, 7, 7, 9};
+    EXPECT_TRUE(v.contains(7));
+    EXPECT_FALSE(v.contains(5));
+    EXPECT_EQ(v.index_of(7), 1u);
+    EXPECT_EQ(v.index_of(5), ct::Vector<int>::npos);
+    ct::Vector<int> none;
+    EXPECT_FALSE(none.contains(1));
+    int a = 0, b = 0;
+    ct::Vector<int *> pointers{&a};
+    const int *ca = &a;
+    EXPECT_TRUE(pointers.contains(ca));
+    EXPECT_FALSE(pointers.contains(&b));
+}

@@ -284,6 +284,12 @@ namespace ct
     public:
         using Fn = Function<void()>;
 
+#if defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)
+        static constexpr bool kAvailable = false;
+#else
+        static constexpr bool kAvailable = true;
+#endif
+
         Thread() noexcept : handle_(), joinable_(false) {}
         explicit Thread(Fn fn) : handle_(), joinable_(false) { start(detail::move(fn)); }
         Thread(Thread &&o) noexcept : handle_(o.handle_), joinable_(o.joinable_) { o.joinable_ = false; }

@@ -13,6 +13,8 @@ namespace ct
 
         explicit ThreadPool(unsigned threads = 0) : active_(0), waiting_(0), sleepers_(0), stop_(false)
         {
+            if (!Thread::kAvailable)
+                return;
             if (threads == 0)
             {
                 unsigned hw = Thread::hardware_concurrency();
@@ -49,6 +51,11 @@ namespace ct
         {
             if (!job)
                 detail::fatal("ct::ThreadPool::submit: funcao vazia");
+            if (!Thread::kAvailable)
+            {
+                run_job(job);
+                return;
+            }
             bool wake_sleepers;
             {
                 LockGuard g(mutex_);

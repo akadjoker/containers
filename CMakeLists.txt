@@ -80,6 +80,7 @@ add_executable(ct_tests
   tests/test_rectpacker.cpp
   tests/test_regex.cpp
   tests/test_jsregex.cpp
+  tests/test_unicode.cpp
   tests/test_thread.cpp
   tests/test_stream.cpp
   tests/test_binary.cpp
@@ -89,6 +90,7 @@ add_executable(ct_tests
   tests/test_ini.cpp
   tests/test_soup.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
+target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
 
@@ -119,6 +121,7 @@ set(CT_PUBLIC_HEADERS
   ct/soup.hpp
   ct/stream.hpp
   ct/text.hpp
+  ct/unicode.hpp
   ct/slotmap.hpp
   ct/slotmap32.hpp
   ct/sort.hpp
@@ -201,6 +204,11 @@ add_executable(ct_bench_jsregex
   bench/bench_jsregex.cpp)
 target_link_libraries(ct_bench_jsregex PRIVATE ct)
 target_compile_options(ct_bench_jsregex PRIVATE ${CT_BENCH_OPTIONS})
+
+add_executable(ct_bench_unicode
+  bench/bench_unicode.cpp)
+target_link_libraries(ct_bench_unicode PRIVATE ct)
+target_compile_options(ct_bench_unicode PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_deque
   bench/bench_deque.cpp)

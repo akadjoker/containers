@@ -5,6 +5,7 @@
 #include "sort.hpp"
 #include "span.hpp"
 #include "string.hpp"
+#include "unicode.hpp"
 #include "vector.hpp"
 
 namespace ct
@@ -399,32 +400,12 @@ namespace ct
                 return P_Invalid;
             }
 
-            inline bool case_map(const uni::CaseRange *t, std::size_t n, std::uint32_t cp, std::uint32_t &out) noexcept
-            {
-                std::size_t lo = 0, hi = n;
-                while (lo < hi)
-                {
-                    std::size_t mid = (lo + hi) >> 1;
-                    if (t[mid].lo <= cp)
-                        lo = mid + 1;
-                    else
-                        hi = mid;
-                }
-                if (lo == 0)
-                    return false;
-                const uni::CaseRange &c = t[lo - 1];
-                if (cp > c.hi || (c.step == 2 && ((cp - c.lo) & 1u)))
-                    return false;
-                out = static_cast<std::uint32_t>(static_cast<std::int64_t>(cp) + c.delta);
-                return true;
-            }
-
             inline std::uint32_t canon_upper(std::uint32_t cp) noexcept
             {
                 if (cp < 128)
                     return (cp >= 'a' && cp <= 'z') ? cp - 32 : cp;
-                std::uint32_t m;
-                if (!case_map(UT::kUpper, uni::kUpperRanges, cp, m) || m < 128 || m > 0xFFFF)
+                std::uint32_t m = unicode::simple_upper(cp);
+                if (m == cp || m < 128 || m > 0xFFFF)
                     return cp;
                 return m;
             }
@@ -433,10 +414,7 @@ namespace ct
             {
                 if (cp < 128)
                     return (cp >= 'A' && cp <= 'Z') ? cp + 32 : cp;
-                std::uint32_t m;
-                if (!case_map(UT::kFold, uni::kFoldRanges, cp, m))
-                    return cp;
-                return m;
+                return unicode::simple_fold(cp);
             }
 
             inline std::uint32_t canon(std::uint32_t cp, bool unicode) noexcept

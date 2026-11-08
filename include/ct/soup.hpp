@@ -1178,6 +1178,7 @@ enum class Pseudo : unsigned char
     FirstChild,
     LastChild,
     OnlyChild,
+    NthChild,
     Empty,
     Not,
 };
@@ -1188,7 +1189,108 @@ struct PseudoTest
 {
     Pseudo kind = Pseudo::FirstChild;
     Compound* inner = nullptr;
+    int nthA = 0;
+    int nthB = 0;
+    bool ofType = false;
+    bool fromEnd = false;
 };
+
+inline bool parseSelectorInteger(StringView text, int& value)
+{
+    if (text.empty())
+    {
+        return false;
+    }
+    const bool negative = text[0] == '-';
+    std::size_t index = text[0] == '-' || text[0] == '+' ? 1 : 0;
+    if (index == text.size())
+    {
+        return false;
+    }
+    const unsigned int limit = negative ? 2147483648u : 2147483647u;
+    unsigned int magnitude = 0;
+    for (; index < text.size(); ++index)
+    {
+        if (!isDigit(text[index]))
+        {
+            return false;
+        }
+        const unsigned int digit = static_cast<unsigned int>(text[index] - '0');
+        if (magnitude > (limit - digit) / 10)
+        {
+            return false;
+        }
+        magnitude = magnitude * 10 + digit;
+    }
+    if (negative && magnitude == 2147483648u)
+    {
+        value = -2147483647 - 1;
+    }
+    else
+    {
+        value = negative ? -static_cast<int>(magnitude) : static_cast<int>(magnitude);
+    }
+    return true;
+}
+
+inline bool parseNthFormula(StringView text, int& a, int& b)
+{
+    String compact;
+    for (std::size_t index = 0; index < text.size(); ++index)
+    {
+        if (!isSpace(text[index]))
+        {
+            compact.push_back(lower(text[index]));
+        }
+    }
+    const StringView formula(compact);
+    if (formula == StringView("odd"))
+    {
+        a = 2;
+        b = 1;
+        return true;
+    }
+    if (formula == StringView("even"))
+    {
+        a = 2;
+        b = 0;
+        return true;
+    }
+    const std::size_t n = formula.find('n');
+    if (n == StringView::npos)
+    {
+        a = 0;
+        return parseSelectorInteger(formula, b);
+    }
+    if (formula.find('n', n + 1) != StringView::npos)
+    {
+        return false;
+    }
+    const StringView coefficient = formula.substr(0, n);
+    if (coefficient.empty() || coefficient == StringView("+"))
+    {
+        a = 1;
+    }
+    else if (coefficient == StringView("-"))
+    {
+        a = -1;
+    }
+    else if (!parseSelectorInteger(coefficient, a))
+    {
+        return false;
+    }
+    const StringView offset = formula.substr(n + 1);
+    if (offset.empty())
+    {
+        b = 0;
+        return true;
+    }
+    if (offset[0] != '+' && offset[0] != '-')
+    {
+        return false;
+    }
+    return parseSelectorInteger(offset, b);
+}
 
 struct Compound
 {
@@ -1342,6 +1444,18 @@ private:
         return out;
     }
 
+    // Ids and class names are case-sensitive in HTML, so they keep their case.
+    String readCaseSensitiveName()
+    {
+        String out;
+        while (i_ < text_.size() && isNameChar(text_[i_]))
+        {
+            out.push_back(text_[i_]);
+            ++i_;
+        }
+        return out;
+    }
+
     bool parseCompound(Compound& out)
     {
         bool any = false;
@@ -1369,7 +1483,7 @@ private:
             if (c == '.')
             {
                 ++i_;
-                const String name = readName();
+                const String name = readCaseSensitiveName();
                 if (name.empty())
                 {
                     return false;
@@ -1382,7 +1496,7 @@ private:
             if (c == '#')
             {
                 ++i_;
-                const String name = readName();
+                const String name = readCaseSensitiveName();
                 if (name.empty())
                 {
                     return false;
@@ -1524,6 +1638,34 @@ private:
         {
             test.kind = Pseudo::OnlyChild;
         }
+        else if (name == "first-of-type" || name == "last-of-type" || name == "only-of-type")
+        {
+            test.ofType = true;
+            test.fromEnd = name == "last-of-type";
+            test.kind = name == "only-of-type" ? Pseudo::OnlyChild : Pseudo::NthChild;
+            test.nthB = 1;
+        }
+        else if (name == "nth-child" || name == "nth-last-child" ||
+            name == "nth-of-type" || name == "nth-last-of-type")
+        {
+            if (atEnd() || text_[i_++] != '(')
+            {
+                return false;
+            }
+            const std::size_t start = i_;
+            while (i_ < text_.size() && text_[i_] != ')')
+            {
+                ++i_;
+            }
+            if (atEnd() || !parseNthFormula(text_.substr(start, i_ - start), test.nthA, test.nthB))
+            {
+                return false;
+            }
+            ++i_;
+            test.kind = Pseudo::NthChild;
+            test.ofType = name == "nth-of-type" || name == "nth-last-of-type";
+            test.fromEnd = name == "nth-last-child" || name == "nth-last-of-type";
+        }
         else if (name == "empty")
         {
             test.kind = Pseudo::Empty;
@@ -1639,8 +1781,35 @@ inline bool matchPseudo(const Node& node, const PseudoTest& test)
             {
                 return false;
             }
-            const Vector<const Node*> siblings = node.parent->childElements();
+            const Vector<const Node*> siblings = node.parent->childElements(test.ofType ? StringView(node.tag) : StringView());
             return siblings.size() == 1 && siblings[0] == &node;
+        }
+        case Pseudo::NthChild:
+        {
+            if (!node.parent)
+            {
+                return false;
+            }
+            const Vector<const Node*> siblings = node.parent->childElements(test.ofType ? StringView(node.tag) : StringView());
+            std::size_t position = 0;
+            for (std::size_t index = 0; index < siblings.size(); ++index)
+            {
+                if (siblings[index] == &node)
+                {
+                    position = test.fromEnd ? siblings.size() - index : index + 1;
+                    break;
+                }
+            }
+            if (position == 0 || position > 2147483647u)
+            {
+                return false;
+            }
+            const long long difference = static_cast<long long>(position) - test.nthB;
+            if (test.nthA == 0)
+            {
+                return difference == 0;
+            }
+            return difference % test.nthA == 0 && difference / test.nthA >= 0;
         }
         case Pseudo::Empty:
         {

@@ -518,6 +518,39 @@ TEST(SoupSelect, EmptyCountsWhitespaceAsText)
     EXPECT_EQ(count(soup, "p:empty"), 1u);
 }
 
+TEST(SoupSelect, NthChildSupportsAnPlusB)
+{
+    Soup soup = Soup::parse("<ul><li>a</li><li>b</li><li>c</li><li>d</li><li>e</li></ul>");
+    EXPECT_EQ(count(soup, "li:nth-child(odd)"), 3u);
+    EXPECT_EQ(count(soup, "li:nth-child(even)"), 2u);
+    EXPECT_EQ(count(soup, "li:nth-child(2n + 1)"), 3u);
+    EXPECT_EQ(count(soup, "li:nth-child(-n + 3)"), 3u);
+    EXPECT_EQ(count(soup, "li:nth-child(3)"), 1u);
+    EXPECT_EQ(count(soup, "li:nth-child(0n+2)"), 1u);
+}
+
+TEST(SoupSelect, InvalidNthChildMatchesNothing)
+{
+    Soup soup = Soup::parse("<ul><li>a</li><li>b</li></ul>");
+    EXPECT_EQ(count(soup, "li:nth-child()"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-child(2n+)"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-child(oddly)"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-child(2147483648)"), 0u);
+}
+
+TEST(SoupSelect, PositionalTypeAndReverseSelectors)
+{
+    Soup soup = Soup::parse("<div><span>A</span><b>B</b><span>C</span><!-- gap --><span>D</span></div>");
+    EXPECT_EQ(soup.selectOne("span:first-of-type")->getText(), "A");
+    EXPECT_EQ(soup.selectOne("span:last-of-type")->getText(), "D");
+    EXPECT_EQ(count(soup, "b:only-of-type"), 1u);
+    EXPECT_EQ(count(soup, "span:only-of-type"), 0u);
+    EXPECT_EQ(soup.selectOne("span:nth-of-type(2)")->getText(), "C");
+    EXPECT_EQ(soup.selectOne("span:nth-last-of-type(2)")->getText(), "C");
+    EXPECT_EQ(soup.selectOne("span:nth-last-child(1)")->getText(), "D");
+    EXPECT_EQ(count(soup, "span:nth-last-of-type(2n+)"), 0u);
+}
+
 TEST(SoupSelect, MalformedSelectorsMatchNothing)
 {
     // Selectors arrive from config files and text boxes, so a typo must give no
@@ -654,4 +687,19 @@ TEST(Soup, MoveAssignment)
     Soup b = Soup::parse("<p>second</p>");
     a = static_cast<Soup &&>(b);
     EXPECT_EQ(a.getText(), "second");
+}
+
+TEST(Soup, IdAndClassSelectorsAreCaseSensitive)
+{
+    Soup soup = Soup::parse("<DIV id=\"Main\" class=\"BigBox\">x</DIV><p id=\"main\" class=\"bigbox\">y</p>");
+    const Node *upper = soup.selectOne("#Main");
+    ASSERT_NE(upper, nullptr);
+    EXPECT_EQ(upper->tag, "div");
+    ASSERT_NE(soup.selectOne(".BigBox"), nullptr);
+    EXPECT_EQ(soup.selectOne(".BigBox"), upper);
+    EXPECT_EQ(soup.selectOne("div#Main.BigBox"), upper);
+    EXPECT_EQ(soup.selectOne("DIV#Main"), upper);
+    EXPECT_EQ(soup.selectOne("#main")->tag, "p");
+    EXPECT_EQ(soup.selectOne(".bigbox")->tag, "p");
+    EXPECT_EQ(soup.selectOne("#MAIN"), nullptr);
 }

@@ -29,7 +29,7 @@ target_link_libraries(ct_threads INTERFACE ct Threads::Threads)
 
 add_library(ct_sockets INTERFACE)
 add_library(ct::sockets ALIAS ct_sockets)
-target_link_libraries(ct_sockets INTERFACE ct_threads)
+target_link_libraries(ct_sockets INTERFACE ct_threads ${CMAKE_DL_LIBS})
 if(WIN32)
   target_link_libraries(ct_sockets INTERFACE ws2_32)
 endif()
@@ -87,6 +87,7 @@ add_executable(ct_tests
   tests/test_text.cpp
   tests/test_http.cpp
   tests/test_socket.cpp
+  tests/test_tls.cpp
   tests/test_ini.cpp
   tests/test_soup.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
@@ -130,6 +131,7 @@ set(CT_PUBLIC_HEADERS
   ct/string.hpp
   ct/thread.hpp
   ct/threadpool.hpp
+  ct/tls.hpp
   ct/treemap.hpp
   ct/variant.hpp
   ct/vector.hpp

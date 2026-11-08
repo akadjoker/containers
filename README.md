@@ -87,9 +87,10 @@ itself (GoogleTest is fetched only to build the test suite).
 | [json_stream.hpp](include/ct/json_stream.hpp) | `parse_json` | Optional JSON adapter for `Stream` |
 | [xml_stream.hpp](include/ct/xml_stream.hpp) | `parse_xml` | Optional XML adapter for `Stream` |
 | [socket.hpp](include/ct/socket.hpp) | `Address`, `TcpListener`, `TcpStream`, `UdpSocket`, `Poller` | Cross-platform IPv4/IPv6 sockets |
+| [tls.hpp](include/ct/tls.hpp) | `TlsConfig`, `TlsLibrary`, `TlsSocket` | TLS client over the system OpenSSL 3 loaded with `dlopen` (no vendored code, link `${CMAKE_DL_LIBS}`) |
 | [socket_stream.hpp](include/ct/socket_stream.hpp) | `SocketStream` | Blocking TCP adapter for `Stream` |
 | [http.hpp](include/ct/http.hpp) | `HttpRequest`, `HttpResponse`, `HttpParser` | Incremental HTTP/1.0 and HTTP/1.1 protocol layer. `reset()` after `Done` drops the finished message and keeps the bytes that follow it, in the middle of a message it keeps everything received so far, after an `Error` it discards the buffer. Requests are parsed strictly (no `Content-Length` with `Transfer-Encoding`, only a final `chunked`); responses follow RFC 9112 (other transfer codings are read until close, `Transfer-Encoding` wins over `Content-Length`). Decoded request paths keep `%2F` and `%25` encoded and reject control bytes |
-| [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP client |
+| [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP/HTTPS client (`https://` URLs or port 443 use `TlsSocket`; `request_tls` takes the host name and an optional `TlsConfig`). No redirect following |
 | [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
 | [ini.hpp](include/ct/ini.hpp) | `Ini` | INI settings parser/serializer with typed getters and file IO. Values are plain text with no escapes and no inline comments; a value that starts with `"` and ends with the matching `"` is unquoted (`""` is a literal quote, line breaks are allowed inside), anything else is kept verbatim, and `dump()` quotes only what would not survive a round trip |
 
@@ -143,7 +144,23 @@ event loops. `SocketStream` is intended only for blocking sequential IO.
 
 HTTP is split so protocol-only code does not include socket APIs. The parser
 accepts fragmented requests/responses, `Content-Length`, chunked bodies and
-pipelined messages. HTTPS/TLS is not included.
+pipelined messages.
+
+### TLS
+
+`tls.hpp` does not implement TLS: `TlsLibrary` loads the system OpenSSL
+(`libssl.so.3`, fallbacks `libssl.so`, `libssl.so.1.1`) at run time, so there is
+no build-time dependency. `TlsSocket::connect(address, host, timeout_ms, &error,
+&config)` does TCP connect, SNI, certificate and host name verification
+(always on; TLS 1.2 minimum, ALPN `http/1.1`, system CA store) and a
+non-blocking handshake bounded by the timeout. `send`/`recv` follow `Socket`
+semantics (0 closed, <0 error, `would_block()` when non-blocking). `TlsConfig`
+overrides `ca_file`/`ca_dir`/`alpn`; `insecure_skip_verify` exists for tests only.
+Errors read "certificate verify failed: ...", "hostname mismatch", "TLS library
+not available (...)", "handshake timeout", "protocol error: ...". The public API
+has no OpenSSL types; the OpenSSL code sits in one backend class so other backends
+(Schannel, Security.framework, mbedTLS) can replace it. Only Linux/OpenSSL
+exists today, and there is no HTTP/2, session resumption or client certificate.
 
 ```cpp
 #include <ct/http_client.hpp>

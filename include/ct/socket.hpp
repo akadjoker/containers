@@ -142,6 +142,7 @@ namespace ct
         Socket(Socket &&o) noexcept : fd_(o.fd_), error_(o.error_) { o.fd_ = detail::invalid_socket; }
         Socket &operator=(Socket &&o) noexcept { if (this != &o) { close(); fd_ = o.fd_; error_ = o.error_; o.fd_ = detail::invalid_socket; } return *this; }
         bool valid() const noexcept { return fd_ != detail::invalid_socket; }
+        detail::SocketHandle native_handle() const noexcept { return fd_; }
         void close() noexcept { if (valid()) { detail::close_socket(fd_); fd_ = detail::invalid_socket; } }
         bool set_nonblocking(bool enabled) noexcept
         {

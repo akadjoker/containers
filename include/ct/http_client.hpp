@@ -2,6 +2,7 @@
 
 #include "http.hpp"
 #include "socket.hpp"
+#include "tls.hpp"
 
 namespace ct
 {
@@ -15,6 +16,13 @@ namespace ct
             return from_url(url, request, out, error, timeout_ms);
         }
 
+        static bool get(StringView url, const TlsConfig &tls, HttpResponse &out, NetError *error = nullptr, unsigned timeout_ms = 5000)
+        {
+            HttpRequest request;
+            request.method = "GET";
+            return from_url(url, request, out, error, timeout_ms, &tls);
+        }
+
         static bool post(StringView url, StringView body, StringView content_type,
                          HttpResponse &out, NetError *error = nullptr, unsigned timeout_ms = 5000)
         {
@@ -25,8 +33,26 @@ namespace ct
             return from_url(url, request, out, error, timeout_ms);
         }
 
+        // Port 443 selects TLS; the Host header supplies the name for SNI and certificate checks.
         static bool request(const HttpRequest &request, const Address &address,
                             HttpResponse &out, NetError *error = nullptr, unsigned timeout_ms = 5000)
+        {
+            if (address.port() != 443) return send_request(request, address, nullptr, false, nullptr, out, error, timeout_ms);
+            StringView host = request.header("Host");
+            if (host.empty()) { set_error(error, "https request needs a Host header (or use request_tls)", 0); return false; }
+            return send_request(request, address, &host, true, nullptr, out, error, timeout_ms);
+        }
+
+        static bool request_tls(const HttpRequest &request, const Address &address, StringView host,
+                                HttpResponse &out, NetError *error = nullptr, unsigned timeout_ms = 5000,
+                                const TlsConfig *config = nullptr)
+        {
+            return send_request(request, address, &host, true, config, out, error, timeout_ms);
+        }
+
+    private:
+        static bool send_request(const HttpRequest &request, const Address &address, const StringView *tls_host, bool use_tls,
+                                 const TlsConfig *config, HttpResponse &out, NetError *error, unsigned timeout_ms)
         {
             StringView method = request.method.empty() ? StringView("GET") : StringView(request.method);
             StringView path = request.path.empty() ? StringView("/") : StringView(request.path);
@@ -44,8 +70,25 @@ namespace ct
                     return false;
                 }
             }
-            TcpStream stream;
-            if (!stream.connect(address, timeout_ms, error)) return false;
+            if (!use_tls)
+            {
+                TcpStream stream;
+                if (!stream.connect(address, timeout_ms, error)) return false;
+                return exchange(stream, request, method, path, out, error);
+            }
+            StringView host = *tls_host;
+            std::size_t colon = host.rfind(':');
+            if (host.size() && host[0] == '[') { std::size_t close = host.find(']'); if (close != StringView::npos) host = host.substr(1, close - 1); }
+            else if (colon != StringView::npos && host.find(':') == colon) host = host.substr(0, colon);
+            TlsSocket stream;
+            if (!stream.connect(address, host, timeout_ms, error, config)) return false;
+            return exchange(stream, request, method, path, out, error);
+        }
+
+        template <class Stream>
+        static bool exchange(Stream &stream, const HttpRequest &request, StringView method, StringView path,
+                             HttpResponse &out, NetError *error)
+        {
             String wire;
             wire.append(method.data(), method.size()).append(" ").append(path.data(), path.size());
             if (!request.query.empty()) wire.append("?").append(request.query);
@@ -82,7 +125,6 @@ namespace ct
             }
         }
 
-    private:
         static HttpParser::State skip_informational(HttpParser &parser, HttpParser::State state, HttpResponse &out, bool eof)
         {
             while (state == HttpParser::Done && out.status >= 100 && out.status < 200 && out.status != 101)
@@ -100,17 +142,18 @@ namespace ct
         }
 
         static bool from_url(StringView url, HttpRequest &request, HttpResponse &out,
-                             NetError *error, unsigned timeout_ms)
+                             NetError *error, unsigned timeout_ms, const TlsConfig *config = nullptr)
         {
-            const StringView scheme("http://");
-            if (!url.starts_with(scheme)) { set_error(error, "only http:// URLs are supported", 0); return false; }
-            StringView rest = url.substr(scheme.size());
+            const StringView http_scheme("http://"), https_scheme("https://");
+            const bool tls = url.starts_with(https_scheme);
+            if (!tls && !url.starts_with(http_scheme)) { set_error(error, "only http:// and https:// URLs are supported", 0); return false; }
+            StringView rest = url.substr(tls ? https_scheme.size() : http_scheme.size());
             std::size_t slash = rest.find('/');
             StringView authority = slash == StringView::npos ? rest : rest.substr(0, slash);
             StringView target = slash == StringView::npos ? StringView("/") : rest.substr(slash);
             if (authority.empty()) { set_error(error, "HTTP URL has no host", 0); return false; }
             StringView host = authority;
-            unsigned port = 80;
+            unsigned port = tls ? 443 : 80;
             if (authority[0] == '[')
             {
                 std::size_t close = authority.find(']');
@@ -139,7 +182,8 @@ namespace ct
             NetError last = {"connection failed", -1};
             for (std::size_t i = 0; i < addresses.size(); ++i)
             {
-                if (HttpClient::request(request, addresses[i], out, &last, timeout_ms)) return true;
+                if (tls ? request_tls(request, addresses[i], host, out, &last, timeout_ms, config)
+                        : send_request(request, addresses[i], nullptr, false, nullptr, out, &last, timeout_ms)) return true;
             }
             if (error) *error = last;
             return false;

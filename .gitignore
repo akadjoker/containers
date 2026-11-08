@@ -1,3 +1,5 @@
 /build
 /build-san
 /build*/
+/tests/ucd/
+__pycache__/

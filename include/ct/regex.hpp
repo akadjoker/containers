@@ -2295,7 +2295,10 @@ namespace ct
     class Match
     {
     public:
-        static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+        enum : std::size_t
+        {
+            npos = static_cast<std::size_t>(-1)
+        };
 
         Match() noexcept : re_(nullptr) {}
 
@@ -2350,8 +2353,6 @@ namespace ct
         std::size_t index(StringView name) const;
     };
 
-    constexpr std::size_t Match::npos;
-
     class Regex
     {
     public:
@@ -2364,7 +2365,10 @@ namespace ct
             Ascii = detail::re::F_Ascii
         };
 
-        static constexpr std::size_t npos = static_cast<std::size_t>(-1);
+        enum : std::size_t
+        {
+            npos = static_cast<std::size_t>(-1)
+        };
 
         struct Error
         {
@@ -2492,8 +2496,6 @@ namespace ct
 
         void parse_template(StringView repl, Vector<Piece> &pieces) const;
     };
-
-    constexpr std::size_t Regex::npos;
 
     inline std::size_t Match::index(StringView name) const
     {

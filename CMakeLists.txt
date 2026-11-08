@@ -79,6 +79,7 @@ add_executable(ct_tests
   tests/test_limits.cpp
   tests/test_rectpacker.cpp
   tests/test_regex.cpp
+  tests/test_jsregex.cpp
   tests/test_thread.cpp
   tests/test_stream.cpp
   tests/test_binary.cpp
@@ -111,6 +112,7 @@ set(CT_PUBLIC_HEADERS
   ct/ptr.hpp
   ct/queue.hpp
   ct/rectpacker.hpp
+  ct/jsregex.hpp
   ct/regex.hpp
   ct/socket.hpp
   ct/socket_stream.hpp
@@ -145,6 +147,10 @@ add_custom_target(ct_headers DEPENDS ${CT_HEADER_TARGETS})
 add_executable(ct_torture
   tests/torture.cpp)
 target_link_libraries(ct_torture PRIVATE ct)
+
+add_executable(ct_jsregex_cli
+  tests/ct_jsregex_cli.cpp)
+target_link_libraries(ct_jsregex_cli PRIVATE ct)
 endif()
 
 if(NOT CT_BUILD_BENCH)
@@ -190,6 +196,11 @@ add_executable(ct_bench_regex
   bench/bench_regex.cpp)
 target_link_libraries(ct_bench_regex PRIVATE ct)
 target_compile_options(ct_bench_regex PRIVATE ${CT_BENCH_OPTIONS})
+
+add_executable(ct_bench_jsregex
+  bench/bench_jsregex.cpp)
+target_link_libraries(ct_bench_jsregex PRIVATE ct)
+target_compile_options(ct_bench_jsregex PRIVATE ${CT_BENCH_OPTIONS})
 
 add_executable(ct_bench_deque
   bench/bench_deque.cpp)

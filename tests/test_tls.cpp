@@ -2,6 +2,7 @@
 #include <ct/tls.hpp>
 #include <gtest/gtest.h>
 
+
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -44,9 +45,9 @@ namespace
 
         bool load()
         {
-            ct::TlsLibrary &lib = ct::TlsLibrary::instance();
-            if (!lib.available()) return false;
-#define SYM(n) n = reinterpret_cast<decltype(n)>(lib.backend().symbol(#n)); if (!n) return false;
+            ct::TlsLibrary &lib = ct::TlsLibrary::instance(TlsConfig::System);
+            if (!lib.available() || !lib.openssl()) return false;
+#define SYM(n) n = reinterpret_cast<decltype(n)>(lib.openssl()->symbol(#n)); if (!n) return false;
             SYM(TLS_server_method) SYM(SSL_CTX_new) SYM(SSL_CTX_free) SYM(SSL_CTX_use_certificate_chain_file) SYM(SSL_CTX_use_PrivateKey_file)
             SYM(SSL_new) SYM(SSL_free) SYM(SSL_set_fd) SYM(SSL_accept) SYM(SSL_read) SYM(SSL_write) SYM(SSL_shutdown)
 #undef SYM
@@ -201,15 +202,27 @@ namespace
         api.SSL_shutdown(ssl);
     }
 
-    TlsConfig trusting()
+    TlsConfig::Backend g_backend = TlsConfig::System;
+
+    const char *backend_name(TlsConfig::Backend b) { return b == TlsConfig::Mbed ? "Mbed" : "System"; }
+
+    TlsConfig plain()
     {
         TlsConfig c;
+        c.backend = g_backend;
+        return c;
+    }
+
+    TlsConfig trusting()
+    {
+        TlsConfig c = plain();
         c.ca_file = ct::String(pki().ca.c_str());
         return c;
     }
 
 #define REQUIRE_TLS_SERVER(server, handler) \
-    if (!ct::TlsLibrary::instance().available()) GTEST_SKIP() << "no TLS library: " << ct::TlsLibrary::instance().error(); \
+    if (!ct::TlsLibrary::instance(g_backend).available()) GTEST_SKIP() << "no TLS library: " << ct::TlsLibrary::instance(g_backend).error(); \
+    if (!ct::TlsLibrary::instance(TlsConfig::System).available()) GTEST_SKIP() << "test server needs the system OpenSSL"; \
     if (!pki().ok) GTEST_SKIP() << "openssl CLI unavailable"; \
     TlsServer server; \
     ASSERT_TRUE(server.start(handler))
@@ -220,14 +233,34 @@ namespace
 
 #if !defined(_WIN32)
 
-TEST(Tls, LibraryLoads)
+namespace
 {
-    ct::TlsLibrary &lib = ct::TlsLibrary::instance();
+    class TlsParam : public ::testing::TestWithParam<TlsConfig::Backend>
+    {
+    protected:
+        void SetUp() override { g_backend = GetParam(); }
+    };
+    class Backends : public TlsParam {};
+    class HttpBackends : public TlsParam {};
+    class NetworkBackends : public TlsParam {};
+
+    std::string param_name(const ::testing::TestParamInfo<TlsConfig::Backend> &info) { return backend_name(info.param); }
+
+#if defined(CT_TLS_MBEDTLS)
+    const TlsConfig::Backend backends[] = {TlsConfig::System, TlsConfig::Mbed};
+#else
+    const TlsConfig::Backend backends[] = {TlsConfig::System};
+#endif
+}
+
+TEST_P(Backends, LibraryLoads)
+{
+    ct::TlsLibrary &lib = ct::TlsLibrary::instance(g_backend);
     if (!lib.available()) GTEST_SKIP() << lib.error();
     EXPECT_STREQ(lib.error(), "");
 }
 
-TEST(Tls, HandshakeWithCaFile)
+TEST_P(Backends, HandshakeWithCaFile)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
     TlsSocket socket; NetError error = {"", 0}; TlsConfig config = trusting();
@@ -239,32 +272,32 @@ TEST(Tls, HandshakeWithCaFile)
     EXPECT_EQ(std::string(buf, 5), "hello");
 }
 
-TEST(Tls, IpAddressMatchesSubjectAltName)
+TEST_P(Backends, IpAddressMatchesSubjectAltName)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
     TlsSocket socket; NetError error = {"", 0}; TlsConfig config = trusting();
     EXPECT_TRUE(socket.connect(server.address(), "127.0.0.1", 3000, &error, &config)) << error.message;
 }
 
-TEST(Tls, UnknownCaFailsWithDefaultStore)
+TEST_P(Backends, UnknownCaFailsWithDefaultStore)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
-    TlsSocket socket; NetError error = {"", 0};
-    EXPECT_FALSE(socket.connect(server.address(), "localhost", 3000, &error));
+    TlsSocket socket; NetError error = {"", 0}; TlsConfig config = plain();
+    EXPECT_FALSE(socket.connect(server.address(), "localhost", 3000, &error, &config));
     EXPECT_NE(std::string(error.message).find("certificate verify failed"), std::string::npos) << error.message;
     EXPECT_EQ(error.code, ct::TlsCertificate);
     EXPECT_FALSE(socket.valid());
 }
 
-TEST(Tls, WrongCaFileFails)
+TEST_P(Backends, WrongCaFileFails)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
-    TlsSocket socket; NetError error = {"", 0}; TlsConfig config; config.ca_file = ct::String(pki().other_ca.c_str());
+    TlsSocket socket; NetError error = {"", 0}; TlsConfig config = plain(); config.ca_file = ct::String(pki().other_ca.c_str());
     EXPECT_FALSE(socket.connect(server.address(), "localhost", 3000, &error, &config));
     EXPECT_NE(std::string(error.message).find("certificate verify failed"), std::string::npos) << error.message;
 }
 
-TEST(Tls, HostnameMismatchFails)
+TEST_P(Backends, HostnameMismatchFails)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
     TlsSocket socket; NetError error = {"", 0}; TlsConfig config = trusting();
@@ -273,16 +306,16 @@ TEST(Tls, HostnameMismatchFails)
     EXPECT_EQ(error.code, ct::TlsHostname);
 }
 
-TEST(Tls, InsecureSkipVerifyPasses)
+TEST_P(Backends, InsecureSkipVerifyPasses)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
-    TlsSocket socket; NetError error = {"", 0}; TlsConfig config; config.insecure_skip_verify = true;
+    TlsSocket socket; NetError error = {"", 0}; TlsConfig config = plain(); config.insecure_skip_verify = true;
     ASSERT_TRUE(socket.connect(server.address(), "wrong.example", 3000, &error, &config)) << error.message;
     char buf[8] = {};
     EXPECT_TRUE(socket.recv_exact(buf, 5));
 }
 
-TEST(Tls, UploadTenMegabytes)
+TEST_P(Backends, UploadTenMegabytes)
 {
     REQUIRE_TLS_SERVER(server, upload_handler);
     TlsSocket socket; NetError error = {"", 0}; TlsConfig config = trusting();
@@ -296,7 +329,7 @@ TEST(Tls, UploadTenMegabytes)
     EXPECT_EQ(std::string(reply, 2), "OK");
 }
 
-TEST(Tls, DownloadTenMegabytesAndCleanClose)
+TEST_P(Backends, DownloadTenMegabytesAndCleanClose)
 {
     REQUIRE_TLS_SERVER(server, download_handler);
     TlsSocket socket; NetError error = {"", 0}; TlsConfig config = trusting();
@@ -310,7 +343,7 @@ TEST(Tls, DownloadTenMegabytesAndCleanClose)
     EXPECT_FALSE(socket.valid());
 }
 
-TEST(Tls, NonBlockingRecvReportsWouldBlock)
+TEST_P(Backends, NonBlockingRecvReportsWouldBlock)
 {
     REQUIRE_TLS_SERVER(server, greeting_handler);
     TlsSocket socket; NetError error = {"", 0}; TlsConfig config = trusting();
@@ -322,15 +355,15 @@ TEST(Tls, NonBlockingRecvReportsWouldBlock)
     EXPECT_TRUE(socket.would_block());
 }
 
-TEST(Tls, HandshakeTimeoutAgainstSilentListener)
+TEST_P(Backends, HandshakeTimeoutAgainstSilentListener)
 {
-    if (!ct::TlsLibrary::instance().available()) GTEST_SKIP() << ct::TlsLibrary::instance().error();
+    if (!ct::TlsLibrary::instance(g_backend).available()) GTEST_SKIP() << ct::TlsLibrary::instance(g_backend).error();
     TcpListener listener; Address any; Address::parse("127.0.0.1", 0, any);
     if (!listener.bind(any) || !listener.listen()) GTEST_SKIP() << "TCP port unavailable";
     Address target; Address::parse("127.0.0.1", listener.local_address().port(), target);
     std::atomic<bool> release{false};
     std::thread holder([&] { TcpStream c; if (listener.accept(c)) while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(10)); });
-    TlsSocket socket; NetError error = {"", 0}; TlsConfig config; config.insecure_skip_verify = true;
+    TlsSocket socket; NetError error = {"", 0}; TlsConfig config = plain(); config.insecure_skip_verify = true;
     auto start = std::chrono::steady_clock::now();
     EXPECT_FALSE(socket.connect(target, "localhost", 300, &error, &config));
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
@@ -342,9 +375,9 @@ TEST(Tls, HandshakeTimeoutAgainstSilentListener)
     holder.join();
 }
 
-TEST(Tls, MissingLibraryGivesClearError)
+TEST(TlsOpenSsl, MissingLibraryGivesClearError)
 {
-    ct::TlsLibrary missing("libssl_ct_missing.so.99", "libcrypto_ct_missing.so.99");
+    ct::TlsLibrary missing("libssl_ct_missing.so.99", "libcrypto_ct_missing.so.99", TlsConfig::System);
     EXPECT_FALSE(missing.available());
     EXPECT_STRNE(missing.error(), "");
     TlsConfig config; config.library = &missing;
@@ -358,7 +391,7 @@ TEST(Tls, MissingLibraryGivesClearError)
     EXPECT_NE(std::string(http_error.message).find("TLS library not available"), std::string::npos) << http_error.message;
 }
 
-TEST(TlsHttp, GetOverHttpsLocalServer)
+TEST_P(HttpBackends, GetOverHttpsLocalServer)
 {
     REQUIRE_TLS_SERVER(server, http_handler);
     TlsConfig config = trusting();
@@ -369,7 +402,7 @@ TEST(TlsHttp, GetOverHttpsLocalServer)
     EXPECT_EQ(response.body, "secure hello");
 }
 
-TEST(TlsHttp, RequestWithExplicitHost)
+TEST_P(HttpBackends, RequestWithExplicitHost)
 {
     REQUIRE_TLS_SERVER(server, http_handler);
     TlsConfig config = trusting();
@@ -381,12 +414,12 @@ TEST(TlsHttp, RequestWithExplicitHost)
     EXPECT_STREQ(error.message, "hostname mismatch");
 }
 
-TEST(TlsHttp, UntrustedServerFailsWithoutConfig)
+TEST_P(HttpBackends, UntrustedServerFailsWithoutConfig)
 {
     REQUIRE_TLS_SERVER(server, http_handler);
-    ct::HttpResponse response; NetError error = {"", 0};
+    ct::HttpResponse response; NetError error = {"", 0}; TlsConfig config = plain();
     std::string url = "https://localhost:" + std::to_string(server.port()) + "/";
-    EXPECT_FALSE(ct::HttpClient::get(ct::StringView(url.c_str()), response, &error, 3000));
+    EXPECT_FALSE(ct::HttpClient::get(ct::StringView(url.c_str()), config, response, &error, 3000));
     EXPECT_NE(std::string(error.message).find("certificate verify failed"), std::string::npos) << error.message;
 }
 
@@ -394,9 +427,10 @@ namespace
 {
     void check_real(const char *url, int expected_status)
     {
-        if (!ct::TlsLibrary::instance().available()) GTEST_SKIP() << ct::TlsLibrary::instance().error();
+        if (!ct::TlsLibrary::instance(g_backend).available()) GTEST_SKIP() << ct::TlsLibrary::instance(g_backend).error();
+        TlsConfig config = plain();
         ct::HttpResponse response; NetError error = {"", 0};
-        if (!ct::HttpClient::get(url, response, &error, 8000))
+        if (!ct::HttpClient::get(url, config, response, &error, 8000))
         {
             if (error.code == ct::TlsCertificate || error.code == ct::TlsHostname) FAIL() << error.message;
             GTEST_SKIP() << "network unavailable: " << error.message;
@@ -404,9 +438,100 @@ namespace
         EXPECT_EQ(response.status, expected_status);
         EXPECT_FALSE(response.body.empty());
     }
+
+    void check_rejected(const char *url, int code, const char *needle)
+    {
+        if (!ct::TlsLibrary::instance(g_backend).available()) GTEST_SKIP() << ct::TlsLibrary::instance(g_backend).error();
+        TlsConfig config = plain();
+        ct::HttpResponse response; NetError error = {"", 0};
+        if (ct::HttpClient::get(url, config, response, &error, 8000)) FAIL() << "connection to " << url << " was accepted";
+        if (error.code != ct::TlsCertificate && error.code != ct::TlsHostname) GTEST_SKIP() << "network unavailable: " << error.message;
+        EXPECT_EQ(error.code, code) << error.message;
+        EXPECT_NE(std::string(error.message).find(needle), std::string::npos) << error.message;
+    }
 }
 
-TEST(TlsNetwork, ExampleCom) { check_real("https://example.com/", 200); }
-TEST(TlsNetwork, UnicodeRobots) { check_real("https://www.unicode.org/robots.txt", 200); }
+TEST_P(NetworkBackends, ExampleCom) { check_real("https://example.com/", 200); }
+TEST_P(NetworkBackends, UnicodeRobots) { check_real("https://www.unicode.org/robots.txt", 200); }
+TEST_P(NetworkBackends, ExpiredCertificateRejected) { check_rejected("https://expired.badssl.com/", ct::TlsCertificate, "expired"); }
+TEST_P(NetworkBackends, WrongHostRejected) { check_rejected("https://wrong.host.badssl.com/", ct::TlsHostname, "hostname mismatch"); }
+TEST_P(NetworkBackends, SelfSignedRejected) { check_rejected("https://self-signed.badssl.com/", ct::TlsCertificate, "certificate verify failed"); }
+
+INSTANTIATE_TEST_SUITE_P(Tls, Backends, ::testing::ValuesIn(backends), param_name);
+INSTANTIATE_TEST_SUITE_P(TlsHttp, HttpBackends, ::testing::ValuesIn(backends), param_name);
+INSTANTIATE_TEST_SUITE_P(TlsNetwork, NetworkBackends, ::testing::ValuesIn(backends), param_name);
+
+TEST(TlsBackendChoice, DefaultFollowsBuild)
+{
+#if defined(CT_TLS_DEFAULT_MBEDTLS) && defined(CT_TLS_MBEDTLS)
+    EXPECT_EQ(ct::TlsLibrary::instance().choice(), TlsConfig::Mbed);
+#else
+    EXPECT_EQ(ct::TlsLibrary::instance().choice(), TlsConfig::System);
+#endif
+}
+
+TEST(TlsCaStore, FindsBundleOnThisMachine)
+{
+#if defined(__linux__) && !defined(__ANDROID__)
+    EXPECT_FALSE(ct::detail::SystemCaStore::find_bundle().empty());
+#else
+    GTEST_SKIP() << "no bundle candidates on this platform";
+#endif
+}
+
+TEST(TlsCaStore, ExplicitFileAndMissingFile)
+{
+    if (!pki().ok) GTEST_SKIP() << "openssl CLI unavailable";
+    int accepted = 0; char error[100] = "";
+    auto sink = [&](const char *data, std::size_t size) { ++accepted; return size > 1 && std::strstr(data, "BEGIN CERTIFICATE") != nullptr; };
+    TlsConfig config; config.ca_file = ct::String(pki().ca.c_str());
+    EXPECT_TRUE(ct::detail::SystemCaStore::load(config, sink, error, sizeof(error)));
+    EXPECT_EQ(accepted, 1);
+    config.ca_file = ct::String("/nonexistent/ct_ca.pem");
+    EXPECT_FALSE(ct::detail::SystemCaStore::load(config, sink, error, sizeof(error)));
+    EXPECT_NE(std::string(error).find("/nonexistent/ct_ca.pem"), std::string::npos) << error;
+    TlsConfig dir; dir.ca_dir = ct::String(pki().dir.c_str());
+    accepted = 0;
+    EXPECT_TRUE(ct::detail::SystemCaStore::load(dir, sink, error, sizeof(error)));
+    EXPECT_GE(accepted, 2);
+}
+
+#if defined(CT_TLS_MBEDTLS)
+TEST(TlsMbed, SystemCaStoreLoadsManyCertificates)
+{
+    mbedtls_x509_crt chain; mbedtls_x509_crt_init(&chain);
+    char error[100] = "";
+    auto sink = [&](const char *data, std::size_t size)
+    {
+        return mbedtls_x509_crt_parse(&chain, reinterpret_cast<const unsigned char *>(data), size) >= 0;
+    };
+    if (!ct::detail::SystemCaStore::load(TlsConfig(), sink, error, sizeof(error))) { mbedtls_x509_crt_free(&chain); GTEST_SKIP() << error; }
+    int count = 0;
+    for (const mbedtls_x509_crt *c = &chain; c && c->version != 0; c = c->next) ++count;
+    mbedtls_x509_crt_free(&chain);
+    EXPECT_GE(count, 50);
+}
+
+TEST(TlsMbed, SeparateFromSystemBackend)
+{
+    ct::TlsLibrary &mbed = ct::TlsLibrary::instance(TlsConfig::Mbed);
+    EXPECT_TRUE(mbed.available());
+    EXPECT_EQ(mbed.openssl(), nullptr);
+    EXPECT_EQ(mbed.choice(), TlsConfig::Mbed);
+    EXPECT_TRUE(ct::TlsLibrary::mbedtls_compiled_in());
+}
+#else
+TEST(TlsMbed, NotCompiledInGivesClearError)
+{
+    ct::TlsLibrary &mbed = ct::TlsLibrary::instance(TlsConfig::Mbed);
+    EXPECT_FALSE(mbed.available());
+    EXPECT_NE(std::string(mbed.error()).find("CT_TLS_MBEDTLS"), std::string::npos) << mbed.error();
+    TlsConfig config; config.backend = TlsConfig::Mbed;
+    Address target; Address::parse("127.0.0.1", 9, target);
+    TlsSocket socket; NetError error = {"", 0};
+    EXPECT_FALSE(socket.connect(target, "localhost", 500, &error, &config));
+    EXPECT_EQ(error.code, ct::TlsNoLibrary);
+}
+#endif
 
 #endif

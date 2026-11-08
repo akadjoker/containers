@@ -87,7 +87,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [json_stream.hpp](include/ct/json_stream.hpp) | `parse_json` | Optional JSON adapter for `Stream` |
 | [xml_stream.hpp](include/ct/xml_stream.hpp) | `parse_xml` | Optional XML adapter for `Stream` |
 | [socket.hpp](include/ct/socket.hpp) | `Address`, `TcpListener`, `TcpStream`, `UdpSocket`, `Poller` | Cross-platform IPv4/IPv6 sockets |
-| [tls.hpp](include/ct/tls.hpp) | `TlsConfig`, `TlsLibrary`, `TlsSocket` | TLS client over the system OpenSSL 3 loaded with `dlopen` (no vendored code, link `${CMAKE_DL_LIBS}`) |
+| [tls.hpp](include/ct/tls.hpp) | `TlsConfig`, `TlsLibrary`, `TlsSocket` | TLS client with two backends: the system OpenSSL 3 loaded with `dlopen` (default), or mbedTLS 3.6 (option `CT_TLS_MBEDTLS`, downloaded by CMake, never vendored). [tls_backend.hpp](include/ct/tls_backend.hpp) holds the backend interface and the CA store loader, [tls_mbedtls.hpp](include/ct/tls_mbedtls.hpp) the mbedTLS backend |
 | [socket_stream.hpp](include/ct/socket_stream.hpp) | `SocketStream` | Blocking TCP adapter for `Stream` |
 | [http.hpp](include/ct/http.hpp) | `HttpRequest`, `HttpResponse`, `HttpParser` | Incremental HTTP/1.0 and HTTP/1.1 protocol layer. `reset()` after `Done` drops the finished message and keeps the bytes that follow it, in the middle of a message it keeps everything received so far, after an `Error` it discards the buffer. Requests are parsed strictly (no `Content-Length` with `Transfer-Encoding`, only a final `chunked`); responses follow RFC 9112 (other transfer codings are read until close, `Transfer-Encoding` wins over `Content-Length`). Decoded request paths keep `%2F` and `%25` encoded and reject control bytes |
 | [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP/HTTPS client (`https://` URLs or port 443 use `TlsSocket`; `request_tls` takes the host name and an optional `TlsConfig`). No redirect following |
@@ -148,19 +148,41 @@ pipelined messages.
 
 ### TLS
 
-`tls.hpp` does not implement TLS: `TlsLibrary` loads the system OpenSSL
-(`libssl.so.3`, fallbacks `libssl.so`, `libssl.so.1.1`) at run time, so there is
-no build-time dependency. `TlsSocket::connect(address, host, timeout_ms, &error,
-&config)` does TCP connect, SNI, certificate and host name verification
-(always on; TLS 1.2 minimum, ALPN `http/1.1`, system CA store) and a
+`tls.hpp` does not implement TLS; a backend does. `TlsSocket::connect(address,
+host, timeout_ms, &error, &config)` does TCP connect, SNI, certificate and host
+name verification (always on; TLS 1.2 minimum, ALPN `http/1.1`) and a
 non-blocking handshake bounded by the timeout. `send`/`recv` follow `Socket`
 semantics (0 closed, <0 error, `would_block()` when non-blocking). `TlsConfig`
-overrides `ca_file`/`ca_dir`/`alpn`; `insecure_skip_verify` exists for tests only.
-Errors read "certificate verify failed: ...", "hostname mismatch", "TLS library
-not available (...)", "handshake timeout", "protocol error: ...". The public API
-has no OpenSSL types; the OpenSSL code sits in one backend class so other backends
-(Schannel, Security.framework, mbedTLS) can replace it. Only Linux/OpenSSL
-exists today, and there is no HTTP/2, session resumption or client certificate.
+overrides `ca_file`/`ca_dir`/`alpn`/`backend`; `insecure_skip_verify` exists for
+tests only. Errors read "certificate verify failed: ...", "hostname mismatch",
+"TLS library not available (...)", "handshake timeout", "protocol error: ...".
+The public API has no OpenSSL or mbedTLS types.
+
+Backends, chosen per connection with `TlsConfig::backend` (`Default`, `System`,
+`Mbed`):
+
+- `System`: the system OpenSSL (`libssl.so.3`, fallbacks `libssl.so`,
+  `libssl.so.1.1`) loaded at run time; no build-time dependency, trust store
+  from OpenSSL's default paths. Linux only.
+- `Mbed`: mbedTLS 3.6 LTS (tag 3.6.7), compiled in only with `-DCT_TLS_MBEDTLS=ON`.
+  CMake downloads the release tarball at configure time into the build
+  directory (about 5.5 MB; no third-party code enters this repository), builds
+  `mbedtls`/`mbedx509`/`mbedcrypto` with tests and programs off and
+  `MBEDTLS_THREADING_C`/`PTHREAD` on, and `ct_sockets` links them and defines
+  `CT_TLS_MBEDTLS`. Targets that do not use `ct_sockets` can link `ct::tls_mbedtls`.
+  The trust store comes from `detail::SystemCaStore`: Linux reads the first of
+  `/etc/ssl/certs/ca-certificates.crt`, `/etc/pki/tls/certs/ca-bundle.crt`,
+  `/etc/ssl/ca-bundle.pem`, `/etc/ssl/cert.pem`; Android reads every PEM file of
+  `/system/etc/security/cacerts/` (untested here); `ca_file`/`ca_dir` override.
+  Windows (CryptoAPI) and macOS (Security.framework) are not implemented: the
+  loader returns "system CA store not implemented on this platform", so only
+  `ca_file`/`ca_dir` work there.
+
+`Default` is `System` unless the build defines `CT_TLS_DEFAULT_MBEDTLS`
+(`-DCT_TLS_DEFAULT_MBEDTLS=ON` together with `CT_TLS_MBEDTLS`). Asking for `Mbed`
+in a build without it fails with "TLS library not available (mbedTLS backend not
+compiled in (CT_TLS_MBEDTLS))". There is no HTTP/2, session resumption or client
+certificate, and Schannel, Security.framework and JNI backends do not exist.
 
 ```cpp
 #include <ct/http_client.hpp>

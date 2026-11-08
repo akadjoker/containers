@@ -2,15 +2,24 @@
 
 // TLS client.  TlsConfig/TlsLibrary/TlsSocket are backend neutral; everything
 // specific to a TLS implementation lives in a backend class in ct::detail that
-// provides: load, make_context/free_context, new_session/free_session,
-// handshake/read/write/shutdown (returning Status plus a Failure), version, alpn,
-// pending.  The only backend today is OpenSSL 3 (1.1.1 fallback) loaded with
-// dlopen/dlsym (no vendored code, only ${CMAKE_DL_LIBS} at link time).  Schannel,
-// Security.framework, JNI and mbedTLS backends are not implemented; where no
-// backend exists TlsLibrary::available() is false.
+// implements detail::TlsBackend (tls_backend.hpp): make_context/free_context,
+// new_session/free_session, handshake/read/write/shutdown (returning TlsStatus plus
+// a TlsFailure), version, alpn, pending.  Backends:
+//   * detail::TlsOpenSslBackend: system OpenSSL 3 (1.1.1 fallback) loaded with
+//     dlopen/dlsym (no vendored code, only ${CMAKE_DL_LIBS} at link time);
+//   * detail::TlsMbedBackend (tls_mbedtls.hpp): mbedTLS 3.6, compiled in only with
+//     CT_TLS_MBEDTLS (CMake option of the same name; the library is downloaded at
+//     configure time, never vendored).
+// TlsConfig::backend picks one per connection; Default is the system OpenSSL unless
+// CT_TLS_DEFAULT_MBEDTLS is defined.  Schannel, Security.framework and JNI backends
+// are not implemented; where a backend is missing TlsLibrary::available() is false.
 
 #include "socket.hpp"
 #include "thread.hpp"
+#include "tls_backend.hpp"
+#if defined(CT_TLS_MBEDTLS)
+#include "tls_mbedtls.hpp"
+#endif
 
 #include <chrono>
 
@@ -22,54 +31,9 @@
 
 namespace ct
 {
-    class TlsLibrary;
-
-    struct TlsConfig
-    {
-        String ca_file;
-        String ca_dir;
-        bool insecure_skip_verify = false;
-        String alpn = "http/1.1";
-        TlsLibrary *library = nullptr;
-    };
-
-    enum TlsErrorCode
-    {
-        TlsNoLibrary = -100,
-        TlsCertificate = -101,
-        TlsHostname = -102,
-        TlsHandshakeTimeout = -103,
-        TlsProtocol = -104,
-        TlsTimeout = -105,
-        TlsConfigError = -106
-    };
-
     namespace detail
     {
-        inline char *tls_message_buffer() noexcept
-        {
-            static thread_local char buffer[320];
-            return buffer;
-        }
-        inline void tls_set_error(NetError *out, int code, const char *prefix, const char *detail_text = nullptr) noexcept
-        {
-            if (!out) return;
-            char *buffer = tls_message_buffer();
-            if (detail_text) std::snprintf(buffer, 320, "%s%s", prefix, detail_text);
-            else std::snprintf(buffer, 320, "%s", prefix);
-            out->message = buffer;
-            out->code = code;
-        }
-    }
-
-
-    namespace detail
-    {
-        struct TlsFailure { int code; char text[256]; };
-
-        enum class TlsStatus { Ok, WantRead, WantWrite, Closed, Failed };
-
-        class TlsOpenSslBackend
+        class TlsOpenSslBackend : public TlsBackend
         {
         public:
             TlsOpenSslBackend() { std::memset(&f_, 0, sizeof(f_)); error_[0] = '\0'; }
@@ -100,8 +64,8 @@ namespace ct
                 ok_ = true;
 #endif
             }
-            bool ok() const noexcept { return ok_; }
-            const char *error() const noexcept { return error_; }
+            bool ok() const noexcept override { return ok_; }
+            const char *error() const noexcept override { return error_; }
 
             void *symbol(const char *name) const noexcept
             {
@@ -114,7 +78,7 @@ namespace ct
             }
 
             // Trust store: ca_file/ca_dir when given, the system default otherwise.
-            void *make_context(const TlsConfig &config, char *error, std::size_t error_size)
+            void *make_context(const TlsConfig &config, char *error, std::size_t error_size) override
             {
                 auto fail = [&](const char *text) -> void * { if (error && error_size) std::snprintf(error, error_size, "%s", text); return nullptr; };
                 void *ctx = f_.SSL_CTX_new(f_.TLS_client_method());
@@ -145,10 +109,10 @@ namespace ct
                 }
                 return ctx;
             }
-            void free_context(void *ctx) noexcept { f_.SSL_CTX_free(ctx); }
+            void free_context(void *ctx) noexcept override { f_.SSL_CTX_free(ctx); }
 
             // The session keeps its own reference to the context.
-            void *new_session(void *ctx, int fd, StringView host)
+            void *new_session(void *ctx, int fd, StringView host) override
             {
                 void *ssl = f_.SSL_new(ctx);
                 if (!ssl) return nullptr;
@@ -164,9 +128,9 @@ namespace ct
                 }
                 return ssl;
             }
-            void free_session(void *ssl) noexcept { f_.SSL_free(ssl); }
+            void free_session(void *ssl) noexcept override { f_.SSL_free(ssl); }
 
-            TlsStatus handshake(void *ssl, TlsFailure &failure) noexcept
+            TlsStatus handshake(void *ssl, TlsFailure &failure) noexcept override
             {
                 f_.ERR_clear_error();
                 const int rc = f_.SSL_do_handshake(ssl);
@@ -177,22 +141,22 @@ namespace ct
                 describe(ssl, error, true, failure);
                 return TlsStatus::Failed;
             }
-            TlsStatus read(void *ssl, void *data, std::size_t n, std::size_t &got, TlsFailure &failure) noexcept
+            TlsStatus read(void *ssl, void *data, std::size_t n, std::size_t &got, TlsFailure &failure) noexcept override
             {
                 f_.ERR_clear_error();
                 if (f_.SSL_read_ex(ssl, data, n, &got) == 1) return TlsStatus::Ok;
                 return io_status(ssl, failure);
             }
-            TlsStatus write(void *ssl, const void *data, std::size_t n, std::size_t &written, TlsFailure &failure) noexcept
+            TlsStatus write(void *ssl, const void *data, std::size_t n, std::size_t &written, TlsFailure &failure) noexcept override
             {
                 f_.ERR_clear_error();
                 if (f_.SSL_write_ex(ssl, data, n, &written) == 1) return TlsStatus::Ok;
                 return io_status(ssl, failure);
             }
-            void shutdown(void *ssl) noexcept { f_.SSL_shutdown(ssl); }
-            std::size_t pending(void *ssl) const noexcept { return static_cast<std::size_t>(f_.SSL_pending(ssl)); }
-            StringView version(void *ssl) const noexcept { return StringView(f_.SSL_get_version(ssl)); }
-            StringView alpn(void *ssl) const noexcept
+            void shutdown(void *ssl) noexcept override { f_.SSL_shutdown(ssl); }
+            std::size_t pending(void *ssl) const noexcept override { return static_cast<std::size_t>(f_.SSL_pending(ssl)); }
+            StringView version(void *ssl) const noexcept override { return StringView(f_.SSL_get_version(ssl)); }
+            StringView alpn(void *ssl) const noexcept override
             {
                 const unsigned char *data = nullptr; unsigned size = 0;
                 f_.SSL_get0_alpn_selected(ssl, &data, &size);
@@ -311,29 +275,76 @@ namespace ct
     class TlsLibrary
     {
     public:
-        // ssl_name/crypto_name override the library file names (tests, odd installs).
-        explicit TlsLibrary(const char *ssl_name = nullptr, const char *crypto_name = nullptr) { backend_.load(ssl_name, crypto_name); }
+        // ssl_name/crypto_name override the OpenSSL library file names (tests, odd installs); the
+        // backend comes from the choice (Default = system OpenSSL, or mbedTLS with CT_TLS_DEFAULT_MBEDTLS).
+        explicit TlsLibrary(const char *ssl_name = nullptr, const char *crypto_name = nullptr, TlsConfig::Backend choice = TlsConfig::Default)
+        {
+            if (choice == TlsConfig::Default)
+#if defined(CT_TLS_DEFAULT_MBEDTLS) && defined(CT_TLS_MBEDTLS)
+                choice = TlsConfig::Mbed;
+#else
+                choice = TlsConfig::System;
+#endif
+            choice_ = choice;
+            if (choice == TlsConfig::Mbed)
+            {
+#if defined(CT_TLS_MBEDTLS)
+                active_ = &mbed_;
+#else
+                std::snprintf(unavailable_, sizeof(unavailable_), "%s", "mbedTLS backend not compiled in (CT_TLS_MBEDTLS)");
+#endif
+            }
+            else
+            {
+                openssl_.load(ssl_name, crypto_name);
+                active_ = &openssl_;
+            }
+        }
         TlsLibrary(const TlsLibrary &) = delete;
         TlsLibrary &operator=(const TlsLibrary &) = delete;
 
-        static TlsLibrary &instance()
+        // One shared library per backend choice.
+        static TlsLibrary &instance(TlsConfig::Backend choice = TlsConfig::Default)
         {
-            static TlsLibrary library;
-            return library;
+            if (choice == TlsConfig::Default)
+#if defined(CT_TLS_DEFAULT_MBEDTLS) && defined(CT_TLS_MBEDTLS)
+                choice = TlsConfig::Mbed;
+#else
+                choice = TlsConfig::System;
+#endif
+            if (choice == TlsConfig::Mbed)
+            {
+                static TlsLibrary mbed_library(nullptr, nullptr, TlsConfig::Mbed);
+                return mbed_library;
+            }
+            static TlsLibrary system_library(nullptr, nullptr, TlsConfig::System);
+            return system_library;
         }
 
-        bool available() const noexcept { return backend_.ok(); }
-        const char *error() const noexcept { return backend_.error(); }
-        detail::TlsOpenSslBackend &backend() noexcept { return backend_; }
+        static bool mbedtls_compiled_in() noexcept
+        {
+#if defined(CT_TLS_MBEDTLS)
+            return true;
+#else
+            return false;
+#endif
+        }
+
+        bool available() const noexcept { return active_ && active_->ok(); }
+        const char *error() const noexcept { return active_ ? active_->error() : unavailable_; }
+        TlsConfig::Backend choice() const noexcept { return choice_; }
+        detail::TlsBackend *backend() noexcept { return active_; }
+        // The OpenSSL backend (symbol lookup for tests), null when another backend is active.
+        detail::TlsOpenSslBackend *openssl() noexcept { return active_ == &openssl_ ? &openssl_ : nullptr; }
 
         // Replaces the configuration of the shared context; open connections keep the previous one.
         bool set_default_config(const TlsConfig &config)
         {
             if (!available()) return false;
             LockGuard guard(mutex_);
-            void *fresh = backend_.make_context(config, nullptr, 0);
+            void *fresh = active_->make_context(config, nullptr, 0);
             if (!fresh) return false;
-            if (default_) backend_.free_context(default_);
+            if (default_) active_->free_context(default_);
             default_ = fresh;
             return true;
         }
@@ -342,14 +353,14 @@ namespace ct
         void *acquire_context(const TlsConfig *config, char *error, std::size_t error_size)
         {
             if (!available()) return nullptr;
-            if (config && !is_plain(*config)) return backend_.make_context(*config, error, error_size);
+            if (config && !is_plain(*config)) return active_->make_context(*config, error, error_size);
             LockGuard guard(mutex_);
-            if (!default_) default_ = backend_.make_context(TlsConfig(), error, error_size);
+            if (!default_) default_ = active_->make_context(TlsConfig(), error, error_size);
             return default_;
         }
         void release_context(void *ctx, const TlsConfig *config) noexcept
         {
-            if (ctx && config && !is_plain(*config)) backend_.free_context(ctx);
+            if (ctx && config && !is_plain(*config)) active_->free_context(ctx);
         }
 
         static bool is_plain(const TlsConfig &c) noexcept
@@ -358,7 +369,13 @@ namespace ct
         }
 
     private:
-        detail::TlsOpenSslBackend backend_;
+        detail::TlsOpenSslBackend openssl_;
+#if defined(CT_TLS_MBEDTLS)
+        detail::TlsMbedBackend mbed_;
+#endif
+        detail::TlsBackend *active_ = nullptr;
+        TlsConfig::Backend choice_ = TlsConfig::System;
+        char unavailable_[80] = "";
         void *default_ = nullptr;
         Mutex mutex_;
     };
@@ -391,14 +408,14 @@ namespace ct
         Address peer() const noexcept { return tcp_.peer(); }
         Address local_address() const noexcept { return tcp_.local_address(); }
         const Socket &socket() const noexcept { return tcp_; }
-        std::size_t pending() const noexcept { return session_ ? lib_->backend().pending(session_) : 0; }
-        StringView peer_version() const noexcept { return session_ ? lib_->backend().version(session_) : StringView(); }
-        StringView alpn() const noexcept { return session_ ? lib_->backend().alpn(session_) : StringView(); }
+        std::size_t pending() const noexcept { return session_ ? lib_->backend()->pending(session_) : 0; }
+        StringView peer_version() const noexcept { return session_ ? lib_->backend()->version(session_) : StringView(); }
+        StringView alpn() const noexcept { return session_ ? lib_->backend()->alpn(session_) : StringView(); }
 
         bool connect(const Address &address, StringView host, unsigned timeout_ms = 0, NetError *err = nullptr, const TlsConfig *config = nullptr)
         {
             close();
-            lib_ = config && config->library ? config->library : &TlsLibrary::instance();
+            lib_ = config && config->library ? config->library : &TlsLibrary::instance(config ? config->backend : TlsConfig::Default);
             if (!lib_->available())
             {
                 char reason[260];
@@ -415,7 +432,7 @@ namespace ct
             tcp_.set_nonblocking(true);
             tcp_.set_nodelay();
             io_timeout_ms_ = timeout_ms;
-            session_ = lib_->backend().new_session(ctx, static_cast<int>(tcp_.native_handle()), host);
+            session_ = lib_->backend()->new_session(ctx, static_cast<int>(tcp_.native_handle()), host);
             lib_->release_context(ctx, config);
             if (!session_) { detail::tls_set_error(err, TlsProtocol, "protocol error: cannot create TLS session"); tcp_.close(); return false; }
             if (!handshake(timeout_ms, err)) { drop(); return false; }
@@ -430,7 +447,7 @@ namespace ct
             {
                 std::size_t written = 0; detail::TlsFailure failure = {};
                 detail::TlsStatus status;
-                { SigpipeGuard guard; status = lib_->backend().write(session_, data, n, written, failure); }
+                { SigpipeGuard guard; status = lib_->backend()->write(session_, data, n, written, failure); }
                 if (status == detail::TlsStatus::Ok) return static_cast<long>(written);
                 if (!retry(status, failure)) return error_.code == 0 ? 0 : -1;
             }
@@ -442,7 +459,7 @@ namespace ct
             for (;;)
             {
                 std::size_t got = 0; detail::TlsFailure failure = {};
-                detail::TlsStatus status = lib_->backend().read(session_, data, n, got, failure);
+                detail::TlsStatus status = lib_->backend()->read(session_, data, n, got, failure);
                 if (status == detail::TlsStatus::Ok) return static_cast<long>(got);
                 if (!retry(status, failure)) return error_.code == 0 ? 0 : -1;
             }
@@ -465,7 +482,7 @@ namespace ct
         {
             if (session_)
             {
-                if (established_) { SigpipeGuard guard; lib_->backend().shutdown(session_); }
+                if (established_) { SigpipeGuard guard; lib_->backend()->shutdown(session_); }
                 drop();
             }
             tcp_.close();
@@ -497,7 +514,7 @@ namespace ct
 
         void drop() noexcept
         {
-            if (session_) { lib_->backend().free_session(session_); session_ = nullptr; }
+            if (session_) { lib_->backend()->free_session(session_); session_ = nullptr; }
             established_ = false;
             tcp_.close();
         }
@@ -526,7 +543,7 @@ namespace ct
             {
                 detail::TlsFailure failure = {};
                 detail::TlsStatus status;
-                { SigpipeGuard guard; status = lib_->backend().handshake(session_, failure); }
+                { SigpipeGuard guard; status = lib_->backend()->handshake(session_, failure); }
                 if (status == detail::TlsStatus::Ok) return true;
                 if (status != detail::TlsStatus::WantRead && status != detail::TlsStatus::WantWrite)
                 {

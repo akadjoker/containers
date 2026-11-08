@@ -8,6 +8,8 @@ else()
 endif()
 option(CT_BUILD_TESTS "Build the ct test suite (fetches GoogleTest)" ${CT_IS_TOP_LEVEL})
 option(CT_BUILD_BENCH "Build the ct benchmarks" ${CT_IS_TOP_LEVEL})
+option(CT_TLS_MBEDTLS "Add the mbedTLS backend to ct::TlsSocket (downloads mbedTLS at configure time)" OFF)
+option(CT_TLS_DEFAULT_MBEDTLS "Use the mbedTLS backend by default instead of the system OpenSSL (needs CT_TLS_MBEDTLS)" OFF)
 set(CT_PHYS_DIR "" CACHE PATH "Optional phys project root; enables the BlockAllocator comparison in ct_bench_pool")
 
 set(CMAKE_CXX_STANDARD 14)
@@ -32,6 +34,35 @@ add_library(ct::sockets ALIAS ct_sockets)
 target_link_libraries(ct_sockets INTERFACE ct_threads ${CMAKE_DL_LIBS})
 if(WIN32)
   target_link_libraries(ct_sockets INTERFACE ws2_32)
+endif()
+
+add_library(ct_tls_mbedtls INTERFACE)
+add_library(ct::tls_mbedtls ALIAS ct_tls_mbedtls)
+if(CT_TLS_MBEDTLS)
+  if(POLICY CMP0135)
+    cmake_policy(SET CMP0135 NEW)
+  endif()
+  include(FetchContent)
+  set(CT_MBEDTLS_TAG "3.6.7")
+  file(WRITE "${CMAKE_BINARY_DIR}/ct_mbedtls_user_config.h"
+    "#define MBEDTLS_THREADING_C\n#define MBEDTLS_THREADING_PTHREAD\n")
+  set(MBEDTLS_USER_CONFIG_FILE "${CMAKE_BINARY_DIR}/ct_mbedtls_user_config.h" CACHE FILEPATH "" FORCE)
+  set(ENABLE_PROGRAMS OFF CACHE BOOL "" FORCE)
+  set(ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+  set(USE_SHARED_MBEDTLS_LIBRARY OFF CACHE BOOL "" FORCE)
+  set(USE_STATIC_MBEDTLS_LIBRARY ON CACHE BOOL "" FORCE)
+  set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
+  set(DISABLE_PACKAGE_CONFIG_AND_INSTALL ON CACHE BOOL "" FORCE)
+  FetchContent_Declare(mbedtls
+    URL https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${CT_MBEDTLS_TAG}/mbedtls-${CT_MBEDTLS_TAG}.tar.bz2
+    URL_HASH SHA256=a7e8bcbec0e6f761b4af24f25677626b35f762f68eef79c08677a363212d11f6)
+  FetchContent_MakeAvailable(mbedtls)
+  target_link_libraries(ct_tls_mbedtls INTERFACE mbedtls mbedx509 mbedcrypto)
+  target_compile_definitions(ct_tls_mbedtls INTERFACE CT_TLS_MBEDTLS=1)
+  if(CT_TLS_DEFAULT_MBEDTLS)
+    target_compile_definitions(ct_tls_mbedtls INTERFACE CT_TLS_DEFAULT_MBEDTLS=1)
+  endif()
+  target_link_libraries(ct_sockets INTERFACE ct_tls_mbedtls)
 endif()
 
 if(NOT CT_BUILD_TESTS AND NOT CT_BUILD_BENCH)
@@ -132,6 +163,7 @@ set(CT_PUBLIC_HEADERS
   ct/thread.hpp
   ct/threadpool.hpp
   ct/tls.hpp
+  ct/tls_backend.hpp
   ct/treemap.hpp
   ct/variant.hpp
   ct/vector.hpp
@@ -147,6 +179,12 @@ foreach(header IN LISTS CT_PUBLIC_HEADERS)
   target_compile_definitions(${target} PRIVATE CT_HEADER="${header}")
   list(APPEND CT_HEADER_TARGETS ${target})
 endforeach()
+if(CT_TLS_MBEDTLS)
+  add_library(ct_header_ct_tls_mbedtls_hpp OBJECT tests/header_standalone.cpp)
+  target_link_libraries(ct_header_ct_tls_mbedtls_hpp PRIVATE ct ct_tls_mbedtls)
+  target_compile_definitions(ct_header_ct_tls_mbedtls_hpp PRIVATE CT_HEADER="ct/tls_mbedtls.hpp")
+  list(APPEND CT_HEADER_TARGETS ct_header_ct_tls_mbedtls_hpp)
+endif()
 add_custom_target(ct_headers DEPENDS ${CT_HEADER_TARGETS})
 
 add_executable(ct_torture

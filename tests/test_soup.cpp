@@ -313,6 +313,9 @@ TEST(Soup, DecodesEntities)
     EXPECT_EQ(ct::decodeEntities("caf&eacute;"), "caf\xc3\xa9");
     EXPECT_EQ(ct::decodeEntities("&#8364;"), "\xe2\x82\xac");
     EXPECT_EQ(ct::decodeEntities("&nbsp;"), "\xc2\xa0");
+    EXPECT_EQ(ct::decodeEntities("a&shy;b"), "a\xc2\xad" "b");
+    EXPECT_EQ(ct::decodeEntities("&rarr; &Eacute; &frac12; &zwj;"), "\xe2\x86\x92 \xc3\x89 \xc2\xbd \xe2\x80\x8d");
+    EXPECT_EQ(ct::decodeEntities("&Shy;"), "&Shy;");
 }
 
 TEST(Soup, LeavesNonEntitiesAlone)

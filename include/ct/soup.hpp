@@ -1221,14 +1221,22 @@ enum class Pseudo : unsigned char
     NthChild,
     Empty,
     Not,
+    Is,
+    Where,
+    Has,
+    Root,
+    Link,
+    Scope,
 };
 
-struct Compound;
+struct SelectorList;
 
+// One pseudo-class of a compound. `list` is the argument of :not() / :is() / :where() / :has() and the `of S` clause of
+// :nth-child() and :nth-last-child(); it is owned by the Compound that holds the test.
 struct PseudoTest
 {
     Pseudo kind = Pseudo::FirstChild;
-    Compound* inner = nullptr;
+    SelectorList* list = nullptr;
     int nthA = 0;
     int nthB = 0;
     bool ofType = false;
@@ -1340,13 +1348,7 @@ struct Compound
     Vector<AttrTest> attributes;
     Vector<PseudoTest> pseudos;
 
-    ~Compound()
-    {
-        for (std::size_t i = 0; i < pseudos.size(); ++i)
-        {
-            delete pseudos[i].inner;
-        }
-    }
+    inline ~Compound();
 
     Compound() {}
     Compound(const Compound&) = delete;
@@ -1357,12 +1359,16 @@ enum class Combinator : unsigned char
 {
     Descendant,
     Child,
+    Adjacent, // +
+    Sibling,  // ~
 };
 
 struct Selector
 {
     Vector<Compound*> steps;
     Vector<Combinator> combinators;
+    // Only for the relative selectors of :has(): how the first step relates to the subject.
+    Combinator leading = Combinator::Descendant;
 
     ~Selector()
     {
@@ -1377,11 +1383,38 @@ struct Selector
     Selector& operator=(const Selector&) = delete;
 };
 
+struct SelectorList
+{
+    Vector<Selector*> items;
+
+    ~SelectorList()
+    {
+        for (std::size_t i = 0; i < items.size(); ++i)
+        {
+            delete items[i];
+        }
+    }
+
+    SelectorList() {}
+    SelectorList(const SelectorList&) = delete;
+    SelectorList& operator=(const SelectorList&) = delete;
+};
+
+inline Compound::~Compound()
+{
+    for (std::size_t i = 0; i < pseudos.size(); ++i)
+    {
+        delete pseudos[i].list;
+    }
+}
+
 class SelectorParser
 {
 public:
-    explicit SelectorParser(StringView text)
+    explicit SelectorParser(StringView text, int depth = 0, bool inHas = false)
         : text_(text)
+        , depth_(depth)
+        , inHas_(inHas)
     {
     }
 
@@ -1413,6 +1446,11 @@ public:
 private:
     StringView text_;
     std::size_t i_ = 0;
+    int depth_ = 0;
+    bool inHas_ = false;
+
+    // Functional pseudo-classes may nest, but not without bound.
+    static const int maxDepth = 32;
 
     void skipSpace()
     {
@@ -1450,9 +1488,10 @@ private:
             }
 
             Combinator combinator = Combinator::Descendant;
-            if (text_[i_] == '>')
+            if (text_[i_] == '>' || text_[i_] == '+' || text_[i_] == '~')
             {
-                combinator = Combinator::Child;
+                combinator = text_[i_] == '>' ? Combinator::Child
+                    : text_[i_] == '+' ? Combinator::Adjacent : Combinator::Sibling;
                 ++i_;
                 skipSpace();
             }
@@ -1494,6 +1533,172 @@ private:
             ++i_;
         }
         return out;
+    }
+
+    // The index of the ')' that closes a '(' already consumed, starting the scan at `from`. Parentheses, brackets and
+    // quotes nest; npos when unbalanced.
+    std::size_t findClose(std::size_t from) const
+    {
+        int parentheses = 0;
+        int brackets = 0;
+        char quote = 0;
+        for (std::size_t i = from; i < text_.size(); ++i)
+        {
+            const char c = text_[i];
+            if (quote)
+            {
+                if (c == quote)
+                {
+                    quote = 0;
+                }
+            }
+            else if (c == '"' || c == '\'')
+            {
+                quote = c;
+            }
+            else if (c == '[')
+            {
+                ++brackets;
+            }
+            else if (c == ']')
+            {
+                if (brackets > 0)
+                {
+                    --brackets;
+                }
+            }
+            else if (brackets == 0 && c == '(')
+            {
+                ++parentheses;
+            }
+            else if (brackets == 0 && c == ')')
+            {
+                if (parentheses == 0)
+                {
+                    return i;
+                }
+                --parentheses;
+            }
+        }
+        return StringView::npos;
+    }
+
+    // Splits `text` at the commas that are not inside parentheses, brackets or quotes.
+    static void splitTopLevel(StringView text, Vector<StringView>& pieces)
+    {
+        int parentheses = 0;
+        int brackets = 0;
+        char quote = 0;
+        std::size_t start = 0;
+        for (std::size_t i = 0; i < text.size(); ++i)
+        {
+            const char c = text[i];
+            if (quote)
+            {
+                if (c == quote)
+                {
+                    quote = 0;
+                }
+            }
+            else if (c == '"' || c == '\'')
+            {
+                quote = c;
+            }
+            else if (c == '[')
+            {
+                ++brackets;
+            }
+            else if (c == ']')
+            {
+                if (brackets > 0)
+                {
+                    --brackets;
+                }
+            }
+            else if (brackets == 0 && c == '(')
+            {
+                ++parentheses;
+            }
+            else if (brackets == 0 && c == ')')
+            {
+                if (parentheses > 0)
+                {
+                    --parentheses;
+                }
+            }
+            else if (brackets == 0 && parentheses == 0 && c == ',')
+            {
+                pieces.push_back(text.substr(start, i - start));
+                start = i + 1;
+            }
+        }
+        pieces.push_back(text.substr(start));
+    }
+
+    // One complex selector that fills `text` entirely (a relative one, with an optional leading combinator, for :has()).
+    static bool parseWhole(StringView text, Selector& out, bool relative, int depth, bool inHas)
+    {
+        SelectorParser parser(text, depth, inHas);
+        parser.skipSpace();
+        if (relative && !parser.atEnd())
+        {
+            const char c = parser.text_[parser.i_];
+            if (c == '>' || c == '+' || c == '~')
+            {
+                out.leading = c == '>' ? Combinator::Child : c == '+' ? Combinator::Adjacent : Combinator::Sibling;
+                ++parser.i_;
+                parser.skipSpace();
+            }
+        }
+        if (!parser.parseSelector(out))
+        {
+            return false;
+        }
+        parser.skipSpace();
+        return parser.atEnd();
+    }
+
+    // Parses a selector list. A forgiving list drops its invalid or empty entries (as :is() and :where() do); a strict one
+    // fails when any entry is invalid or empty.
+    static bool parseArguments(StringView text, SelectorList& out, bool forgiving, bool relative, int depth, bool inHas)
+    {
+        Vector<StringView> pieces;
+        splitTopLevel(text, pieces);
+        for (std::size_t i = 0; i < pieces.size(); ++i)
+        {
+            Selector* selector = new Selector();
+            if (parseWhole(pieces[i], *selector, relative, depth, inHas))
+            {
+                out.items.push_back(selector);
+            }
+            else
+            {
+                delete selector;
+                if (!forgiving)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // `(...)` after a functional pseudo-class name: returns the argument text and moves past the ')'.
+    bool functionArgument(StringView& argument)
+    {
+        if (atEnd() || text_[i_] != '(')
+        {
+            return false;
+        }
+        ++i_;
+        const std::size_t close = findClose(i_);
+        if (close == StringView::npos)
+        {
+            return false;
+        }
+        argument = text_.substr(i_, close - i_);
+        i_ = close + 1;
+        return true;
     }
 
     bool parseCompound(Compound& out)
@@ -1688,20 +1893,47 @@ private:
         else if (name == "nth-child" || name == "nth-last-child" ||
             name == "nth-of-type" || name == "nth-last-of-type")
         {
-            if (atEnd() || text_[i_++] != '(')
+            StringView argument;
+            if (!functionArgument(argument))
             {
                 return false;
             }
-            const std::size_t start = i_;
-            while (i_ < text_.size() && text_[i_] != ')')
+            // `An+B of <selector list>`: the "of" must stand alone, so "odd" and "2n" never match it.
+            std::size_t ofAt = StringView::npos;
+            for (std::size_t k = 1; k < argument.size(); ++k)
             {
-                ++i_;
+                if (isSpace(argument[k - 1]) && lower(argument[k]) == 'o' && k + 1 < argument.size() &&
+                    lower(argument[k + 1]) == 'f' && (k + 2 == argument.size() || isSpace(argument[k + 2])))
+                {
+                    ofAt = k;
+                    break;
+                }
             }
-            if (atEnd() || !parseNthFormula(text_.substr(start, i_ - start), test.nthA, test.nthB))
+            if (ofAt != StringView::npos)
             {
+                if (name == "nth-of-type" || name == "nth-last-of-type")
+                {
+                    return false;
+                }
+                if (depth_ >= maxDepth)
+                {
+                    return false;
+                }
+                SelectorList* list = new SelectorList();
+                if (!parseArguments(argument.substr(ofAt + 2), *list, false, false, depth_ + 1, inHas_) ||
+                    list->items.empty())
+                {
+                    delete list;
+                    return false;
+                }
+                test.list = list;
+                argument = argument.substr(0, ofAt);
+            }
+            if (!parseNthFormula(argument, test.nthA, test.nthB))
+            {
+                delete test.list;
                 return false;
             }
-            ++i_;
             test.kind = Pseudo::NthChild;
             test.ofType = name == "nth-of-type" || name == "nth-last-of-type";
             test.fromEnd = name == "nth-last-child" || name == "nth-last-of-type";
@@ -1710,28 +1942,36 @@ private:
         {
             test.kind = Pseudo::Empty;
         }
-        else if (name == "not")
+        else if (name == "not" || name == "is" || name == "where" || name == "has")
         {
-            if (atEnd() || text_[i_] != '(')
+            StringView argument;
+            if (depth_ >= maxDepth || (name == "has" && inHas_) || !functionArgument(argument))
             {
                 return false;
             }
-            ++i_;
-            skipSpace();
-            test.kind = Pseudo::Not;
-            test.inner = new Compound();
-            if (!parseCompound(*test.inner))
+            const bool forgiving = name == "is" || name == "where";
+            const bool relative = name == "has";
+            SelectorList* list = new SelectorList();
+            if (!parseArguments(argument, *list, forgiving, relative, depth_ + 1, inHas_ || relative))
             {
-                delete test.inner;
+                delete list;
                 return false;
             }
-            skipSpace();
-            if (atEnd() || text_[i_] != ')')
-            {
-                delete test.inner;
-                return false;
-            }
-            ++i_;
+            test.list = list;
+            test.kind = name == "not" ? Pseudo::Not : name == "is" ? Pseudo::Is
+                : name == "where" ? Pseudo::Where : Pseudo::Has;
+        }
+        else if (name == "root")
+        {
+            test.kind = Pseudo::Root;
+        }
+        else if (name == "link" || name == "any-link")
+        {
+            test.kind = Pseudo::Link;
+        }
+        else if (name == "scope")
+        {
+            test.kind = Pseudo::Scope;
         }
         else
         {
@@ -1791,9 +2031,120 @@ inline bool matchAttr(const Node& node, const AttrTest& test)
     return false;
 }
 
-inline bool matchCompound(const Node& node, const Compound& compound);
+// `scope` is the node :scope stands for: the node select() was called on (the root element when that is the document).
+inline bool matchCompound(const Node& node, const Compound& compound, const Node* scope);
+inline bool matches(const Node& node, const Selector& selector, const Node* scope);
 
-inline bool matchPseudo(const Node& node, const PseudoTest& test)
+inline bool matchesAny(const Node& node, const SelectorList& list, const Node* scope)
+{
+    for (std::size_t i = 0; i < list.items.size(); ++i)
+    {
+        if (matches(node, *list.items[i], scope))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The root element of a document: its `html` element, or the first top-level element of a fragment.
+inline bool isRootElement(const Node& node)
+{
+    if (!node.isElement() || (node.parent && node.parent->isElement()))
+    {
+        return false;
+    }
+    if (!node.parent)
+    {
+        return true;
+    }
+    const Vector<Node*>& siblings = node.parent->children;
+    const Node* first = nullptr;
+    for (std::size_t i = 0; i < siblings.size(); ++i)
+    {
+        if (siblings[i]->isElement())
+        {
+            if (StringView(siblings[i]->tag) == StringView("html"))
+            {
+                return siblings[i] == &node;
+            }
+            if (!first)
+            {
+                first = siblings[i];
+            }
+        }
+    }
+    return first == &node;
+}
+
+inline const Node* previousElementSibling(const Node& node)
+{
+    if (!node.parent)
+    {
+        return nullptr;
+    }
+    const Node* previous = nullptr;
+    const Vector<Node*>& siblings = node.parent->children;
+    for (std::size_t i = 0; i < siblings.size(); ++i)
+    {
+        if (siblings[i] == &node)
+        {
+            return previous;
+        }
+        if (siblings[i]->isElement())
+        {
+            previous = siblings[i];
+        }
+    }
+    return nullptr;
+}
+
+// Whether some element related to `from` by `combinator` matches step `step` of the relative selector and the rest of the
+// selector continues from it (the subject of :has() is `from` for the first step).
+inline bool matchForward(const Node& from, const Selector& selector, std::size_t step, Combinator combinator,
+                         const Node* scope)
+{
+    const bool last = step + 1 == selector.steps.size();
+    const Compound& want = *selector.steps[step];
+
+    if (combinator == Combinator::Adjacent || combinator == Combinator::Sibling)
+    {
+        for (const Node* next = from.nextElementSibling(); next; next = next->nextElementSibling())
+        {
+            if (matchCompound(*next, want, scope) &&
+                (last || matchForward(*next, selector, step + 1, selector.combinators[step], scope)))
+            {
+                return true;
+            }
+            if (combinator == Combinator::Adjacent)
+            {
+                break;
+            }
+        }
+        return false;
+    }
+
+    for (std::size_t i = 0; i < from.children.size(); ++i)
+    {
+        const Node* child = from.children[i];
+        if (!child->isElement())
+        {
+            continue;
+        }
+        if (matchCompound(*child, want, scope) &&
+            (last || matchForward(*child, selector, step + 1, selector.combinators[step], scope)))
+        {
+            return true;
+        }
+        if (combinator == Combinator::Descendant && matchForward(*child, selector, step, combinator, scope))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool matchPseudo(const Node& node, const PseudoTest& test, const Node* scope)
 {
     switch (test.kind)
     {
@@ -1830,14 +2181,44 @@ inline bool matchPseudo(const Node& node, const PseudoTest& test)
             {
                 return false;
             }
-            const Vector<const Node*> siblings = node.parent->childElements(test.ofType ? StringView(node.tag) : StringView());
-            std::size_t position = 0;
-            for (std::size_t index = 0; index < siblings.size(); ++index)
+            if (test.list && !matchesAny(node, *test.list, scope))
             {
-                if (siblings[index] == &node)
+                return false;
+            }
+            const Vector<const Node*> siblings = node.parent->childElements(test.ofType ? StringView(node.tag) : StringView());
+            // With `of S` only the siblings matching S are counted.
+            std::size_t counted = 0;
+            std::size_t position = 0;
+            if (test.fromEnd)
+            {
+                for (std::size_t index = siblings.size(); index > 0; --index)
                 {
-                    position = test.fromEnd ? siblings.size() - index : index + 1;
-                    break;
+                    if (test.list && !matchesAny(*siblings[index - 1], *test.list, scope))
+                    {
+                        continue;
+                    }
+                    ++counted;
+                    if (siblings[index - 1] == &node)
+                    {
+                        position = counted;
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                for (std::size_t index = 0; index < siblings.size(); ++index)
+                {
+                    if (test.list && !matchesAny(*siblings[index], *test.list, scope))
+                    {
+                        continue;
+                    }
+                    ++counted;
+                    if (siblings[index] == &node)
+                    {
+                        position = counted;
+                        break;
+                    }
                 }
             }
             if (position == 0 || position > 2147483647u)
@@ -1868,12 +2249,38 @@ inline bool matchPseudo(const Node& node, const PseudoTest& test)
             return true;
         }
         case Pseudo::Not:
-            return test.inner ? !matchCompound(node, *test.inner) : false;
+            return test.list ? !matchesAny(node, *test.list, scope) : false;
+        case Pseudo::Is:
+        case Pseudo::Where:
+            return test.list ? matchesAny(node, *test.list, scope) : false;
+        case Pseudo::Has:
+        {
+            if (!test.list)
+            {
+                return false;
+            }
+            for (std::size_t i = 0; i < test.list->items.size(); ++i)
+            {
+                const Selector& relative = *test.list->items[i];
+                if (matchForward(node, relative, 0, relative.leading, scope))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        case Pseudo::Root:
+            return isRootElement(node);
+        case Pseudo::Link:
+            return (StringView(node.tag) == StringView("a") || StringView(node.tag) == StringView("area")) &&
+                   node.hasAttr(StringView("href"));
+        case Pseudo::Scope:
+            return scope ? &node == scope : isRootElement(node);
     }
     return false;
 }
 
-inline bool matchCompound(const Node& node, const Compound& compound)
+inline bool matchCompound(const Node& node, const Compound& compound, const Node* scope)
 {
     if (!node.isElement())
     {
@@ -1908,7 +2315,7 @@ inline bool matchCompound(const Node& node, const Compound& compound)
     }
     for (std::size_t i = 0; i < compound.pseudos.size(); ++i)
     {
-        if (!matchPseudo(node, compound.pseudos[i]))
+        if (!matchPseudo(node, compound.pseudos[i], scope))
         {
             return false;
         }
@@ -1916,7 +2323,7 @@ inline bool matchCompound(const Node& node, const Compound& compound)
     return true;
 }
 
-inline bool matchAncestors(const Node& node, const Selector& selector, std::size_t step)
+inline bool matchAncestors(const Node& node, const Selector& selector, std::size_t step, const Node* scope)
 {
     if (step == 0)
     {
@@ -1928,16 +2335,32 @@ inline bool matchAncestors(const Node& node, const Selector& selector, std::size
     if (combinator == Combinator::Child)
     {
         const Node* parent = node.parent;
-        if (!parent || !matchCompound(*parent, want))
+        if (!parent || !matchCompound(*parent, want, scope))
         {
             return false;
         }
-        return matchAncestors(*parent, selector, step - 1);
+        return matchAncestors(*parent, selector, step - 1, scope);
+    }
+
+    if (combinator == Combinator::Adjacent || combinator == Combinator::Sibling)
+    {
+        for (const Node* before = previousElementSibling(node); before; before = previousElementSibling(*before))
+        {
+            if (matchCompound(*before, want, scope) && matchAncestors(*before, selector, step - 1, scope))
+            {
+                return true;
+            }
+            if (combinator == Combinator::Adjacent)
+            {
+                break;
+            }
+        }
+        return false;
     }
 
     for (const Node* up = node.parent; up; up = up->parent)
     {
-        if (matchCompound(*up, want) && matchAncestors(*up, selector, step - 1))
+        if (matchCompound(*up, want, scope) && matchAncestors(*up, selector, step - 1, scope))
         {
             return true;
         }
@@ -1945,14 +2368,14 @@ inline bool matchAncestors(const Node& node, const Selector& selector, std::size
     return false;
 }
 
-inline bool matches(const Node& node, const Selector& selector)
+inline bool matches(const Node& node, const Selector& selector, const Node* scope)
 {
     const std::size_t last = selector.steps.size() - 1;
-    if (!matchCompound(node, *selector.steps[last]))
+    if (!matchCompound(node, *selector.steps[last], scope))
     {
         return false;
     }
-    return matchAncestors(node, selector, last);
+    return matchAncestors(node, selector, last, scope);
 }
 
 inline void collect(const Node& node, Vector<const Node*>& out)
@@ -1980,6 +2403,8 @@ inline Vector<const Node*> Node::select(StringView selector) const
 
     if (ok)
     {
+        // :scope is this node; for the document it is the root element.
+        const Node* scope = type == NodeType::Element ? this : nullptr;
         Vector<const Node*> candidates;
         collect(*this, candidates);
 
@@ -1987,7 +2412,7 @@ inline Vector<const Node*> Node::select(StringView selector) const
         {
             for (std::size_t k = 0; k < selectors.size(); ++k)
             {
-                if (matches(*candidates[i], *selectors[k]))
+                if (matches(*candidates[i], *selectors[k], scope))
                 {
                     out.push_back(candidates[i]);
                     break;

@@ -706,3 +706,166 @@ TEST(Soup, IdAndClassSelectorsAreCaseSensitive)
     EXPECT_EQ(soup.selectOne(".bigbox")->tag, "p");
     EXPECT_EQ(soup.selectOne("#MAIN"), nullptr);
 }
+
+// ── Modern selectors ────────────────────────────────────────────────────────
+
+TEST(SoupSelect, IsAndWhereTakeSelectorLists)
+{
+    Soup soup = Soup::parse("<div class=\"a\"><p class=\"x\">1</p><b class=\"y\">2</b></div>"
+                            "<section><p class=\"x\">3</p><i>4</i></section>");
+    EXPECT_EQ(count(soup, ":is(p, b)"), 3u);
+    EXPECT_EQ(count(soup, ":where(p, b)"), 3u);
+    EXPECT_EQ(count(soup, ":is( .x , .y )"), 3u);
+    EXPECT_EQ(count(soup, "div :is(.x, .y)"), 2u);
+    EXPECT_EQ(count(soup, ":is(.a, section) > :is(p, i)"), 3u);
+    EXPECT_EQ(count(soup, "p:is(.x):is(.y, .x)"), 2u);
+    // Complex selectors inside the list.
+    EXPECT_EQ(count(soup, ":is(.a > p, i)"), 2u);
+    EXPECT_EQ(count(soup, ":is(section p)"), 1u);
+    EXPECT_EQ(count(soup, "p:where(.nope)"), 0u);
+    // Nested functions.
+    EXPECT_EQ(count(soup, "p:is(:not(.y))"), 2u);
+    EXPECT_EQ(count(soup, ":is(:is(.x, i))"), 3u);
+}
+
+TEST(SoupSelect, IsAndWhereAreForgiving)
+{
+    Soup soup = Soup::parse("<p class=\"a\">1</p><p class=\"b\">2</p>");
+    EXPECT_EQ(count(soup, ":is(.a, ::bogus)"), 1u);
+    EXPECT_EQ(count(soup, ":is(.a, :hover)"), 1u);
+    EXPECT_EQ(count(soup, ":where(.b, .)"), 1u);
+    EXPECT_EQ(count(soup, ":is(.a,)"), 1u);
+    EXPECT_EQ(count(soup, ":is()"), 0u);
+    EXPECT_EQ(count(soup, ":is(::bogus)"), 0u);
+}
+
+TEST(SoupSelect, NotTakesComplexSelectorLists)
+{
+    Soup soup = Soup::parse("<div class=\"w\"><p class=\"a\">1</p><p class=\"b\">2</p><p>3</p></div>"
+                            "<p>4</p><p class=\"a\">5</p>");
+    EXPECT_EQ(count(soup, "p:not(.a, .b)"), 2u);
+    EXPECT_EQ(count(soup, "p:not(.a)"), 3u);
+    EXPECT_EQ(count(soup, "p:not(.w p)"), 2u);
+    EXPECT_EQ(count(soup, "p:not(.w > .a, .b)"), 3u);
+    EXPECT_EQ(count(soup, "p:not( .a , .b )"), 2u);
+    EXPECT_EQ(count(soup, "p:not(:not(.a))"), 2u);
+    EXPECT_EQ(count(soup, "p:not(:is(.a, .b))"), 2u);
+}
+
+TEST(SoupSelect, NotIsNotForgiving)
+{
+    Soup soup = Soup::parse("<p class=\"a\">1</p><p class=\"b\">2</p>");
+    EXPECT_EQ(count(soup, "p:not(.a,)"), 0u);
+    EXPECT_EQ(count(soup, "p:not(.a, ::bogus)"), 0u);
+    EXPECT_EQ(count(soup, "p:not()"), 0u);
+    EXPECT_EQ(count(soup, "p:not(.a"), 0u);
+    EXPECT_EQ(count(soup, "p:not(.a, :hover)"), 0u);
+    EXPECT_EQ(count(soup, "p:has()"), 0u);
+    EXPECT_EQ(count(soup, "p:has(.a,)"), 0u);
+    EXPECT_EQ(count(soup, "p:has(::before)"), 0u);
+}
+
+TEST(SoupSelect, HasMatchesRelativeSelectors)
+{
+    Soup soup = Soup::parse(
+        "<div id=\"d1\"><span class=\"mark\">m</span></div>"
+        "<div id=\"d2\"><span><span class=\"mark\">m</span></span></div>"
+        "<div id=\"d3\"><i>x</i></div><div id=\"next\" class=\"next\"></div>"
+        "<div id=\"d4\"></div><p></p><div id=\"later\" class=\"later\"></div>");
+    EXPECT_EQ(count(soup, "div:has(> .mark)"), 1u);
+    EXPECT_EQ(count(soup, "div:has(.mark)"), 2u);
+    EXPECT_EQ(count(soup, "div:has(> span > .mark)"), 1u);
+    EXPECT_EQ(count(soup, "div:has(span span)"), 1u);
+    EXPECT_EQ(count(soup, "div:has(+ .next)"), 1u);
+    EXPECT_EQ(soup.selectOne("div:has(+ .next)")->attr("id"), String("d3"));
+    EXPECT_EQ(count(soup, "div:has(~ .later)"), 5u);
+    EXPECT_EQ(count(soup, "div:has(+ .later)"), 0u);
+    EXPECT_EQ(count(soup, "div:has(.missing)"), 0u);
+    EXPECT_EQ(count(soup, "div:has(.mark, i)"), 3u);
+    EXPECT_EQ(count(soup, "div:has(+ p + .later)"), 1u);
+    // Nested functions.
+    EXPECT_EQ(count(soup, "div:has(:is(.mark, i))"), 3u);
+    EXPECT_EQ(count(soup, "div:not(:has(.mark))"), 4u);
+    EXPECT_EQ(count(soup, "div:is(:has(.mark))"), 2u);
+    // :has() inside :has() is invalid.
+    EXPECT_EQ(count(soup, "div:has(:has(.mark))"), 0u);
+}
+
+TEST(SoupSelect, NthChildOfSelector)
+{
+    Soup soup = Soup::parse("<ul><li class=\"i\" id=\"a\"></li><li id=\"b\"></li><li class=\"i\" id=\"c\"></li>"
+                            "<li class=\"i\" id=\"d\"></li><li id=\"e\"></li></ul>");
+    EXPECT_EQ(count(soup, "li:nth-child(2 of .i)"), 1u);
+    EXPECT_STREQ(soup.selectOne("li:nth-child(2 of .i)")->attr("id"), "c");
+    EXPECT_STREQ(soup.selectOne("li:nth-last-child(1 of .i)")->attr("id"), "d");
+    EXPECT_EQ(count(soup, "li:nth-child(odd of .i)"), 2u);
+    EXPECT_EQ(count(soup, "li:nth-child(even of .i)"), 1u);
+    EXPECT_EQ(count(soup, ":nth-child(1 of .i)"), 1u);
+    // The subject must match the list itself.
+    EXPECT_EQ(count(soup, "#b:nth-child(1 of .i)"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-child(2n+1 of .i, #e)"), 2u);
+    EXPECT_EQ(count(soup, "li:nth-child(2 OF .i)"), 1u);
+    EXPECT_EQ(count(soup, "li:nth-child(2n + 1 of :not(.i))"), 1u);
+    // Unsupported forms.
+    EXPECT_EQ(count(soup, "li:nth-child(2 of)"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-child(of .i)"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-of-type(2 of .i)"), 0u);
+    EXPECT_EQ(count(soup, "li:nth-child(2 of .i"), 0u);
+    // Without `of` nothing changed.
+    EXPECT_EQ(count(soup, "li:nth-child(2)"), 1u);
+}
+
+TEST(SoupSelect, RootLinkAndScope)
+{
+    Soup soup = Soup::parse("<html><body><a href=\"x\" id=\"l1\">1</a><a id=\"l2\">2</a>"
+                            "<area href=\"y\"><b href=\"z\"></b></body></html>");
+    EXPECT_EQ(count(soup, ":root"), 1u);
+    EXPECT_EQ(count(soup, ":root > body"), 1u);
+    EXPECT_EQ(count(soup, ":root a"), 2u);
+    EXPECT_EQ(count(soup, "body:root"), 0u);
+    EXPECT_EQ(count(soup, ":link"), 2u);
+    EXPECT_EQ(count(soup, ":any-link"), 2u);
+    EXPECT_EQ(count(soup, "a:any-link"), 1u);
+    EXPECT_EQ(count(soup, "a:link"), 1u);
+    EXPECT_EQ(count(soup, "a:not(:link)"), 1u);
+    EXPECT_EQ(count(soup, ":visited"), 0u);
+    EXPECT_EQ(count(soup, ":scope"), 1u);
+    EXPECT_EQ(count(soup, ":scope > body"), 1u);
+    const Node *body = soup.find("body");
+    ASSERT_NE(body, nullptr);
+    EXPECT_EQ(body->select(":scope > a").size(), 2u);
+    EXPECT_EQ(body->select(":scope").size(), 0u);
+
+    Soup fragment = Soup::parse("<p>a</p><p>b</p>");
+    EXPECT_EQ(count(fragment, ":root"), 1u);
+}
+
+TEST(SoupSelect, SiblingCombinators)
+{
+    Soup soup = Soup::parse("<h1>t</h1><p id=\"a\">1</p><p id=\"b\">2</p><span>s</span><p id=\"c\">3</p>");
+    EXPECT_EQ(count(soup, "h1 + p"), 1u);
+    EXPECT_EQ(count(soup, "h1+p"), 1u);
+    EXPECT_EQ(count(soup, "h1 ~ p"), 3u);
+    EXPECT_EQ(count(soup, "h1~p"), 3u);
+    EXPECT_EQ(count(soup, "p + p"), 1u);
+    EXPECT_EQ(count(soup, "p + span + p"), 1u);
+    EXPECT_EQ(count(soup, "span ~ h1"), 0u);
+    EXPECT_EQ(count(soup, "p:is(h1 + p, span + p)"), 2u);
+    EXPECT_EQ(count(soup, "+ p"), 0u);
+    EXPECT_EQ(count(soup, "p +"), 0u);
+    // The attribute operator still parses.
+    Soup attrs = Soup::parse("<a class=\"x y\">1</a>");
+    EXPECT_EQ(count(attrs, "a[class~=x]"), 1u);
+}
+
+TEST(SoupSelect, FunctionalPseudosRespectNesting)
+{
+    Soup soup = Soup::parse("<div class=\"a\"><p class=\"b,c\">1</p><p class=\"d\">2</p></div>");
+    EXPECT_EQ(count(soup, ":is(.a, [class=\"b,c\"]) p"), 2u);
+    EXPECT_EQ(count(soup, "p:is([class=\"b,c\"], .zz)"), 1u);
+    EXPECT_EQ(count(soup, "p:is(:is(:is(:is(.d))))"), 1u);
+    EXPECT_EQ(count(soup, "p:is(.d"), 0u);
+    EXPECT_EQ(count(soup, "p:is(.d))"), 0u);
+    EXPECT_EQ(count(soup, "p:unknown(.d)"), 0u);
+    EXPECT_EQ(count(soup, "p:is .d"), 0u);
+}

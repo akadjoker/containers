@@ -6,6 +6,7 @@
 //
 // CT_FUZZ_ITERS (variavel de ambiente) muda o numero de operacoes por semente; por omissao fica rapido.
 
+#include <ct/deque.hpp>
 #include <ct/flatmap.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/hashset.hpp>
@@ -376,6 +377,194 @@ namespace
         const int before = Counted::live;
         for (uint64_t seed = 1; seed <= 4; ++seed)
             fuzz_vector<Counted>(seed, fuzz_iters(4000));
+        EXPECT_EQ(Counted::live, before);
+        EXPECT_EQ(Counted::bad, 0);
+    }
+
+    // ---- Deque -------------------------------------------------------------------------------------------------
+
+    template <typename T>
+    void fuzz_deque(uint64_t seed, int iters)
+    {
+        typedef Make<T> M;
+        Rng rng(seed);
+        ct::Deque<T> d;
+        ct::Deque<T> other;
+        int ref[kMaxVec + 40];
+        int oref[kMaxVec + 40];
+        size_t n = 0, on = 0;
+        for (int it = 0; it < iters; ++it)
+        {
+            const uint32_t op = rng.below(17);
+            const int id = static_cast<int>(rng.below(1000));
+            const size_t pos = n ? rng.below(static_cast<uint32_t>(n)) : 0;
+            const bool room = n + 40 < sizeof(ref) / sizeof(ref[0]);
+            switch (op)
+            {
+            case 0:
+            case 1:
+                if (room)
+                {
+                    d.push_back(M::make(id));
+                    ref[n++] = id;
+                }
+                break;
+            case 2:
+            case 3:
+                if (room)
+                {
+                    d.push_front(M::make(id));
+                    for (size_t i = n; i > 0; --i)
+                        ref[i] = ref[i - 1];
+                    ref[0] = id;
+                    ++n;
+                }
+                break;
+            case 4:
+                if (n && room)
+                {
+                    d.push_back(d[pos]);
+                    ref[n] = ref[pos];
+                    ++n;
+                }
+                break;
+            case 5:
+                if (n && room)
+                {
+                    const int aid = ref[pos];
+                    d.push_front(d[pos]);
+                    for (size_t i = n; i > 0; --i)
+                        ref[i] = ref[i - 1];
+                    ref[0] = aid;
+                    ++n;
+                }
+                break;
+            case 6:
+                if (n)
+                {
+                    d.pop_back();
+                    --n;
+                }
+                break;
+            case 7:
+                if (n)
+                {
+                    d.pop_front();
+                    for (size_t i = 0; i + 1 < n; ++i)
+                        ref[i] = ref[i + 1];
+                    --n;
+                }
+                break;
+            case 8:
+                if (room)
+                {
+                    d.emplace_back(M::make(id));
+                    ref[n++] = id;
+                }
+                break;
+            case 9:
+                if (room)
+                {
+                    d.emplace_front(M::make(id));
+                    for (size_t i = n; i > 0; --i)
+                        ref[i] = ref[i - 1];
+                    ref[0] = id;
+                    ++n;
+                }
+                break;
+            case 10:
+            {
+                const size_t to = rng.below(kMaxVec);
+                d.resize(to);
+                for (size_t i = n; i < to; ++i)
+                    ref[i] = M::id_of(d[i]);
+                n = to;
+                break;
+            }
+            case 11:
+                if (n && room)
+                {
+                    const size_t to = n + rng.below(30);
+                    const int aid = ref[pos];
+                    d.resize(to, d[pos]);
+                    for (size_t i = n; i < to; ++i)
+                        ref[i] = aid;
+                    n = to;
+                }
+                break;
+            case 12:
+                d.reserve(rng.below(300));
+                break;
+            case 13:
+                d.shrink_to_fit();
+                break;
+            case 14:
+            {
+                ct::Deque<T> copy(d);
+                other = copy;
+                memcpy(oref, ref, n * sizeof(int));
+                on = n;
+                break;
+            }
+            case 15:
+                d.swap(other);
+                {
+                    int tmp[kMaxVec + 40];
+                    memcpy(tmp, ref, n * sizeof(int));
+                    memcpy(ref, oref, on * sizeof(int));
+                    memcpy(oref, tmp, n * sizeof(int));
+                    const size_t t = n;
+                    n = on;
+                    on = t;
+                }
+                break;
+            case 16:
+                if (rng.below(6) == 0)
+                {
+                    ct::Deque<T> moved(ct::move(d));
+                    d = ct::move(moved);
+                    d = d;
+                }
+                else if (rng.below(8) == 0)
+                {
+                    d.clear();
+                    n = 0;
+                }
+                break;
+            }
+            ASSERT_EQ(d.size(), n) << "op " << op << " it " << it;
+            for (size_t i = 0; i < n; ++i)
+                ASSERT_EQ(M::id_of(d[i]), ref[i]) << "op " << op << " it " << it << " i " << i;
+            if (n)
+            {
+                ASSERT_EQ(M::id_of(d.front()), ref[0]);
+                ASSERT_EQ(M::id_of(d.back()), ref[n - 1]);
+            }
+            size_t seen = 0;
+            for (typename ct::Deque<T>::iterator e = d.begin(); e != d.end(); ++e)
+                ASSERT_EQ(M::id_of(*e), ref[seen++]);
+            ASSERT_EQ(seen, n);
+            ASSERT_EQ(other.size(), on);
+            ASSERT_LE(n, d.capacity());
+        }
+    }
+
+    TEST(Fuzz, DequeInt)
+    {
+        for (uint64_t seed = 1; seed <= 4; ++seed)
+            fuzz_deque<int>(seed, fuzz_iters(4000));
+    }
+    TEST(Fuzz, DequeString)
+    {
+        for (uint64_t seed = 1; seed <= 4; ++seed)
+            fuzz_deque<ct::String>(seed, fuzz_iters(3000));
+    }
+    TEST(Fuzz, DequeCounted)
+    {
+        Counted::bad = 0;
+        const int before = Counted::live;
+        for (uint64_t seed = 1; seed <= 4; ++seed)
+            fuzz_deque<Counted>(seed, fuzz_iters(3000));
         EXPECT_EQ(Counted::live, before);
         EXPECT_EQ(Counted::bad, 0);
     }

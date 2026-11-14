@@ -408,15 +408,35 @@ namespace ct
             return x;
         }
 
+        // MurmurHash64A: oito bytes por passo (o FNV-1a que havia fazia um byte por passo, com a multiplicacao na cadeia
+        // de dependencias) e os bits baixos, os que a mascara da tabela usa, saem bem misturados.
         inline std::uint64_t hash_bytes(const char *data, std::size_t n) noexcept
         {
-            std::uint64_t result = 1469598103934665603ull;
-            for (std::size_t i = 0; i < n; ++i)
+            const std::uint64_t m = 0xc6a4a7935bd1e995ull;
+            std::uint64_t h = 0x9ae16a3b2f90404full ^ (static_cast<std::uint64_t>(n) * m);
+            while (n >= 8)
             {
-                result ^= static_cast<unsigned char>(data[i]);
-                result *= 1099511628211ull;
+                std::uint64_t k;
+                std::memcpy(&k, data, 8);
+                k *= m;
+                k ^= k >> 47;
+                k *= m;
+                h ^= k;
+                h *= m;
+                data += 8;
+                n -= 8;
             }
-            return result;
+            if (n)
+            {
+                std::uint64_t k = 0;
+                std::memcpy(&k, data, n);
+                h ^= k;
+                h *= m;
+            }
+            h ^= h >> 47;
+            h *= m;
+            h ^= h >> 47;
+            return h;
         }
 
         inline std::size_t next_pow2(std::size_t n)

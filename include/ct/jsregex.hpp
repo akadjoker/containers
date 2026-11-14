@@ -2497,6 +2497,21 @@ namespace ct
                 std::uint32_t val;
             };
 
+            struct RunnerScratch
+            {
+                Vector<std::uint32_t> caps;
+                Vector<std::uint32_t> cnt;
+                Vector<std::uint32_t> start;
+                Vector<Frame> stack;
+                bool busy = false;
+            };
+
+            inline RunnerScratch &shared_runner_scratch()
+            {
+                static thread_local RunnerScratch sc;
+                return sc;
+            }
+
             template <typename Unit>
             class Runner
             {
@@ -2507,8 +2522,12 @@ namespace ct
                 Runner(const Program &prog, const Unit *s, std::size_t n, std::size_t max_steps, std::size_t max_stack)
                     : prog_(prog), s_(s), n_(static_cast<std::uint32_t>(n)), unicode_(prog.unicode && kWide),
                       wordx_(prog.unicode && prog.icase), steps_(0), max_steps_(max_steps), max_stack_(max_stack),
-                      memo_ready_(false), memo_on_(false), stride_(n + 1), threshold_(0)
+                      memo_ready_(false), memo_on_(false), stride_(n + 1), threshold_(0), sc_(pick_scratch(own_)),
+                      caps_(sc_->caps), cnt_(sc_->cnt), start_(sc_->start), stack_(sc_->stack)
                 {
+                    caps_.clear();
+                    cnt_.clear();
+                    start_.clear();
                     caps_.resize((prog.ngroups + 1) * 2, kNone);
                     cnt_.resize(prog.reps.size(), 0);
                     start_.resize(prog.reps.size(), kNone);
@@ -2520,6 +2539,19 @@ namespace ct
                         threshold_ = 64 + bits / 512;
                     }
                 }
+
+                ~Runner()
+                {
+                    if (sc_ != &own_)
+                    {
+                        if (sc_->stack.capacity() > 65536)
+                            Vector<Frame>().swap(sc_->stack);
+                        sc_->busy = false;
+                    }
+                }
+
+                Runner(const Runner &) = delete;
+                Runner &operator=(const Runner &) = delete;
 
                 const Vector<std::uint32_t> &caps() const noexcept { return caps_; }
 
@@ -2725,11 +2757,22 @@ namespace ct
                 bool memo_on_;
                 std::size_t stride_;
                 std::size_t threshold_;
-                Vector<std::uint32_t> caps_;
-                Vector<std::uint32_t> cnt_;
-                Vector<std::uint32_t> start_;
-                Vector<Frame> stack_;
+                RunnerScratch own_;
+                RunnerScratch *sc_;
+                Vector<std::uint32_t> &caps_;
+                Vector<std::uint32_t> &cnt_;
+                Vector<std::uint32_t> &start_;
+                Vector<Frame> &stack_;
                 Vector<std::uint64_t> memo_;
+
+                static RunnerScratch *pick_scratch(RunnerScratch &fallback)
+                {
+                    RunnerScratch &sh = shared_runner_scratch();
+                    if (sh.busy)
+                        return &fallback;
+                    sh.busy = true;
+                    return &sh;
+                }
 
                 void enable_memo()
                 {

@@ -379,3 +379,17 @@ TEST(VectorAlgo, ContainsAndIndexOf) {
     EXPECT_TRUE(pointers.contains(ca));
     EXPECT_FALSE(pointers.contains(&b));
 }
+
+TEST(Vector, CtMoveEhOMoveDaBiblioteca)
+{
+    ct::Vector<int> a;
+    a.push_back(1);
+    a.push_back(2);
+    ct::Vector<int> b(ct::move(a));
+    EXPECT_EQ(b.size(), 2u);
+    EXPECT_TRUE(a.empty());
+    ct::Vector<int> c;
+    c = ct::move(b);
+    EXPECT_EQ(c.size(), 2u);
+    EXPECT_EQ(c[1], 2);
+}

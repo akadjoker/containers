@@ -568,4 +568,9 @@ namespace ct
         }
     };
 
-} 
+    // Para quem usa a ct de fora, sem a biblioteca standard: ct::move e ct::forward fazem o que std::move e
+    // std::forward fazem.
+    using detail::forward;
+    using detail::move;
+
+}

@@ -289,3 +289,51 @@ TEST(CondVarTimed, VariosNotificadoresEUmEsperadorComPrazoLongoNaoPerdemAcordare
     b.join();
     EXPECT_EQ(counter, 50);
 }
+
+// ---- Function<void(...)> com chamaveis que devolvem valor -------------------------------------------------------
+
+#include <ct/function.hpp>
+
+namespace
+{
+    int g_calls = 0;
+    int bump() { return ++g_calls; }
+    struct Counter
+    {
+        int total;
+        int operator()(int x) { total += x; return total; }
+    };
+}
+
+TEST(Hardening, FunctionVoidAceitaChamaveisQueDevolvemValor)
+{
+    // Antes da correcao nada disto compilava: "return-statement with a value, in function returning void".
+    g_calls = 0;
+    ct::Function<void()> from_lambda = [] { return bump(); };
+    ct::Function<void()> from_pointer = bump;
+    from_lambda();
+    from_pointer();
+    EXPECT_EQ(g_calls, 2);
+
+    Counter c = {0};
+    ct::Function<void(int)> from_functor = c;
+    from_functor(5);
+    from_functor(7);
+    ct::Function<void(int)> from_lambda_arg = [](int x) { return x * 2; };
+    from_lambda_arg(3);
+
+    ct::String s;
+    ct::Function<void(const char *)> append = [&s](const char *t) { return &s.append(t); };
+    append("ab");
+    append("cd");
+    EXPECT_EQ(s, "abcd");
+
+    ct::Function<void()> copy(from_lambda);
+    ct::Function<void()> moved(ct::move(copy));
+    moved();
+    EXPECT_EQ(g_calls, 3);
+
+    // os que ja funcionavam continuam: conversao do valor devolvido
+    ct::Function<long(int)> widen = [](int x) { return x; };
+    EXPECT_EQ(widen(9), 9L);
+}

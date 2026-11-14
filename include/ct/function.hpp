@@ -147,6 +147,17 @@ namespace ct
         template <typename F>
         static R invoke_thunk(void *obj, Args... args)
         {
+            return call<F>(obj, detail::integral_constant<bool, std::is_void<R>::value>{}, detail::forward<Args>(args)...);
+        }
+        // Function<void(...)> aceita um chamavel que devolve um valor (o valor e deitado fora), como std::function.
+        template <typename F>
+        static R call(void *obj, detail::true_type, Args... args)
+        {
+            (*static_cast<F *>(obj))(detail::forward<Args>(args)...);
+        }
+        template <typename F>
+        static R call(void *obj, detail::false_type, Args... args)
+        {
             return (*static_cast<F *>(obj))(detail::forward<Args>(args)...);
         }
 

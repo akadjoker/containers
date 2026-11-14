@@ -16,6 +16,7 @@
 #include <intrin.h>
 #endif
 #else
+#include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
@@ -495,7 +496,9 @@ namespace ct
             timespec ts;
             ts.tv_sec = static_cast<time_t>(ms / 1000);
             ts.tv_nsec = static_cast<long>(ms % 1000) * 1000000L;
-            nanosleep(&ts, nullptr);
+            timespec left;
+            while (nanosleep(&ts, &left) != 0 && errno == EINTR)
+                ts = left;
 #endif
         }
 

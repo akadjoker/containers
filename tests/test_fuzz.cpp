@@ -993,7 +993,9 @@ namespace
                 const int i = r.find(k);
                 ASSERT_EQ(f != nullptr, i >= 0);
                 if (f)
+                {
                     ASSERT_EQ(f->id, r.val[i]);
+                }
                 ASSERT_EQ(m.contains(k), i >= 0);
                 break;
             }
@@ -1128,7 +1130,9 @@ namespace
                     const int i = r.find(k);
                     ASSERT_EQ(f != nullptr, i >= 0);
                     if (f)
+                    {
                         ASSERT_EQ(*f, r.val[i]);
+                    }
                     const int *g = m.find(ct::StringView(key.data(), key.size()));
                     ASSERT_EQ(g, f);
                 }
@@ -1195,7 +1199,9 @@ namespace
         for (typename Map::iterator e = m.begin(); e != m.end(); ++e)
         {
             if (seen)
+            {
                 ASSERT_LT(prev, e->key);
+            }
             prev = e->key;
             const int i = r.find(e->key);
             ASSERT_GE(i, 0);
@@ -1260,7 +1266,9 @@ namespace
                 const int i = r.find(k);
                 ASSERT_EQ(f != nullptr, i >= 0);
                 if (f)
+                {
                     ASSERT_EQ(f->id, r.val[i]);
+                }
                 break;
             }
             case 8:
@@ -1271,7 +1279,9 @@ namespace
                     if (r.key[i] >= k && (best < 0 || r.key[i] < best))
                         best = r.key[i];
                 if (best < 0)
+                {
                     ASSERT_TRUE(lb == m.end());
+                }
                 else
                 {
                     ASSERT_TRUE(lb != m.end());

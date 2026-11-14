@@ -128,7 +128,9 @@ TEST(Hardening, HashDeStringsDependeDoComprimentoEDosNULsENaoDoAlinhamento)
             EXPECT_NE(longer.hash(), reference) << "um NUL no fim muda o hash, n " << n;
         }
         if (n < 40)
+        {
             EXPECT_NE(ct::String(text, n + 1).hash(), reference);
+        }
     }
     EXPECT_NE(ct::String("ab").hash(), ct::String("ba").hash());
     EXPECT_NE(ct::String().hash(), ct::String("\0", 1).hash());

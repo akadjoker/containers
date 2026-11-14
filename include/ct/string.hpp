@@ -166,7 +166,8 @@ namespace ct
             const size_type source_offset = is_inside(p) ? static_cast<size_type>(p - data()) : npos;
             if (n <= capacity())
             {
-                std::memmove(data(), source, n);
+                if (n)
+                    std::memmove(data(), source, n);
                 set_size(n);
                 return;
             }

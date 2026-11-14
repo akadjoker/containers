@@ -24,11 +24,52 @@
 
 namespace ct
 {
+    // Quanta ordenacao pede uma operacao atomica. SeqCst e o padrao de todas as operacoes de Atomic e a unica
+    // sempre correta; Acquire/Release/AcqRel/Relaxed so para quem sabe porque (um anel de um produtor e um
+    // consumidor: o produtor escreve o indice com Release, o consumidor le-o com Acquire). Com MSVC todas as
+    // operacoes sao barreiras completas e a ordem nao muda nada.
+    enum class MemoryOrder
+    {
+        Relaxed,
+        Acquire,
+        Release,
+        AcqRel,
+        SeqCst
+    };
+
     namespace detail
     {
 #if defined(_MSC_VER) && !defined(__clang__)
         template <std::size_t N>
         struct AtomicOps;
+
+        template <>
+        struct AtomicOps<1>
+        {
+            using Raw = char;
+            static Raw load(volatile Raw *p) noexcept { return _InterlockedOr8(p, 0); }
+            static void store(volatile Raw *p, Raw v) noexcept { _InterlockedExchange8(p, v); }
+            static Raw exchange(volatile Raw *p, Raw v) noexcept { return _InterlockedExchange8(p, v); }
+            static Raw fetch_add(volatile Raw *p, Raw v) noexcept { return _InterlockedExchangeAdd8(p, v); }
+            static Raw cas(volatile Raw *p, Raw expected, Raw desired) noexcept
+            {
+                return _InterlockedCompareExchange8(p, desired, expected);
+            }
+        };
+
+        template <>
+        struct AtomicOps<2>
+        {
+            using Raw = short;
+            static Raw load(volatile Raw *p) noexcept { return _InterlockedOr16(p, 0); }
+            static void store(volatile Raw *p, Raw v) noexcept { _InterlockedExchange16(p, v); }
+            static Raw exchange(volatile Raw *p, Raw v) noexcept { return _InterlockedExchange16(p, v); }
+            static Raw fetch_add(volatile Raw *p, Raw v) noexcept { return _InterlockedExchangeAdd16(p, v); }
+            static Raw cas(volatile Raw *p, Raw expected, Raw desired) noexcept
+            {
+                return _InterlockedCompareExchange16(p, desired, expected);
+            }
+        };
 
         template <>
         struct AtomicOps<4>
@@ -57,18 +98,41 @@ namespace ct
                 return _InterlockedCompareExchange64(p, desired, expected);
             }
         };
+#else
+        // O valor que o compilador espera para uma ordem. Com a ordem constante (o normal, depois de inline) o
+        // compilador gera so a instrucao que ela pede; sem ser constante trata-a como SeqCst.
+        constexpr int order_value(MemoryOrder order) noexcept
+        {
+            return order == MemoryOrder::Relaxed   ? __ATOMIC_RELAXED
+                   : order == MemoryOrder::Acquire ? __ATOMIC_ACQUIRE
+                   : order == MemoryOrder::Release ? __ATOMIC_RELEASE
+                   : order == MemoryOrder::AcqRel  ? __ATOMIC_ACQ_REL
+                                                   : __ATOMIC_SEQ_CST;
+        }
 #endif
     }
 
+    // Um valor que varias threads leem e escrevem sem mutex. Aceita inteiros, bool, ponteiros, enums e float/double
+    // de 1, 2, 4 ou 8 bytes; a aritmetica (fetch_add, ++, +=, ...) so existe para inteiros (nao bool) e ponteiros.
+    // compare_exchange compara os bytes, por isso num float o NaN e o -0.0 comparam como o que sao em bits.
     template <typename T>
     class Atomic
     {
-        static_assert(std::is_integral<T>::value || std::is_pointer<T>::value,
-                      "ct::Atomic: so inteiros e ponteiros");
-        static_assert(sizeof(T) == 4 || sizeof(T) == 8, "ct::Atomic: so 32 ou 64 bits");
+        static_assert(std::is_integral<T>::value || std::is_pointer<T>::value || std::is_floating_point<T>::value ||
+                          std::is_enum<T>::value,
+                      "ct::Atomic: so inteiros, bool, enums, ponteiros e float/double");
+        static_assert(sizeof(T) == 1 || sizeof(T) == 2 || sizeof(T) == 4 || sizeof(T) == 8,
+                      "ct::Atomic: so 8, 16, 32 ou 64 bits");
 
         using IsPointer = detail::integral_constant<bool, std::is_pointer<T>::value>;
         using Diff = typename std::conditional<std::is_pointer<T>::value, std::ptrdiff_t, T>::type;
+
+        // So os membros que somam instanciam isto: um Atomic<float> ou Atomic<bool> com ++ nao compila.
+        static void require_arithmetic() noexcept
+        {
+            static_assert((std::is_integral<T>::value && !std::is_same<T, bool>::value) || std::is_pointer<T>::value,
+                          "ct::Atomic: fetch_add, fetch_sub, ++, --, += e -= so para inteiros (nao bool) e ponteiros");
+        }
 
     public:
         Atomic() noexcept : v_(T()) {}
@@ -80,12 +144,21 @@ namespace ct
         using Ops = detail::AtomicOps<sizeof(T)>;
         using Raw = typename Ops::Raw;
 
-        T load() const noexcept { return from_raw(Ops::load(raw())); }
-        void store(T v) noexcept { Ops::store(raw(), to_raw(v)); }
-        T exchange(T v) noexcept { return from_raw(Ops::exchange(raw(), to_raw(v))); }
-        T fetch_add(T v) noexcept { return from_raw(Ops::fetch_add(raw(), to_raw(v))); }
-        T fetch_sub(T v) noexcept { return from_raw(Ops::fetch_add(raw(), static_cast<Raw>(0) - to_raw(v))); }
-        bool compare_exchange(T &expected, T desired) noexcept
+        T load(MemoryOrder = MemoryOrder::SeqCst) const noexcept { return from_raw(Ops::load(raw())); }
+        void store(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept { Ops::store(raw(), to_raw(v)); }
+        T exchange(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept { return from_raw(Ops::exchange(raw(), to_raw(v))); }
+        T fetch_add(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept
+        {
+            require_arithmetic();
+            return from_raw(Ops::fetch_add(raw(), to_raw(v)));
+        }
+        T fetch_sub(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept
+        {
+            require_arithmetic();
+            return from_raw(Ops::fetch_add(raw(), static_cast<Raw>(static_cast<Raw>(0) - to_raw(v))));
+        }
+        bool compare_exchange(T &expected, T desired, MemoryOrder = MemoryOrder::SeqCst,
+                              MemoryOrder = MemoryOrder::SeqCst) noexcept
         {
             Raw old = Ops::cas(raw(), to_raw(expected), to_raw(desired));
             if (old == to_raw(expected))
@@ -109,14 +182,38 @@ namespace ct
             return v;
         }
 #else
-        T load() const noexcept { return __atomic_load_n(&v_, __ATOMIC_SEQ_CST); }
-        void store(T v) noexcept { __atomic_store_n(&v_, v, __ATOMIC_SEQ_CST); }
-        T exchange(T v) noexcept { return __atomic_exchange_n(&v_, v, __ATOMIC_SEQ_CST); }
-        T fetch_add(T v) noexcept { return __atomic_fetch_add(&v_, v, __ATOMIC_SEQ_CST); }
-        T fetch_sub(T v) noexcept { return __atomic_fetch_sub(&v_, v, __ATOMIC_SEQ_CST); }
-        bool compare_exchange(T &expected, T desired) noexcept
+        T load(MemoryOrder order = MemoryOrder::SeqCst) const noexcept
         {
-            return __atomic_compare_exchange_n(&v_, &expected, desired, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+            T result;
+            __atomic_load(&v_, &result, detail::order_value(order));
+            return result;
+        }
+        void store(T v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
+        {
+            __atomic_store(&v_, &v, detail::order_value(order));
+        }
+        T exchange(T v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
+        {
+            T result;
+            __atomic_exchange(&v_, &v, &result, detail::order_value(order));
+            return result;
+        }
+        T fetch_add(T v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
+        {
+            require_arithmetic();
+            return __atomic_fetch_add(&v_, v, detail::order_value(order));
+        }
+        T fetch_sub(T v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
+        {
+            require_arithmetic();
+            return __atomic_fetch_sub(&v_, v, detail::order_value(order));
+        }
+        // Se falhar, expected fica com o valor que la estava. A ordem de falha nao pode ser Release nem AcqRel.
+        bool compare_exchange(T &expected, T desired, MemoryOrder success = MemoryOrder::SeqCst,
+                              MemoryOrder failure = MemoryOrder::SeqCst) noexcept
+        {
+            return __atomic_compare_exchange(&v_, &expected, &desired, false, detail::order_value(success),
+                                             detail::order_value(failure));
         }
 
     private:
@@ -144,6 +241,7 @@ namespace ct
         }
         T step(Diff d, bool subtract, detail::true_type) noexcept
         {
+            require_arithmetic();
             T current = load();
             while (!compare_exchange(current, subtract ? current - d : current + d))
             {

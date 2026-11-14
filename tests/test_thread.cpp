@@ -419,6 +419,140 @@ TEST(Atomic, PonteirosSaoAtomicosEntreThreads)
     EXPECT_EQ(cursor.load(), slots + 40000);
 }
 
+TEST(Atomic, BoolFloatETiposPequenos)
+{
+    Atomic<bool> flag(false);
+    EXPECT_FALSE(flag.load());
+    flag.store(true);
+    EXPECT_TRUE(flag.load());
+    EXPECT_TRUE(flag.exchange(false));
+    EXPECT_FALSE(flag);
+    bool expected = false;
+    EXPECT_TRUE(flag.compare_exchange(expected, true));
+    expected = false;
+    EXPECT_FALSE(flag.compare_exchange(expected, false));
+    EXPECT_TRUE(expected); // a falha devolve o que la estava
+    flag = false;
+    EXPECT_FALSE(flag.load());
+
+    Atomic<float> gain(1.0f);
+    EXPECT_EQ(gain.load(), 1.0f);
+    gain.store(0.25f);
+    EXPECT_EQ(static_cast<float>(gain), 0.25f);
+    EXPECT_EQ(gain.exchange(-3.5f), 0.25f);
+    EXPECT_EQ(gain.load(), -3.5f);
+    float want = -3.5f;
+    EXPECT_TRUE(gain.compare_exchange(want, 7.0f));
+    EXPECT_EQ(gain.load(), 7.0f);
+    want = 1.0f;
+    EXPECT_FALSE(gain.compare_exchange(want, 9.0f));
+    EXPECT_EQ(want, 7.0f);
+
+    Atomic<double> wide(2.5);
+    wide.store(-0.125);
+    EXPECT_EQ(wide.load(), -0.125);
+
+    Atomic<unsigned char> byte(250);
+    EXPECT_EQ(byte.fetch_add(3), 250);
+    EXPECT_EQ(byte.load(), 253);
+    EXPECT_EQ(byte.fetch_sub(4), 253);
+    EXPECT_EQ(byte.load(), 249);
+    Atomic<short> half(-5);
+    EXPECT_EQ(half.fetch_add(10), -5);
+    EXPECT_EQ(++half, 6);
+
+    Atomic<std::uint32_t> ring(0xFFFFFFFFu);
+    EXPECT_EQ(ring.fetch_add(2), 0xFFFFFFFFu);
+    EXPECT_EQ(ring.load(), 1u); // dá a volta como um indice de anel
+    Atomic<std::int64_t> big(-1);
+    EXPECT_EQ(big.fetch_sub(1), -1);
+    EXPECT_EQ(big.load(), -2);
+
+    enum class Mode : int { Idle, Busy };
+    Atomic<Mode> mode(Mode::Idle);
+    mode.store(Mode::Busy);
+    EXPECT_TRUE(mode.load() == Mode::Busy);
+}
+
+TEST(Atomic, ComOrdemDeMemoria)
+{
+    Atomic<int> v(0);
+    v.store(5, ct::MemoryOrder::Release);
+    EXPECT_EQ(v.load(ct::MemoryOrder::Acquire), 5);
+    EXPECT_EQ(v.load(ct::MemoryOrder::Relaxed), 5);
+    EXPECT_EQ(v.exchange(6, ct::MemoryOrder::AcqRel), 5);
+    EXPECT_EQ(v.fetch_add(4, ct::MemoryOrder::Relaxed), 6);
+    EXPECT_EQ(v.fetch_sub(1, ct::MemoryOrder::AcqRel), 10);
+    int expected = 9;
+    EXPECT_TRUE(v.compare_exchange(expected, 1, ct::MemoryOrder::AcqRel, ct::MemoryOrder::Acquire));
+    expected = 100;
+    EXPECT_FALSE(v.compare_exchange(expected, 2, ct::MemoryOrder::Release, ct::MemoryOrder::Relaxed));
+    EXPECT_EQ(expected, 1);
+    Atomic<bool> flag(false);
+    flag.store(true, ct::MemoryOrder::Release);
+    EXPECT_TRUE(flag.load(ct::MemoryOrder::Acquire));
+    Atomic<float> gain(0.5f);
+    gain.store(2.0f, ct::MemoryOrder::Relaxed);
+    EXPECT_EQ(gain.load(ct::MemoryOrder::Relaxed), 2.0f);
+}
+
+// O uso para que as ordens existem: um anel com um produtor e um consumidor. O produtor escreve os dados e publica
+// o indice com Release; o consumidor le o indice com Acquire e so depois os dados. Se a ordem nao valesse, o
+// consumidor veria o indice novo com dados velhos.
+TEST(Atomic, AnelDeUmProdutorEUmConsumidorComAcquireRelease)
+{
+    static const std::uint32_t kSize = 1024; // potencia de dois
+    static const std::uint32_t kTotal = 200000;
+    static std::uint32_t slots[kSize];
+    Atomic<std::uint32_t> head(0), tail(0);
+    Atomic<int> wrong(0);
+    Thread producer([&] {
+        for (std::uint32_t n = 0; n < kTotal; ++n)
+        {
+            while (n - tail.load(ct::MemoryOrder::Acquire) >= kSize)
+                Thread::yield();
+            slots[n & (kSize - 1)] = n * 3u + 1u;
+            head.store(n + 1, ct::MemoryOrder::Release);
+        }
+    });
+    Thread consumer([&] {
+        for (std::uint32_t n = 0; n < kTotal; ++n)
+        {
+            while (head.load(ct::MemoryOrder::Acquire) <= n)
+                Thread::yield();
+            if (slots[n & (kSize - 1)] != n * 3u + 1u)
+                wrong.fetch_add(1);
+            tail.store(n + 1, ct::MemoryOrder::Release);
+        }
+    });
+    producer.join();
+    consumer.join();
+    EXPECT_EQ(wrong.load(), 0);
+    EXPECT_EQ(head.load(), kTotal);
+    EXPECT_EQ(tail.load(), kTotal);
+}
+
+TEST(Atomic, FlagECarregaEntreThreads)
+{
+    Atomic<bool> stop(false);
+    Atomic<float> gain(1.0f);
+    Atomic<int> spins(0);
+    Thread worker([&] {
+        while (!stop.load(ct::MemoryOrder::Acquire))
+        {
+            if (gain.load(ct::MemoryOrder::Relaxed) > 0.0f)
+                spins.fetch_add(1, ct::MemoryOrder::Relaxed);
+            Thread::yield();
+        }
+    });
+    Thread::sleep_ms(5);
+    gain.store(-1.0f, ct::MemoryOrder::Relaxed);
+    stop.store(true, ct::MemoryOrder::Release);
+    worker.join();
+    EXPECT_TRUE(stop.load());
+    EXPECT_EQ(gain.load(), -1.0f);
+}
+
 TEST(Thread, MoverUmaThreadNaoIniciadaNaoLeLixo)
 {
     Thread idle;

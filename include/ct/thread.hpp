@@ -251,6 +251,25 @@ namespace ct
         }
     };
 
+    namespace detail
+    {
+        // Milissegundos de um relogio que so avanca, para prazos. No Windows e o GetTickCount64 (passos de uns 15 ms).
+        inline std::uint64_t steady_ms() noexcept
+        {
+#if defined(_WIN32)
+            return static_cast<std::uint64_t>(GetTickCount64());
+#else
+            timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            return static_cast<std::uint64_t>(ts.tv_sec) * 1000u + static_cast<std::uint64_t>(ts.tv_nsec / 1000000L);
+#endif
+        }
+    }
+
+#if !defined(_WIN32) && !defined(__APPLE__) && (defined(__linux__) || defined(__ANDROID__)) && !defined(__EMSCRIPTEN__)
+#define CT_COND_MONOTONIC 1
+#endif
+
     class Mutex
     {
     public:
@@ -326,7 +345,14 @@ namespace ct
 #if defined(_WIN32)
             InitializeConditionVariable(&cv_);
 #else
-            if (pthread_cond_init(&cv_, nullptr) != 0)
+            pthread_condattr_t attr;
+            pthread_condattr_init(&attr);
+#if defined(CT_COND_MONOTONIC)
+            pthread_condattr_setclock(&attr, CLOCK_MONOTONIC); // os prazos nao seguem o relogio de parede
+#endif
+            const int rc = pthread_cond_init(&cv_, &attr);
+            pthread_condattr_destroy(&attr);
+            if (rc != 0)
                 detail::fatal("ct::CondVar: pthread_cond_init falhou");
 #endif
         }
@@ -352,6 +378,47 @@ namespace ct
         {
             while (!pred())
                 wait(m);
+        }
+        // Espera ate ser notificada ou ate passarem ms milissegundos, com m trancado como em wait. Devolve false
+        // quando o tempo acabou; true quando acordou (por notify ou espuriamente: volte a testar a condicao).
+        bool wait_for_ms(Mutex &m, unsigned ms) noexcept
+        {
+#if defined(_WIN32)
+            return SleepConditionVariableSRW(&cv_, &m.lock_, ms, 0) != 0;
+#elif defined(__APPLE__)
+            timespec relative;
+            relative.tv_sec = static_cast<time_t>(ms / 1000);
+            relative.tv_nsec = static_cast<long>(ms % 1000) * 1000000L;
+            return pthread_cond_timedwait_relative_np(&cv_, &m.lock_, &relative) == 0;
+#else
+            timespec ts;
+#if defined(CT_COND_MONOTONIC)
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+#else
+            clock_gettime(CLOCK_REALTIME, &ts);
+#endif
+            ts.tv_sec += static_cast<time_t>(ms / 1000);
+            ts.tv_nsec += static_cast<long>(ms % 1000) * 1000000L;
+            if (ts.tv_nsec >= 1000000000L)
+            {
+                ts.tv_sec += 1;
+                ts.tv_nsec -= 1000000000L;
+            }
+            return pthread_cond_timedwait(&cv_, &m.lock_, &ts) == 0;
+#endif
+        }
+        // Espera pela condicao ate ao prazo. Devolve o valor da condicao no fim: false se o tempo acabou sem ela.
+        template <typename Pred>
+        bool wait_for_ms(Mutex &m, unsigned ms, Pred pred) noexcept
+        {
+            const std::uint64_t deadline = detail::steady_ms() + ms;
+            while (!pred())
+            {
+                const std::uint64_t now = detail::steady_ms();
+                if (now >= deadline || !wait_for_ms(m, static_cast<unsigned>(deadline - now)))
+                    return pred();
+            }
+            return true;
         }
         void notify_one() noexcept
         {
@@ -502,16 +569,7 @@ namespace ct
 #endif
         }
 
-        static std::uint64_t monotonic_ms() noexcept
-        {
-#if defined(_WIN32)
-            return static_cast<std::uint64_t>(GetTickCount64());
-#else
-            timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            return static_cast<std::uint64_t>(ts.tv_sec) * 1000u + static_cast<std::uint64_t>(ts.tv_nsec / 1000000L);
-#endif
-        }
+        static std::uint64_t monotonic_ms() noexcept { return detail::steady_ms(); }
 
     private:
         struct Block

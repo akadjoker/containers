@@ -209,3 +209,83 @@ TEST(Hardening, ReadAllDeVectorDeUmaMemoriaSemFimDesconhecidoEDeUmaParteDelaDaOT
     ASSERT_EQ(b.size(), 1000u);
     EXPECT_EQ(memcmp(b.data(), blob.data() + 99000, 1000), 0);
 }
+
+// ---- CondVar::wait_for_ms ----------------------------------------------------------------------------------------
+
+namespace
+{
+    struct Gate
+    {
+        ct::Mutex mutex;
+        ct::CondVar cv;
+        bool open;
+        Gate() : open(false) {}
+    };
+}
+
+TEST(CondVarTimed, SemNotificacaoDevolveFalseDepoisDoPrazo)
+{
+    Gate g;
+    ct::LockGuard lock(g.mutex);
+    const uint64_t t0 = ct::Thread::monotonic_ms();
+    EXPECT_FALSE(g.cv.wait_for_ms(g.mutex, 80, [&] { return g.open; }));
+    const uint64_t elapsed = ct::Thread::monotonic_ms() - t0;
+    EXPECT_GE(elapsed, 79u);
+    EXPECT_LT(elapsed, 2000u);
+
+    // sem predicado: um prazo que acaba devolve false (a menos de um despertar espurio, raro)
+    const uint64_t t1 = ct::Thread::monotonic_ms();
+    bool woke = true;
+    for (int tries = 0; tries < 5 && woke; ++tries)
+        woke = g.cv.wait_for_ms(g.mutex, 30);
+    EXPECT_FALSE(woke);
+    EXPECT_GE(ct::Thread::monotonic_ms() - t1, 29u);
+}
+
+TEST(CondVarTimed, NotifyAcordaAntesDoPrazo)
+{
+    Gate g;
+    ct::Thread opener([&g] {
+        ct::Thread::sleep_ms(30);
+        {
+            ct::LockGuard lock(g.mutex);
+            g.open = true;
+        }
+        g.cv.notify_all();
+    });
+    {
+        ct::LockGuard lock(g.mutex);
+        const uint64_t t0 = ct::Thread::monotonic_ms();
+        EXPECT_TRUE(g.cv.wait_for_ms(g.mutex, 10000, [&] { return g.open; }));
+        EXPECT_LT(ct::Thread::monotonic_ms() - t0, 5000u);
+    }
+    opener.join();
+}
+
+TEST(CondVarTimed, PrazoZeroNaoBloqueiaEPredicadoJaVerdadeiroDevolveTrue)
+{
+    Gate g;
+    ct::LockGuard lock(g.mutex);
+    const uint64_t t0 = ct::Thread::monotonic_ms();
+    EXPECT_FALSE(g.cv.wait_for_ms(g.mutex, 0, [&] { return g.open; }));
+    g.open = true;
+    EXPECT_TRUE(g.cv.wait_for_ms(g.mutex, 0, [&] { return g.open; }));
+    EXPECT_TRUE(g.cv.wait_for_ms(g.mutex, 5000, [&] { return g.open; }));
+    EXPECT_LT(ct::Thread::monotonic_ms() - t0, 1000u);
+}
+
+TEST(CondVarTimed, VariosNotificadoresEUmEsperadorComPrazoLongoNaoPerdemAcordares)
+{
+    // O esperador so pode sair quando o contador chega a 50; os notificadores incrementam e notificam em ciclos.
+    Gate g;
+    int counter = 0;
+    ct::Thread a([&] { for (int i = 0; i < 25; ++i) { { ct::LockGuard l(g.mutex); ++counter; } g.cv.notify_one(); ct::Thread::yield(); } });
+    ct::Thread b([&] { for (int i = 0; i < 25; ++i) { { ct::LockGuard l(g.mutex); ++counter; } g.cv.notify_one(); ct::Thread::yield(); } });
+    {
+        ct::LockGuard lock(g.mutex);
+        EXPECT_TRUE(g.cv.wait_for_ms(g.mutex, 20000, [&] { return counter == 50; }));
+    }
+    a.join();
+    b.join();
+    EXPECT_EQ(counter, 50);
+}

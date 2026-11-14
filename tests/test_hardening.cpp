@@ -133,3 +133,79 @@ TEST(Hardening, HashDeStringsDependeDoComprimentoEDosNULsENaoDoAlinhamento)
     EXPECT_NE(ct::String("ab").hash(), ct::String("ba").hash());
     EXPECT_NE(ct::String().hash(), ct::String("\0", 1).hash());
 }
+
+#include <ct/stream.hpp>
+
+namespace
+{
+    // Um stream que so da 1 a 3 bytes de cada vez e nao sabe o seu tamanho: read_all tem de juntar tudo.
+    class Trickle : public ct::Stream
+    {
+    public:
+        Trickle(size_t total, uint32_t seed) : total_(total), pos_(0), seed_(seed) {}
+        size_t read(void *dst, size_t n) override
+        {
+            if (pos_ >= total_)
+                return 0;
+            seed_ = seed_ * 1664525u + 1013904223u;
+            size_t take = 1 + (seed_ >> 24) % 3;
+            if (take > n)
+                take = n;
+            if (take > total_ - pos_)
+                take = total_ - pos_;
+            for (size_t i = 0; i < take; ++i)
+                static_cast<unsigned char *>(dst)[i] = byte_at(pos_ + i);
+            pos_ += take;
+            return take;
+        }
+        size_t write(const void *, size_t) override { return 0; }
+        bool seek(int64_t, ct::Seek) override { return false; }
+        int64_t tell() const override { return static_cast<int64_t>(pos_); }
+        int64_t size() const override { return -1; }
+        void close() override {}
+        bool is_open() const override { return true; }
+        bool eof() const override { return pos_ >= total_; }
+        bool can_read() const override { return true; }
+        bool can_write() const override { return false; }
+        bool can_seek() const override { return false; }
+        static unsigned char byte_at(size_t i) { return static_cast<unsigned char>(i * 31u + (i >> 8)); }
+
+    private:
+        size_t total_, pos_;
+        uint32_t seed_;
+    };
+}
+
+TEST(Hardening, ReadAllDeVectorJuntaTudoDeUmStreamQueDaPoucosBytesDeCadaVez)
+{
+    const size_t sizes[] = {0, 1, 4095, 4096, 4097, 20000, 70000};
+    for (size_t i = 0; i < sizeof(sizes) / sizeof(sizes[0]); ++i)
+    {
+        Trickle stream(sizes[i], static_cast<uint32_t>(i + 1));
+        ct::Vector<uint8_t> all;
+        all.push_back(0xAA); // read_all começa por limpar
+        ASSERT_TRUE(stream.read_all(all));
+        ASSERT_EQ(all.size(), sizes[i]);
+        for (size_t k = 0; k < all.size(); ++k)
+            ASSERT_EQ(all[k], Trickle::byte_at(k)) << "tamanho " << sizes[i] << " byte " << k;
+    }
+}
+
+TEST(Hardening, ReadAllDeVectorDeUmaMemoriaSemFimDesconhecidoEDeUmaParteDelaDaOTamanhoCerto)
+{
+    ct::Vector<uint8_t> blob;
+    for (size_t i = 0; i < 100000; ++i)
+        blob.push_back(static_cast<uint8_t>(i * 7u));
+    ct::MemoryStream whole(blob.data(), blob.size());
+    ct::Vector<uint8_t> a;
+    ASSERT_TRUE(whole.read_all(a));
+    ASSERT_EQ(a.size(), blob.size());
+    EXPECT_EQ(memcmp(a.data(), blob.data(), blob.size()), 0);
+
+    ct::MemoryStream rest(blob.data(), blob.size());
+    ASSERT_TRUE(rest.seek(99000, ct::Seek::Set));
+    ct::Vector<uint8_t> b;
+    ASSERT_TRUE(rest.read_all(b));
+    ASSERT_EQ(b.size(), 1000u);
+    EXPECT_EQ(memcmp(b.data(), blob.data() + 99000, 1000), 0);
+}

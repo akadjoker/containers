@@ -44,8 +44,17 @@ namespace ct
         bool skip(std::int64_t n) { return seek(n, Seek::Cur); }
         bool read_all(Vector<std::uint8_t> &out)
         {
-            out.clear(); std::uint8_t buf[4096];
-            while (!eof()) { std::size_t n = read(buf, sizeof(buf)); if (!n) break; out.reserve(out.size() + n); for (std::size_t i = 0; i < n; ++i) out.push_back(buf[i]); }
+            out.clear();
+            if (can_seek()) { const std::int64_t total = size(), here = tell(); if (total > here && here >= 0) out.reserve(static_cast<std::size_t>(total - here)); }
+            while (!eof())
+            {
+                const std::size_t have = out.size();
+                const std::size_t step = have < 4096 ? 4096 : (have < (std::size_t(1) << 24) ? have : (std::size_t(1) << 24));
+                out.resize(have + step);
+                const std::size_t n = read(out.data() + have, step);
+                out.resize(have + n);
+                if (!n) break;
+            }
             return !error();
         }
         bool read_all(String &out)

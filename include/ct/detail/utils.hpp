@@ -103,6 +103,19 @@ namespace ct
         };
 
         template <typename T>
+        struct is_void : false_type
+        {
+        };
+        template <>
+        struct is_void<void> : true_type
+        {
+        };
+        template <>
+        struct is_void<const void> : true_type
+        {
+        };
+
+        template <typename T>
         struct is_const : false_type
         {
         };

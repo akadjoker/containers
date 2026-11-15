@@ -197,6 +197,13 @@ target_link_libraries(ct_torture PRIVATE ct)
 add_executable(ct_jsregex_cli
   tests/ct_jsregex_cli.cpp)
 target_link_libraries(ct_jsregex_cli PRIVATE ct)
+
+if(NOT WIN32)
+  add_executable(ct_parsefuzz
+    tests/parsefuzz.cpp)
+  target_link_libraries(ct_parsefuzz PRIVATE ct)
+  add_test(NAME ct_parsefuzz COMMAND ct_parsefuzz all 1500 1)
+endif()
 endif()
 
 if(NOT CT_BUILD_BENCH)

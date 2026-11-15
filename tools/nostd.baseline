@@ -326,6 +326,7 @@ include/ct/socket.hpp	std::strerror
 include/ct/socket_stream.hpp	std::int64_t
 include/ct/socket_stream.hpp	std::size_t
 include/ct/sort.hpp	include <new>
+include/ct/sort.hpp	std::is_pointer
 include/ct/sort.hpp	std::memcpy
 include/ct/sort.hpp	std::memset
 include/ct/sort.hpp	std::ptrdiff_t
@@ -374,7 +375,6 @@ include/ct/string.hpp	std::numeric_limits
 include/ct/string.hpp	std::ptrdiff_t
 include/ct/string.hpp	std::size_t
 include/ct/string.hpp	std::snprintf
-include/ct/string.hpp	std::strchr
 include/ct/string.hpp	std::strlen
 include/ct/string.hpp	std::strtof
 include/ct/string.hpp	std::strtol

@@ -13,9 +13,27 @@ namespace ct
         explicit TextReader(Stream &stream) noexcept : stream_(stream), begin_(0), end_(0), initialized_(false), pending_begin_(0), pending_end_(0) {}
         bool read_line(String &out)
         {
-            out.clear(); int c;
-            while ((c = get()) != -1) { if (c == '\n') return true; if (c == '\r') { if (peek() == '\n') get(); return true; } out.append(1, static_cast<char>(c)); }
-            return !out.empty();
+            out.clear(); init();
+            for (;;)
+            {
+                if (pending_begin_ < pending_end_)
+                {
+                    const int c = pending_[pending_begin_++];
+                    if (c == '\n') return true;
+                    if (c == '\r') { if (peek() == '\n') get(); return true; }
+                    out.push_back(static_cast<char>(c));
+                    continue;
+                }
+                if (begin_ == end_ && !fill()) return !out.empty();
+                const char *first = buffer_ + begin_, *p = first, *last = buffer_ + end_;
+                while (p != last && *p != '\n' && *p != '\r') ++p;
+                out.append(first, static_cast<std::size_t>(p - first));
+                begin_ += static_cast<std::size_t>(p - first);
+                if (p == last) continue;
+                ++begin_;
+                if (*p == '\r' && peek() == '\n') get();
+                return true;
+            }
         }
         bool read_all(String &out)
         {
@@ -27,10 +45,37 @@ namespace ct
         }
         bool read_word(String &out)
         {
-            out.clear(); int c; while ((c = get()) != -1 && std::isspace(static_cast<unsigned char>(c))) {}
-            if (c == -1) return false;
-            do { out.append(1, static_cast<char>(c)); c = get(); } while (c != -1 && !std::isspace(static_cast<unsigned char>(c)));
-            return true;
+            out.clear(); init();
+            for (;;)
+            {
+                if (pending_begin_ < pending_end_)
+                {
+                    if (!is_space(pending_[pending_begin_])) break;
+                    ++pending_begin_;
+                    continue;
+                }
+                if (begin_ == end_ && !fill()) return false;
+                while (begin_ != end_ && is_space(static_cast<unsigned char>(buffer_[begin_]))) ++begin_;
+                if (begin_ != end_) break;
+            }
+            for (;;)
+            {
+                if (pending_begin_ < pending_end_)
+                {
+                    const int c = pending_[pending_begin_++];
+                    if (is_space(c)) return true;
+                    out.push_back(static_cast<char>(c));
+                    continue;
+                }
+                if (begin_ == end_ && !fill()) return true;
+                const char *first = buffer_ + begin_, *p = first, *last = buffer_ + end_;
+                while (p != last && !is_space(static_cast<unsigned char>(*p))) ++p;
+                out.append(first, static_cast<std::size_t>(p - first));
+                begin_ += static_cast<std::size_t>(p - first);
+                if (p == last) continue;
+                ++begin_;
+                return true;
+            }
         }
         bool read_int(long long &out) { String word; if (!read_word(word)) return false; char *end = nullptr; errno = 0; out = std::strtoll(word.c_str(), &end, 10); return end && *end == '\0' && errno != ERANGE; }
         bool read_double(double &out) { String word; if (!read_word(word)) return false; char *end = nullptr; out = std::strtod(word.c_str(), &end); return end && *end == '\0'; }
@@ -38,6 +83,8 @@ namespace ct
         int get() { int c = peek(); if (c == -1) return -1; if (pending_begin_ < pending_end_) ++pending_begin_; else ++begin_; return c; }
         bool eof() const { return initialized_ && pending_begin_ == pending_end_ && begin_ == end_ && stream_.eof(); }
     private:
+        // Os espacos ASCII sao os mesmos em qualquer locale; so os bytes acima de 0x7f perguntam ao isspace.
+        static bool is_space(int c) { return c < 0x80 ? (c == ' ' || (c >= '\t' && c <= '\r')) : std::isspace(c) != 0; }
         bool fill() { begin_ = 0; end_ = stream_.read(buffer_, sizeof(buffer_)); return end_ != 0; }
         int raw_get() { if (begin_ == end_ && !fill()) return -1; return static_cast<unsigned char>(buffer_[begin_++]); }
         void init()

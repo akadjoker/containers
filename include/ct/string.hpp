@@ -944,6 +944,20 @@ namespace ct
 
     inline void swap(String &a, String &b) noexcept { a.swap(b); }
 
+    namespace detail
+    {
+        // So e dona de bytes (char), que nao guardam objectos: nao pode ser dona de um Variant.
+        template <>
+        struct variant_leaf<String> : true_type
+        {
+        };
+        // O operator=(String &&) solta o bloco que tinha e fica com o da origem: e destruir e construir por move.
+        template <>
+        struct variant_move_rebuilds<String> : true_type
+        {
+        };
+    }
+
     template <typename OS>
     OS &operator<<(OS &os, const String &s)
     {

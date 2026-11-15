@@ -92,31 +92,115 @@ namespace ct
             static constexpr bool value = decltype(test<T>(0))::value;
         };
 
+        // Atribuir no sitio so se distingue de destruir e construir num tipo que sabe ser atribuido e nao e trivialmente
+        // copiavel: num tipo trivialmente copiavel o operator= e uma copia de bytes, igual a construir por cima, e o Variant
+        // destroi e constroi como sempre fez (e o compilador ve o mesmo codigo de antes).
         template <typename T>
-        inline bool variant_assign_copy(void *dst, const void *src, true_type)
+        struct variant_in_place
+        {
+            static constexpr bool copy = variant_copy_assignable<T>::value && !is_trivially_copyable_t<T>::value;
+            static constexpr bool move = variant_move_assignable<T>::value && !is_trivially_copyable_t<T>::value &&
+                                         !variant_move_rebuilds<T>::value;
+        };
+        // Uma alternativa so entra na cadeia de atribuicao (VariantOps::prepare_copy e prepare_move) se sair dela pede
+        // algo: ter destrutor (que corre antes de construir a nova), poder ser dona da origem (o local) ou atribuir-se no
+        // sitio. As outras (int, double, ponteiros) nao geram codigo nenhum, e a atribuicao entre elas e destruir e construir.
+        template <typename T>
+        struct variant_pre_copy
+        {
+            static constexpr bool value =
+                !is_trivially_destructible_t<T>::value || !variant_leaf<T>::value || variant_in_place<T>::copy;
+        };
+        template <typename T>
+        struct variant_pre_move
+        {
+            static constexpr bool value =
+                !is_trivially_destructible_t<T>::value || !variant_leaf<T>::value || variant_in_place<T>::move;
+        };
+
+        // Nenhuma alternativa precisa de nada de especial ao ser atribuida (todas folha, nenhuma atribui no sitio): a
+        // atribuicao e destruir a actual e construir a nova, como sempre foi, e escreve-se assim, sem a cadeia.
+        template <typename... Ts>
+        struct VariantPlainCopy
+        {
+            static constexpr bool value = true;
+        };
+        template <typename T, typename... Rest>
+        struct VariantPlainCopy<T, Rest...>
+        {
+            static constexpr bool value =
+                variant_leaf<T>::value && !variant_in_place<T>::copy && VariantPlainCopy<Rest...>::value;
+        };
+        template <typename... Ts>
+        struct VariantPlainMove
+        {
+            static constexpr bool value = true;
+        };
+        template <typename T, typename... Rest>
+        struct VariantPlainMove<T, Rest...>
+        {
+            static constexpr bool value =
+                variant_leaf<T>::value && !variant_in_place<T>::move && VariantPlainMove<Rest...>::value;
+        };
+
+        template <typename T>
+        CT_FORCEINLINE void variant_assign_copy(void *dst, const void *src, true_type)
         {
             *static_cast<T *>(dst) = *static_cast<const T *>(src);
-            return true;
         }
         template <typename T>
-        inline bool variant_assign_copy(void *, const void *, false_type)
+        CT_FORCEINLINE void variant_assign_copy(void *, const void *, false_type)
         {
-            return false;
         }
         template <typename T>
-        inline bool variant_assign_move(void *dst, void *src, true_type)
+        CT_FORCEINLINE void variant_assign_move(void *dst, void *src, true_type)
         {
             *static_cast<T *>(dst) = move(*static_cast<T *>(src));
-            return true;
         }
         template <typename T>
-        inline bool variant_assign_move(void *, void *, false_type)
+        CT_FORCEINLINE void variant_assign_move(void *, void *, false_type)
         {
+        }
+
+        // A alternativa actual e a K (de tipo T) e o destino e to: ou atribui no sitio (true), ou passa a origem por um
+        // local se T pode ser dona dela (true), ou destroi a actual (false: falta construir a nova).
+        template <typename T, typename Full, std::size_t K>
+        CT_FORCEINLINE bool variant_prepare_copy_one(std::size_t to, void *dst, const void *src)
+        {
+            if (variant_leaf<T>::value && (!variant_in_place<T>::copy || CT_LIKELY(to != K)))
+            {
+                static_cast<T *>(dst)->~T();
+                return false;
+            }
+            if (variant_in_place<T>::copy && to == K)
+            {
+                variant_assign_copy<T>(dst, src, integral_constant<bool, variant_in_place<T>::copy>());
+                return true;
+            }
+            Full::template replace_by_copy<Full>(to, K, dst, src);
+            return true;
+        }
+        template <typename T, typename Full, std::size_t K>
+        CT_FORCEINLINE bool variant_prepare_move_one(std::size_t to, void *dst, void *src)
+        {
+            if (variant_in_place<T>::move && to == K)
+            {
+                variant_assign_move<T>(dst, src, integral_constant<bool, variant_in_place<T>::move>());
+                return true;
+            }
+            if (!variant_leaf<T>::value)
+            {
+                Full::template replace_by_move<Full>(to, K, dst, src);
+                return true;
+            }
+            static_cast<T *>(dst)->~T();
             return false;
         }
 
-        // Bit i a 1 se a alternativa i tem destrutor (nao e trivial): so essas podem ser donas de memoria onde viva
-        // a origem de uma atribuicao. Com mais de 64 alternativas as de indice 64 em diante contam sempre como donas.
+        // Bit i a 1 se a alternativa i pode ser dona do Variant de que e alternativa, isto e, nao e folha (variant_leaf,
+        // em utils.hpp: por omissao so os tipos de destrutor trivial, e os que a biblioteca ou o utilizador garantem).
+        // So essas obrigam a passar a origem de uma atribuicao por um local. Com mais de 64 alternativas as de indice 64
+        // em diante contam sempre como donas.
         template <typename... Ts>
         struct VariantOwnsMask
         {
@@ -126,7 +210,7 @@ namespace ct
         struct VariantOwnsMask<T, Rest...>
         {
             static constexpr unsigned long long value =
-                (is_trivially_destructible_t<T>::value ? 0ull : 1ull) | (VariantOwnsMask<Rest...>::value << 1);
+                (variant_leaf<T>::value ? 0ull : 1ull) | (VariantOwnsMask<Rest...>::value << 1);
         };
         template <typename... Ts>
         inline bool variant_owns(std::size_t idx) noexcept
@@ -148,13 +232,15 @@ namespace ct
             {
                 fatal("ct::Variant: indice invalido");
             }
-            static bool copy_assign(std::size_t, void *, const void *)
+            template <typename Full, std::size_t K>
+            static bool prepare_copy(std::size_t, std::size_t, void *, const void *)
             {
-                fatal("ct::Variant: indice invalido");
+                return false;
             }
-            static bool move_assign(std::size_t, void *, void *)
+            template <typename Full, std::size_t K>
+            static bool prepare_move(std::size_t, std::size_t, void *, void *)
             {
-                fatal("ct::Variant: indice invalido");
+                return false;
             }
             template <typename Full>
             static void replace_by_copy(std::size_t, std::size_t, void *, const void *)
@@ -191,21 +277,18 @@ namespace ct
                 else
                     VariantOps<Rest...>::move_construct(idx - 1, dst, src);
             }
-            // Os dois estao na alternativa idx: atribui no sitio, com o operator= da alternativa, e diz que o fez.
-            // Devolve false (sem tocar em nada) se a alternativa nao sabe ser atribuida.
-            static bool copy_assign(std::size_t idx, void *dst, const void *src)
+            // Prepara a atribuicao de uma origem do indice to a dst, que esta na alternativa from (K e o indice da
+            // primeira alternativa desta lista na lista toda): percorre so as alternativas que pedem algo ao sair (as
+            // outras nao geram codigo) e diz se a atribuicao acabou (true) ou se so se destruiu a actual e falta construir.
+            template <typename Full, std::size_t K>
+            static bool prepare_copy(std::size_t from, std::size_t to, void *dst, const void *src)
             {
-                if (idx == 0)
-                    return variant_assign_copy<T>(dst, src,
-                                                  integral_constant<bool, variant_copy_assignable<T>::value>());
-                return VariantOps<Rest...>::copy_assign(idx - 1, dst, src);
+                return prepare_copy_at<Full, K>(from, to, dst, src, integral_constant<bool, variant_pre_copy<T>::value>());
             }
-            static bool move_assign(std::size_t idx, void *dst, void *src)
+            template <typename Full, std::size_t K>
+            static bool prepare_move(std::size_t from, std::size_t to, void *dst, void *src)
             {
-                if (idx == 0)
-                    return variant_assign_move<T>(dst, src,
-                                                  integral_constant<bool, variant_move_assignable<T>::value>());
-                return VariantOps<Rest...>::move_assign(idx - 1, dst, src);
+                return prepare_move_at<Full, K>(from, to, dst, src, integral_constant<bool, variant_pre_move<T>::value>());
             }
             // Troca a alternativa cur que esta em dst pela alternativa idx de src, passando por um T local: a origem
             // copia-se (ou move-se) antes de a actual ser destruida, porque pode viver dentro dela. Full e o
@@ -233,6 +316,32 @@ namespace ct
                 }
                 else
                     VariantOps<Rest...>::template replace_by_move<Full>(idx - 1, cur, dst, src);
+            }
+
+        private:
+            template <typename Full, std::size_t K>
+            static bool prepare_copy_at(std::size_t from, std::size_t to, void *dst, const void *src, true_type)
+            {
+                if (from == K)
+                    return variant_prepare_copy_one<T, Full, K>(to, dst, src);
+                return VariantOps<Rest...>::template prepare_copy<Full, K + 1>(from, to, dst, src);
+            }
+            template <typename Full, std::size_t K>
+            static bool prepare_copy_at(std::size_t from, std::size_t to, void *dst, const void *src, false_type)
+            {
+                return VariantOps<Rest...>::template prepare_copy<Full, K + 1>(from, to, dst, src);
+            }
+            template <typename Full, std::size_t K>
+            static bool prepare_move_at(std::size_t from, std::size_t to, void *dst, void *src, true_type)
+            {
+                if (from == K)
+                    return variant_prepare_move_one<T, Full, K>(to, dst, src);
+                return VariantOps<Rest...>::template prepare_move<Full, K + 1>(from, to, dst, src);
+            }
+            template <typename Full, std::size_t K>
+            static bool prepare_move_at(std::size_t from, std::size_t to, void *dst, void *src, false_type)
+            {
+                return VariantOps<Rest...>::template prepare_move<Full, K + 1>(from, to, dst, src);
             }
         };
 
@@ -287,62 +396,33 @@ namespace ct
 
         // A origem da atribuicao (o) pode viver dentro do que este Variant guarda: o cursor de uma lista,
         // cursor = cursor.get<Rc<No>>()->next, onde next e um membro do no que o cursor segura. Por isso:
-        //  - com o mesmo indice e uma alternativa atribuivel, atribui-se no sitio com o operator= da alternativa
-        //    (como o variant da biblioteca standard), e a seguranca fica nesse operator= (o do Rc e o do Unique
-        //    tiram a origem antes de largar o que tinham);
-        //  - nos outros casos, se a alternativa actual tem destrutor (pode ser dona da origem) a origem passa
-        //    primeiro para um objecto local, a alternativa actual destroi-se, e a nova constroi-se por move a partir
-        //    do local: custa um move e uma destruicao a mais. Sem destrutor nao pode ser dona de nada e destroi-se e
-        //    constroi-se directamente. (O variant da biblioteca standard destroi antes de copiar quando a copia nao
-        //    lanca, e ai tem o mesmo uso depois de libertar com o indice a mudar.)
+        //  - com o mesmo indice e uma alternativa que se sabe atribuir no sitio (e nao e trivialmente copiavel) atribui-se
+        //    com o operator= da alternativa, como o variant da biblioteca standard (a String reaproveita o bloco), e a
+        //    seguranca fica nesse operator= (o do Rc e o do Unique tiram a origem antes de largar o que tinham); o move de
+        //    String e de Vector e destruir e construir por move (variant_move_rebuilds) e nao se atribui no sitio;
+        //  - nos outros casos, se a alternativa actual pode ser dona da origem (nao e folha: Rc, Unique, Function, um
+        //    Vector de nos, um struct do utilizador) a origem passa primeiro para um objecto local, a alternativa
+        //    actual destroi-se, e a nova constroi-se por move a partir do local: custa um move e uma destruicao a mais;
+        //  - uma alternativa folha (destrutor trivial, String, Vector de folhas, ou o que o utilizador declarar
+        //    especializando detail::variant_leaf, ver utils.hpp) nao pode ser dona de um Variant e destroi-se e
+        //    constroi-se directamente, como sempre foi; se todas as alternativas forem assim e nenhuma atribuir no sitio
+        //    (VariantPlainCopy e VariantPlainMove) o operador e so destruir e construir, sem mais nada.
+        //    (O variant da biblioteca standard destroi antes de copiar quando a copia nao lanca, e ai tem o mesmo uso
+        //    depois de libertar com o indice a mudar.)
         // Os dois operadores sao CT_FORCEINLINE: com os ramos a mais o compilador deixava de os meter inline em
         // alguns sitios (a atribuicao de escalares ficava 2 a 3 vezes mais lenta), e inline e como sempre foram.
         CT_FORCEINLINE Variant &operator=(const Variant &o)
         {
             if (this == &o)
                 return *this;
-            const std::size_t from = index_;
-            const std::size_t to = o.index_;
-            if (from == to || detail::variant_owns<Ts...>(from))
-            {
-                if (from == to && detail::VariantOps<Ts...>::copy_assign(from, storage_, o.storage_))
-                    return *this;
-                if (detail::variant_owns<Ts...>(from))
-                {
-                    // o pode ja nao existir depois da troca (vivia na alternativa que se destruiu)
-                    detail::VariantOps<Ts...>::template replace_by_copy<detail::VariantOps<Ts...>>(
-                        to, from, storage_, o.storage_);
-                    index_ = to;
-                    return *this;
-                }
-            }
-            detail::VariantOps<Ts...>::destroy(from, storage_);
-            detail::VariantOps<Ts...>::copy_construct(to, storage_, o.storage_);
-            index_ = to;
+            assign_copy(o, detail::integral_constant<bool, detail::VariantPlainCopy<Ts...>::value>());
             return *this;
         }
         CT_FORCEINLINE Variant &operator=(Variant &&o) noexcept
         {
             if (this == &o)
                 return *this;
-            const std::size_t from = index_;
-            const std::size_t to = o.index_;
-            if (from == to || detail::variant_owns<Ts...>(from))
-            {
-                if (from == to && detail::VariantOps<Ts...>::move_assign(from, storage_, o.storage_))
-                    return *this;
-                if (detail::variant_owns<Ts...>(from))
-                {
-                    // o pode ja nao existir depois da troca (vivia na alternativa que se destruiu)
-                    detail::VariantOps<Ts...>::template replace_by_move<detail::VariantOps<Ts...>>(
-                        to, from, storage_, o.storage_);
-                    index_ = to;
-                    return *this;
-                }
-            }
-            detail::VariantOps<Ts...>::destroy(from, storage_);
-            detail::VariantOps<Ts...>::move_construct(to, storage_, o.storage_);
-            index_ = to;
+            assign_move(o, detail::integral_constant<bool, detail::VariantPlainMove<Ts...>::value>());
             return *this;
         }
 
@@ -425,6 +505,37 @@ namespace ct
 
     private:
         using First = typename detail::VariantTypeAt<0, Ts...>::type;
+
+        // Sem alternativa que peca algo: destruir a actual e construir a nova (a origem sobrevive, nenhuma alternativa
+        // actual e dona dela)
+        CT_FORCEINLINE void assign_copy(const Variant &o, detail::true_type)
+        {
+            detail::VariantOps<Ts...>::destroy(index_, storage_);
+            detail::VariantOps<Ts...>::copy_construct(o.index_, storage_, o.storage_);
+            index_ = o.index_;
+        }
+        CT_FORCEINLINE void assign_move(Variant &o, detail::true_type) noexcept
+        {
+            detail::VariantOps<Ts...>::destroy(index_, storage_);
+            detail::VariantOps<Ts...>::move_construct(o.index_, storage_, o.storage_);
+            index_ = o.index_;
+        }
+        CT_FORCEINLINE void assign_copy(const Variant &o, detail::false_type)
+        {
+            const std::size_t to = o.index_; // o pode ja nao existir depois da troca: le-se o indice antes
+            if (!detail::VariantOps<Ts...>::template prepare_copy<detail::VariantOps<Ts...>, 0>(
+                    index_, to, storage_, o.storage_))
+                detail::VariantOps<Ts...>::copy_construct(to, storage_, o.storage_);
+            index_ = to;
+        }
+        CT_FORCEINLINE void assign_move(Variant &o, detail::false_type) noexcept
+        {
+            const std::size_t to = o.index_;
+            if (!detail::VariantOps<Ts...>::template prepare_move<detail::VariantOps<Ts...>, 0>(
+                    index_, to, storage_, o.storage_))
+                detail::VariantOps<Ts...>::move_construct(to, storage_, o.storage_);
+            index_ = to;
+        }
 
         alignas(detail::VariantMaxAlign<Ts...>::value) unsigned char
             storage_[detail::VariantMaxSize<Ts...>::value];

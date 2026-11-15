@@ -1,6 +1,8 @@
 #include <ct/variant.hpp>
+#include <ct/function.hpp>
 #include <ct/ptr.hpp>
 #include <ct/string.hpp>
+#include <ct/vector.hpp>
 
 #include <gtest/gtest.h>
 
@@ -605,9 +607,10 @@ TEST(VariantAtribuir, AlternativaSemOperatorIgualDestroiEReconstroi)
 
 TEST(VariantAtribuir, EscalaresContinuamAAtribuir)
 {
-    // Sem alternativas com destrutor nunca ha local (a mascara e 0 e o ramo desaparece); com uma String ha.
-    static_assert(ct::detail::VariantOwnsMask<int, double, char>::value == 0, "escalares nao tem destrutor");
-    static_assert(ct::detail::VariantOwnsMask<int, String>::value == 2, "so a String (indice 1) tem destrutor");
+    // Sem alternativas que possam ser donas de um Variant nunca ha local (a mascara e 0 e o ramo desaparece)
+    static_assert(ct::detail::VariantOwnsMask<int, double, char>::value == 0, "escalares nao sao donos de nada");
+    static_assert(ct::detail::VariantOwnsMask<int, String>::value == 0, "a String so e dona de bytes");
+    static_assert(ct::detail::VariantOwnsMask<int, String, Rc<int>>::value == 4, "so o Rc (indice 2) pode ser dono");
     Variant<int, double, char> a(1);
     Variant<int, double, char> b(2.5);
     a = b;
@@ -617,4 +620,149 @@ TEST(VariantAtribuir, EscalaresContinuamAAtribuir)
     a = b;
     a = Variant<int, double, char>(7);
     EXPECT_EQ(a.get<int>(), 7);
+}
+
+// ---- que alternativas podem ser donas do Variant: detail::variant_leaf ------------------------------------------------
+
+namespace
+{
+    template <int Tag>
+    struct ContaFolha;
+}
+
+namespace ct
+{
+    namespace detail
+    {
+        // um tipo do utilizador que garante que so e dono de bytes: declara-se folha
+        template <int Tag>
+        struct variant_leaf<::ContaFolha<Tag>> : integral_constant<bool, (Tag % 2) == 0>
+        {
+        };
+    }
+}
+
+namespace
+{
+    template <int Tag>
+    struct ContaFolha
+    {
+        static int vivos, copias, moves, destruidos;
+        int v;
+        explicit ContaFolha(int x) : v(x) { ++vivos; }
+        ContaFolha(const ContaFolha &o) : v(o.v)
+        {
+            ++copias;
+            ++vivos;
+        }
+        ContaFolha(ContaFolha &&o) noexcept : v(o.v)
+        {
+            ++moves;
+            ++vivos;
+        }
+        ContaFolha &operator=(const ContaFolha &) = delete;
+        ~ContaFolha()
+        {
+            ++destruidos;
+            --vivos;
+        }
+        static void zera() { copias = moves = destruidos = 0; }
+    };
+    template <int Tag> int ContaFolha<Tag>::vivos = 0;
+    template <int Tag> int ContaFolha<Tag>::copias = 0;
+    template <int Tag> int ContaFolha<Tag>::moves = 0;
+    template <int Tag> int ContaFolha<Tag>::destruidos = 0;
+}
+
+TEST(VariantFolha, OTracoPorTipo)
+{
+    using ct::detail::variant_leaf;
+    // destrutor trivial: nao e dono de nada
+    static_assert(variant_leaf<int>::value, "int");
+    static_assert(variant_leaf<double>::value, "double");
+    static_assert(variant_leaf<char>::value, "char");
+    static_assert(variant_leaf<void *>::value, "ponteiro");
+    static_assert(variant_leaf<const char *>::value, "ponteiro para const");
+    static_assert(variant_leaf<NoRc *>::value, "um ponteiro para um no nao e dono dele");
+    // String: so e dona de bytes
+    static_assert(variant_leaf<String>::value, "String");
+    // Vector: so e dono do bloco e dos elementos, por isso e folha se os elementos o forem
+    static_assert(variant_leaf<ct::Vector<int>>::value, "Vector<int>");
+    static_assert(variant_leaf<ct::Vector<String>>::value, "Vector<String>");
+    static_assert(variant_leaf<ct::Vector<ct::Vector<String>>>::value, "Vector<Vector<String>>");
+    static_assert(variant_leaf<ct::Vector<NoRc *>>::value, "Vector de ponteiros");
+    // o que pode ser dono de um no (e do Variant que ele tem dentro) nao e folha
+    static_assert(!variant_leaf<Rc<NoRc>>::value, "Rc");
+    static_assert(!variant_leaf<Unique<NoUnico>>::value, "Unique");
+    static_assert(!variant_leaf<ct::Vector<Rc<NoRc>>>::value, "Vector<Rc>");
+    static_assert(!variant_leaf<ct::Vector<Unique<NoUnico>>>::value, "Vector<Unique>");
+    static_assert(!variant_leaf<ct::Vector<ct::Vector<Rc<NoRc>>>>::value, "Vector<Vector<Rc>>");
+    static_assert(!variant_leaf<ct::Function<void()>>::value, "Function: guarda um callable que pode capturar um no");
+    static_assert(!variant_leaf<NoRc>::value, "um struct com destrutor e um Variant dentro");
+    static_assert(!variant_leaf<Variant<int, Rc<NoRc>>>::value, "um Variant e dono do que as suas alternativas forem");
+    static_assert(!variant_leaf<Variant<int, String>>::value, "e um Variant de folhas tambem fica de fora (seguro)");
+    // o utilizador declara: ContaFolha<2> e folha e ContaFolha<3> nao (o traco acima, por Tag par)
+    static_assert(variant_leaf<ContaFolha<2>>::value, "especializado");
+    static_assert(!variant_leaf<ContaFolha<3>>::value, "especializado a falso");
+    static_assert(ct::detail::VariantOwnsMask<int, ContaFolha<2>, ContaFolha<3>, String>::value == 4,
+                  "so o indice 2 (ContaFolha<3>)");
+    // o move de String e de Vector e destruir e construir por move: o Variant nao os atribui no sitio ao mover
+    static_assert(ct::detail::variant_move_rebuilds<String>::value, "String");
+    static_assert(ct::detail::variant_move_rebuilds<ct::Vector<int>>::value, "Vector<int>");
+    static_assert(!ct::detail::variant_move_rebuilds<ContaFolha<2>>::value, "por omissao atribui-se no sitio");
+    // atribuicao escrita como destruir e construir (nenhuma alternativa pede mais) ou pela cadeia
+    using ct::detail::VariantPlainCopy;
+    using ct::detail::VariantPlainMove;
+    static_assert(VariantPlainCopy<int, double>::value, "escalares");
+    static_assert(VariantPlainMove<int, double>::value, "escalares");
+    static_assert(!VariantPlainCopy<int, double, String>::value, "a String copia-se no sitio");
+    static_assert(VariantPlainMove<int, double, String>::value, "a String move-se como destruir e construir");
+    static_assert(!VariantPlainMove<int, Rc<NoRc>>::value, "o Rc pode ser dono da origem");
+    static_assert(VariantPlainCopy<int, ContaFolha<2>>::value, "ContaFolha<2> e folha e nao se sabe atribuir");
+    static_assert(!VariantPlainCopy<int, ContaFolha<3>>::value, "ContaFolha<3> nao e folha");
+    SUCCEED();
+}
+
+TEST(VariantFolha, UmaAlternativaFolhaDestroiEConstroiDirectoENaoPassaPorUmLocal)
+{
+    typedef Variant<int, ContaFolha<2>, ContaFolha<3>> V;
+    ContaFolha<2>::zera();
+    ContaFolha<3>::zera();
+    {
+        V a{ContaFolha<2>(1)}; // folha
+        V b{ContaFolha<3>(2)}; // nao folha
+        V c{ContaFolha<2>(3)};
+        ContaFolha<2>::zera();
+        ContaFolha<3>::zera();
+
+        a = b; // actual folha (2): destroi e copia directo, sem local
+        EXPECT_EQ(ContaFolha<3>::copias, 1);
+        EXPECT_EQ(ContaFolha<3>::moves, 0);
+        EXPECT_EQ(ContaFolha<2>::destruidos, 1);
+        EXPECT_EQ(ContaFolha<3>::destruidos, 0);
+        ASSERT_EQ(a.index(), 2u);
+        EXPECT_EQ(a.get<ContaFolha<3>>().v, 2);
+
+        ContaFolha<2>::zera();
+        ContaFolha<3>::zera();
+        a = c; // actual nao folha (3): passa por um local (1 copia, 1 move, 2 destruicoes)
+        EXPECT_EQ(ContaFolha<2>::copias, 1);
+        EXPECT_EQ(ContaFolha<2>::moves, 1);
+        EXPECT_EQ(ContaFolha<2>::destruidos, 1); // o local
+        EXPECT_EQ(ContaFolha<3>::destruidos, 1); // o que la estava
+        ASSERT_EQ(a.index(), 1u);
+        EXPECT_EQ(a.get<ContaFolha<2>>().v, 3);
+
+        ContaFolha<2>::zera();
+        ContaFolha<3>::zera();
+        V d{ContaFolha<2>(9)};
+        ContaFolha<2>::zera();
+        a = ct::move(d); // actual folha (2), mesmo indice mas sem operator= (apagado): destroi e move directo
+        EXPECT_EQ(ContaFolha<2>::moves, 1);
+        EXPECT_EQ(ContaFolha<2>::copias, 0);
+        EXPECT_EQ(ContaFolha<2>::destruidos, 1);
+        EXPECT_EQ(a.get<ContaFolha<2>>().v, 9);
+    }
+    EXPECT_EQ(ContaFolha<2>::vivos, 0);
+    EXPECT_EQ(ContaFolha<3>::vivos, 0);
 }

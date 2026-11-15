@@ -184,6 +184,30 @@ namespace ct
         using is_trivially_destructible_t =
             integral_constant<bool, std::is_trivially_destructible<T>::value>;
 
+        // Variant: T e "folha" se nao pode ser dona, directa ou por ponteiro, de um objecto que contenha o Variant de que
+        // e alternativa. Atribuir ao Variant a partir de um membro do que ele guarda (cursor = cursor.get<Rc<No>>()->next)
+        // so e perigoso quando a alternativa actual e dona da origem, porque destrui-la antes de copiar a origem e ler
+        // memoria libertada; uma alternativa folha nao o pode ser, e o Variant destroi-a e constroi a nova directamente.
+        // Por omissao so os tipos de destrutor trivial (nao sao donos de nada) sao folha, e tudo o resto, que e quem pode
+        // ser dono de um no (Rc, Unique, Function, Vector de nos, um struct do utilizador), faz o caminho seguro. Quem tem
+        // um tipo que garante que so e dono de bytes ou de outras folhas especializa:
+        //     namespace ct { namespace detail { template <> struct variant_leaf<MeuTipo> : true_type {}; } }
+        // e se enganar a garantia volta o uso depois de libertar. Os tipos da biblioteca especializam no cabecalho de cada um.
+        template <typename T>
+        struct variant_leaf : is_trivially_destructible_t<T>
+        {
+        };
+
+        // Variant: o operator= de move de T faz exactamente o mesmo que destruir e construir por move (String e Vector: soltam
+        // o que tinham e ficam com o bloco da origem, sem reaproveitar nada). Nesses o Variant nao atribui no sitio ao mover
+        // para a mesma alternativa, e destroi e constroi como sempre fez: o resultado e o mesmo e o codigo e mais curto.
+        // (A atribuicao por copia atribui no sitio: reaproveita o bloco, e ai ha ganho.) Por omissao e falso: um tipo que
+        // reaproveita algo ao mover (um buffer, uma ligacao) tem de ser atribuido no sitio.
+        template <typename T>
+        struct variant_move_rebuilds : false_type
+        {
+        };
+
         template <typename T>
         struct is_bytewise_comparable
             : integral_constant<bool, std::is_integral<T>::value ||

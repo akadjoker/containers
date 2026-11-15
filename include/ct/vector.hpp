@@ -568,4 +568,20 @@ namespace ct
         a.swap(b);
     }
 
+    namespace detail
+    {
+        // So e dona do bloco de elementos (da malloc, que nao guarda mais nada) e dos Ts que estao nele: e folha se os
+        // Ts forem folha. Um Vector<No>, um Vector<Rc<No>> ou um Vector com outro alocador ficam de fora (alocador
+        // proprio pode ser dono do que quiser).
+        template <typename T>
+        struct variant_leaf<Vector<T, HeapAlloc>> : integral_constant<bool, variant_leaf<T>::value>
+        {
+        };
+        // O operator=(Vector &&) destroi os elementos, solta o bloco e fica com o da origem: e destruir e construir por move.
+        template <typename T>
+        struct variant_move_rebuilds<Vector<T, HeapAlloc>> : true_type
+        {
+        };
+    }
+
 }

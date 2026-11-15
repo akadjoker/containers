@@ -217,6 +217,58 @@ namespace
 
     // ---- String -------------------------------------------------------------------------------------------
 
+    // Faz o compilador tratar a memoria como lida e escrita: sem isto um ciclo que so atribui entre variaveis locais
+    // pode ser apagado (o clang apagou os dois de move com Strings do include de antes, 0.000 ms).
+    inline void keep_alive(void *p)
+    {
+#if defined(__GNUC__) || defined(__clang__)
+        __asm__ volatile("" : : "r"(p) : "memory");
+#else
+        (void)p;
+#endif
+    }
+
+    // O operator=(String &&) contra destruir e construir por move, no mesmo ciclo: a mesma troca de blocos entre duas Strings
+    uint64_t string_move_assign()
+    {
+        ct::String a("a string that is long enough to need the heap");
+        ct::String b("another long string, also on the heap, a bit longer");
+        uint64_t n = 0;
+        keep_alive(&a);
+        keep_alive(&b);
+        for (int i = 0; i < 20000000; ++i)
+        {
+            a = ct::move(b);
+            b = ct::move(a);
+            n += a.size();
+            keep_alive(&a);
+        }
+        return n;
+    }
+
+    uint64_t string_move_rebuild()
+    {
+        alignas(ct::String) unsigned char ra[sizeof(ct::String)];
+        alignas(ct::String) unsigned char rb[sizeof(ct::String)];
+        ct::String *a = ::new (static_cast<void *>(ra)) ct::String("a string that is long enough to need the heap");
+        ct::String *b = ::new (static_cast<void *>(rb)) ct::String("another long string, also on the heap, a bit longer");
+        uint64_t n = 0;
+        keep_alive(a);
+        keep_alive(b);
+        for (int i = 0; i < 20000000; ++i)
+        {
+            a->~String();
+            ::new (static_cast<void *>(a)) ct::String(ct::move(*b));
+            b->~String();
+            ::new (static_cast<void *>(b)) ct::String(ct::move(*a));
+            n += a->size();
+            keep_alive(a);
+        }
+        a->~String();
+        b->~String();
+        return n;
+    }
+
     uint64_t string_compare(const ct::Vector<ct::String> &v)
     {
         uint64_t acc = 0;
@@ -387,10 +439,15 @@ namespace
 
     typedef ct::Variant<int, double, ct::String> Var3;
 
-    uint64_t variant_assign_scalars()
+    // Cada ciclo e uma funcao propria (CT_NOINLINE: senao o compilador mete-a dentro do lambda de run() e o que se mede
+    // depende de como la ficou) e as variaveis ficam alinhadas a 64 bytes: um Variant de 32 bytes que calhe a meio de uma
+    // linha da cache atrapalha as copias de 16 bytes, e a posicao dele na pilha muda com o resto do ficheiro (a mesma
+    // linha, com o mesmo cabecalho, deu 86 ms numa compilacao e 128 ms noutra).
+
+    CT_NOINLINE uint64_t variant_assign_scalars()
     {
-        Var3 a(1);
-        Var3 b(2.5);
+        alignas(64) Var3 a(1);
+        alignas(64) Var3 b(2.5);
         uint64_t n = 0;
         for (int i = 0; i < 20000000; ++i)
         {
@@ -403,11 +460,11 @@ namespace
         return n;
     }
 
-    uint64_t variant_assign_strings()
+    CT_NOINLINE uint64_t variant_assign_strings()
     {
-        Var3 a(ct::String("a string that is long enough to need the heap"));
-        Var3 b(ct::String("another long string, also on the heap, a bit longer"));
-        Var3 c(7);
+        alignas(64) Var3 a(ct::String("a string that is long enough to need the heap"));
+        alignas(64) Var3 b(ct::String("another long string, also on the heap, a bit longer"));
+        alignas(64) Var3 c(7);
         uint64_t n = 0;
         for (int i = 0; i < 2000000; ++i)
         {
@@ -419,9 +476,9 @@ namespace
         return n;
     }
 
-    uint64_t variant_move_strings()
+    CT_NOINLINE uint64_t variant_move_strings()
     {
-        Var3 v[4] = {Var3(ct::String("a string that is long enough to need the heap")), Var3(3), Var3(1.5),
+        alignas(64) Var3 v[4] = {Var3(ct::String("a string that is long enough to need the heap")), Var3(3), Var3(1.5),
                      Var3(ct::String("another long string, also on the heap, a bit longer"))};
         uint64_t n = 0;
         for (int i = 0; i < 20000000; ++i)
@@ -434,11 +491,13 @@ namespace
 
     // As atribuicoes por caminho: mesmo indice (atribui no sitio), indice diferente com a alternativa actual a ter
     // destrutor (String) e sem ele (int).
-    uint64_t variant_same_index_scalars()
+    CT_NOINLINE uint64_t variant_same_index_scalars()
     {
-        Var3 a(1);
-        Var3 b(2);
+        alignas(64) Var3 a(1);
+        alignas(64) Var3 b(2);
         uint64_t n = 0;
+        keep_alive(&a);
+        keep_alive(&b);
         for (int i = 0; i < 20000000; ++i)
         {
             if (i & 1)
@@ -446,67 +505,82 @@ namespace
             else
                 b = a;
             n += static_cast<uint64_t>(a.get<int>());
+            keep_alive(&a);
         }
         return n;
     }
 
-    uint64_t variant_same_index_strings()
+    CT_NOINLINE uint64_t variant_same_index_strings()
     {
-        Var3 a(ct::String("a string that is long enough to need the heap"));
-        Var3 b(ct::String("another long string, also on the heap, a bit longer"));
+        alignas(64) Var3 a(ct::String("a string that is long enough to need the heap"));
+        alignas(64) Var3 b(ct::String("another long string, also on the heap, a bit longer"));
         uint64_t n = 0;
+        keep_alive(&a);
+        keep_alive(&b);
         for (int i = 0; i < 5000000; ++i)
         {
             a = b;
             b = a;
             n += a.get<ct::String>().size();
+            keep_alive(&a);
         }
         return n;
     }
 
-    uint64_t variant_move_same_index_strings()
+    CT_NOINLINE uint64_t variant_move_same_index_strings()
     {
-        Var3 a(ct::String("a string that is long enough to need the heap"));
-        Var3 b(ct::String("another long string, also on the heap, a bit longer"));
+        alignas(64) Var3 a(ct::String("a string that is long enough to need the heap"));
+        alignas(64) Var3 b(ct::String("another long string, also on the heap, a bit longer"));
         uint64_t n = 0;
+        keep_alive(&a);
+        keep_alive(&b);
         for (int i = 0; i < 20000000; ++i)
         {
             a = ct::move(b);
             b = ct::move(a);
             n += a.index();
+            keep_alive(&a);
         }
         return n;
     }
 
     // String<-int (a alternativa actual tem destrutor), int<-String (nao tem) e String<-String (mesmo indice)
-    uint64_t variant_copy_index_changes()
+    CT_NOINLINE uint64_t variant_copy_index_changes()
     {
-        Var3 a(ct::String("a string that is long enough to need the heap"));
-        Var3 s(ct::String("another long string, also on the heap, a bit longer"));
-        Var3 b(7);
+        alignas(64) Var3 a(ct::String("a string that is long enough to need the heap"));
+        alignas(64) Var3 s(ct::String("another long string, also on the heap, a bit longer"));
+        alignas(64) Var3 b(7);
         uint64_t n = 0;
+        keep_alive(&a);
+        keep_alive(&s);
+        keep_alive(&b);
         for (int i = 0; i < 2000000; ++i)
         {
             a = b;
             a = s;
             s = a;
             n += a.index();
+            keep_alive(&a);
         }
         return n;
     }
 
-    uint64_t variant_move_index_changes()
+    CT_NOINLINE uint64_t variant_move_index_changes()
     {
-        Var3 a(ct::String("a string that is long enough to need the heap"));
-        Var3 s(ct::String("another long string, also on the heap, a bit longer"));
-        Var3 b(7);
+        alignas(64) Var3 a(ct::String("a string that is long enough to need the heap"));
+        alignas(64) Var3 s(ct::String("another long string, also on the heap, a bit longer"));
+        alignas(64) Var3 b(7);
         uint64_t n = 0;
+        keep_alive(&a);
+        keep_alive(&s);
+        keep_alive(&b);
         for (int i = 0; i < 20000000; ++i)
         {
             a = ct::move(b);
             a = ct::move(s);
             s = ct::move(a);
             n += a.index();
+            keep_alive(&a);
         }
         return n;
     }
@@ -681,6 +755,8 @@ int main(int argc, char **argv)
         run("string == 100k x20 (equal)", 7, [&] { return string_equal(keys, same); });
         run("string hash() 100k x20", 7, [&] { return string_hash(keys); });
         run("string append(String) x2M", 7, [] { return string_append_strings(); });
+        run("string move-assign a=move(b); b=move(a) x20M", 7, [] { return string_move_assign(); });
+        run("string destroy+move-construct, same ping-pong x20M", 7, [] { return string_move_rebuild(); });
         run("string find+substr key=value 20k", 7, [] { return string_substr_find(); });
         run("string find_first_of 2MB miss x20", 7, [] { return string_find_first_of(); });
         ct::String fields;

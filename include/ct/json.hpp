@@ -607,6 +607,7 @@ namespace ct
 
         void destroy() noexcept;
         void steal(Json &o) noexcept; // assume que *this já foi destruído
+        void move_over_container(Json &o) noexcept;
         void dump_impl(String &out, int indent, int level) const;
 
         static Array *new_array();
@@ -692,6 +693,14 @@ namespace ct
         v_.u = 0;
     }
 
+    // o pode ser um descendente de *this (j = move(j["a"])): o conteudo antigo so se destroi depois de o ler, senao
+    // destruia o proprio o antes de o mover. Os outros tipos nao guardam outros Json e ficam no caminho curto.
+    inline CT_NOINLINE void Json::move_over_container(Json &o) noexcept
+    {
+        Json old(detail::move(*this));
+        steal(o);
+    }
+
     inline void Json::steal(Json &o) noexcept
     {
         type_ = o.type_;
@@ -749,8 +758,13 @@ namespace ct
     {
         if (this != &o)
         {
-            destroy();
-            steal(o);
+            if (CT_UNLIKELY(type_ >= Arr))
+                move_over_container(o);
+            else
+            {
+                destroy();
+                steal(o);
+            }
         }
         return *this;
     }

@@ -2,6 +2,7 @@
 // cabecalhos C.
 
 #include <ct/hashmap.hpp>
+#include <ct/json.hpp>
 #include <ct/string.hpp>
 #include <ct/thread.hpp>
 
@@ -426,4 +427,46 @@ TEST(Hardening, VectorAssignComUmElementoDoProprioVetor)
     ASSERT_EQ(s.size(), 9u);
     for (size_t i = 0; i < s.size(); ++i)
         EXPECT_TRUE(s[i] == "uma string maior do que cabe no SSO de vinte e tres bytes #3");
+}
+
+TEST(Hardening, JsonAtribuirPorMoveUmFilhoDoProprioDocumento)
+{
+    // Antes da correcao operator=(Json&&) destruia o valor atual (e com ele o filho que se estava a mover) antes
+    // de lhe ler o conteudo: heap-use-after-free sob ASan; sem sanitizer o filho lia-se de memoria ja libertada.
+    const char *text = "{\"a\":{\"x\":\"uma string comprida que nao cabe no SSO, nem de longe\",\"y\":[1,2,3]},"
+                       "\"s\":\"outra string comprida, igualmente fora do SSO de vinte e tres bytes\",\"n\":7}";
+    ct::Json j = ct::Json::parse(text);
+    ASSERT_TRUE(j.is_object());
+    const ct::String inner = j["a"].dump();
+    j = ct::move(j["a"]);
+    ASSERT_TRUE(j.is_object());
+    EXPECT_EQ(j.dump(), inner);
+    EXPECT_EQ(j["y"].size(), 3u);
+    EXPECT_EQ(j["y"][2].as_int(), 3);
+
+    ct::Json s = ct::Json::parse(text);
+    s = ct::move(s["s"]);
+    ASSERT_TRUE(s.is_string());
+    EXPECT_TRUE(s.str() == "outra string comprida, igualmente fora do SSO de vinte e tres bytes");
+
+    ct::Json arr = ct::Json::parse("[[1,2],[\"um texto bem comprido para sair do SSO da String\",{\"k\":[true,null]}],5]");
+    arr = ct::move(arr[1]);
+    ASSERT_TRUE(arr.is_array());
+    ASSERT_EQ(arr.size(), 2u);
+    EXPECT_TRUE(arr[0].str() == "um texto bem comprido para sair do SSO da String");
+    EXPECT_EQ(arr[1].dump(), "{\"k\":[true,null]}");
+
+    ct::Json deep = ct::Json::parse("[[[[[[\"fundo, fundo, fundo, fundo, fundo, fundo\"]]]]]]");
+    for (int i = 0; i < 6; ++i)
+    {
+        ASSERT_TRUE(deep.is_array());
+        deep = ct::move(deep[0]);
+    }
+    ASSERT_TRUE(deep.is_string());
+    EXPECT_TRUE(deep.str() == "fundo, fundo, fundo, fundo, fundo, fundo");
+
+    ct::Json self = ct::Json::parse("[1,2]");
+    ct::Json &alias = self;
+    self = ct::move(alias);
+    EXPECT_EQ(self.dump(), "[1,2]");
 }

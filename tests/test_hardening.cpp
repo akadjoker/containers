@@ -5,6 +5,7 @@
 #include <ct/json.hpp>
 #include <ct/string.hpp>
 #include <ct/thread.hpp>
+#include <ct/threadpool.hpp>
 #include <ct/vector.hpp>
 #include <ct/xml.hpp>
 
@@ -573,4 +574,65 @@ TEST(Hardening, AtomicFetchAddEFetchSubDePonteirosAvancamEmElementos)
     for (int i = 0; i < 4 * 4000; ++i)
         wrong += claimed[i] != 1;
     EXPECT_EQ(wrong, 0);
+}
+
+TEST(Hardening, ParallelForNaoChamaIndicesForaDoIntervaloComChunkEnorme)
+{
+    // Antes da correcao b + chunk dava a volta (size_t) e o ciclo "for (b = begin; b < end; b += chunk)" tambem:
+    // parallel_for(5, 10, fn, SIZE_MAX) chamava fn com 0..9 (dez chamadas, cinco delas fora do intervalo) e
+    // parallel_for(SIZE_MAX - 9, SIZE_MAX, fn, 4) chamava fn com indices pequenos.
+    const size_t kMax = static_cast<size_t>(-1);
+    ct::ThreadPool pool(2);
+    {
+        ct::Atomic<int> calls(0);
+        ct::Atomic<int> outside(0);
+        ct::Atomic<unsigned> seen(0);
+        pool.parallel_for(5, 10, [&](size_t i) {
+            calls.fetch_add(1);
+            if (i < 5 || i >= 10)
+                outside.fetch_add(1);
+            else
+                seen.fetch_add(1u << (i - 5));
+        }, kMax);
+        EXPECT_EQ(calls.load(), 5);
+        EXPECT_EQ(outside.load(), 0);
+        EXPECT_EQ(seen.load(), 31u);
+    }
+}
+
+TEST(Hardening, ParallelForPertoDoMaximoDoSizeTNaoDaAVolta)
+{
+    // Antes da correcao b += chunk dava a volta e o ciclo nunca acabava: criava tarefas ate a memoria acabar
+    // ("ct::HeapAlloc: sem memoria", abort).
+    const size_t kMax = static_cast<size_t>(-1);
+    ct::ThreadPool pool(2);
+    {
+        const size_t begin = kMax - 9;
+        ct::Atomic<int> calls(0);
+        ct::Atomic<int> outside(0);
+        ct::Atomic<unsigned> seen(0);
+        pool.parallel_for(begin, kMax, [&](size_t i) {
+            calls.fetch_add(1);
+            if (i < begin || i >= kMax)
+                outside.fetch_add(1);
+            else
+                seen.fetch_add(1u << (i - begin));
+        }, 4);
+        EXPECT_EQ(calls.load(), 9);
+        EXPECT_EQ(outside.load(), 0);
+        EXPECT_EQ(seen.load(), 511u);
+    }
+    {
+        // sem chunk: o numero de partes calculado com n perto de SIZE_MAX tambem nao pode dar a volta
+        const size_t begin = kMax - 100;
+        ct::Atomic<int> calls(0);
+        ct::Atomic<int> outside(0);
+        pool.parallel_for(begin, kMax, [&](size_t i) {
+            calls.fetch_add(1);
+            if (i < begin || i >= kMax)
+                outside.fetch_add(1);
+        });
+        EXPECT_EQ(calls.load(), 100);
+        EXPECT_EQ(outside.load(), 0);
+    }
 }

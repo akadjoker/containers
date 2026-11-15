@@ -97,7 +97,7 @@ namespace ct
             if (chunk == 0)
             {
                 std::size_t parts = (workers_.size() + 1) * 4;
-                chunk = (n + parts - 1) / parts;
+                chunk = n / parts + (n % parts != 0 ? 1 : 0);
                 if (chunk == 0)
                     chunk = 1;
             }
@@ -108,14 +108,17 @@ namespace ct
             bool wake_sleepers;
             {
                 LockGuard g(mutex_);
-                for (std::size_t b = begin; b < end; b += chunk)
+                for (std::size_t b = begin; b < end;)
                 {
+                    // b + chunk pode dar a volta (chunk enorme, ou end perto de SIZE_MAX): mede-se o que falta
+                    const std::size_t step = chunk < end - b ? chunk : end - b;
                     Range r;
                     r.batch = &batch;
                     r.begin = b;
-                    r.end = b + chunk < end ? b + chunk : end;
+                    r.end = b + step;
                     jobs_.emplace([r] { run_range<Fn>(r); });
                     ++count;
+                    b += step;
                 }
                 batch.remaining.store(count);
                 wake_sleepers = sleepers_ != 0;

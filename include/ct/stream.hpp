@@ -44,6 +44,7 @@ namespace ct
         bool skip(std::int64_t n) { return seek(n, Seek::Cur); }
         bool read_all(Vector<std::uint8_t> &out)
         {
+            const String earlier(detail::move(error_)); clear_error();
             out.clear();
             if (can_seek()) { const std::int64_t total = size(), here = tell(); if (total > here && here >= 0) out.reserve(static_cast<std::size_t>(total - here)); }
             while (!eof())
@@ -55,19 +56,30 @@ namespace ct
                 out.resize(have + n);
                 if (!n) break;
             }
-            return !error();
+            return finish_read_all(earlier);
         }
         bool read_all(String &out)
         {
+            const String earlier(detail::move(error_)); clear_error();
             out.clear(); char buf[4096];
             while (!eof()) { std::size_t n = read(buf, sizeof(buf)); if (!n) break; out.append(buf, n); }
-            return !error();
+            return finish_read_all(earlier);
         }
 
     protected:
         void set_error(const char *message) { error_ = message ? message : "I/O error"; }
         void clear_error() { error_.clear(); }
         String error_;
+
+    private:
+        // read_all diz se esta chamada falhou: um erro de antes (um write recusado, por exemplo) nao conta, e se esta
+        // correu bem volta a ficar visivel em error().
+        bool finish_read_all(const String &earlier)
+        {
+            const bool ok = error_.empty();
+            if (ok) error_ = earlier;
+            return ok;
+        }
     };
 
     class FileStream : public Stream

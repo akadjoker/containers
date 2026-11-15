@@ -835,3 +835,80 @@ TEST(Hardening, TextReaderReadIntRecusaOQueNaoCabeEmVezDeSaturar)
     EXPECT_EQ(v, 7);
     EXPECT_FALSE(r.read_int(v)); // fim
 }
+
+namespace
+{
+    // Stream que da alguns bytes e depois falha com um erro, para ver que read_all continua a dar false.
+    class FailsAfter : public ct::Stream
+    {
+    public:
+        explicit FailsAfter(size_t good) : good_(good), served_(0), failed_(false) {}
+        size_t read(void *dst, size_t n) override
+        {
+            if (served_ >= good_)
+            {
+                set_error("disco avariado");
+                failed_ = true;
+                return 0;
+            }
+            n = n < good_ - served_ ? n : good_ - served_;
+            memset(dst, 'z', n);
+            served_ += n;
+            return n;
+        }
+        size_t write(const void *, size_t) override { return 0; }
+        bool seek(int64_t, ct::Seek) override { return false; }
+        int64_t tell() const override { return static_cast<int64_t>(served_); }
+        int64_t size() const override { return -1; }
+        void close() override {}
+        bool is_open() const override { return true; }
+        bool eof() const override { return failed_; }
+        bool can_read() const override { return true; }
+        bool can_write() const override { return false; }
+        bool can_seek() const override { return false; }
+
+    private:
+        size_t good_;
+        size_t served_;
+        bool failed_;
+    };
+}
+
+TEST(Hardening, StreamReadAllNaoFalhaPorUmErroAntigo)
+{
+    // Antes da correcao read_all acabava em "return !error()" e o erro so se limpava no open: depois de um write
+    // recusado num stream so de leitura, um read_all que lia o conteudo todo devolvia false.
+    ct::MemoryStream view("hello world", 11);
+    EXPECT_EQ(view.write("x", 1), 0u);
+    ASSERT_NE(view.error(), nullptr);
+
+    ct::Vector<uint8_t> bytes;
+    EXPECT_TRUE(view.read_all(bytes));
+    ASSERT_EQ(bytes.size(), 11u);
+    EXPECT_EQ(memcmp(bytes.data(), "hello world", 11), 0);
+    EXPECT_NE(view.error(), nullptr); // o erro antigo continua visivel
+
+    ASSERT_TRUE(view.seek(0, ct::Seek::Set));
+    ct::String text;
+    EXPECT_TRUE(view.read_all(text));
+    EXPECT_TRUE(text == "hello world");
+
+    // um erro durante a leitura continua a dar false, com a mensagem nova
+    FailsAfter broken(5000);
+    ct::Vector<uint8_t> got;
+    EXPECT_FALSE(broken.read_all(got));
+    EXPECT_EQ(got.size(), 5000u);
+    ASSERT_NE(broken.error(), nullptr);
+    EXPECT_STREQ(broken.error(), "disco avariado");
+
+    FailsAfter broken_text(100);
+    ct::String got_text;
+    EXPECT_FALSE(broken_text.read_all(got_text));
+    EXPECT_EQ(got_text.size(), 100u);
+
+    // e um stream em que tudo corre bem nao tem erro nenhum
+    ct::MemoryStream clean("abc", 3);
+    ct::Vector<uint8_t> abc;
+    EXPECT_TRUE(clean.read_all(abc));
+    EXPECT_EQ(clean.error(), nullptr);
+}

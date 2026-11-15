@@ -292,6 +292,29 @@ namespace
         return acc;
     }
 
+    // linhas curtas partidas em campos com find_first_of / find_first_not_of (o uso normal: strings pequenas, conjuntos de 2 a 6 caracteres)
+    uint64_t string_tokenize(const ct::String &text)
+    {
+        uint64_t acc = 0;
+        for (int rep = 0; rep < 4; ++rep)
+        {
+            size_t pos = 0;
+            while (pos < text.size())
+            {
+                size_t start = text.find_first_not_of(" ,;\t", pos);
+                if (start == ct::String::npos)
+                    break;
+                size_t end = text.find_first_of(" ,;\t\n", start);
+                if (end == ct::String::npos)
+                    end = text.size();
+                acc += end - start;
+                pos = end + 1;
+            }
+            acc += text.find_last_of("#!") == ct::String::npos ? 1 : 2;
+        }
+        return acc;
+    }
+
     // ---- HashMap ------------------------------------------------------------------------------------------
 
     template <typename K>
@@ -581,6 +604,16 @@ int main(int argc, char **argv)
         run("string append(String) x2M", 7, [] { return string_append_strings(); });
         run("string find+substr key=value 20k", 7, [] { return string_substr_find(); });
         run("string find_first_of 2MB miss x20", 7, [] { return string_find_first_of(); });
+        ct::String fields;
+        for (int i = 0; i < 100000; ++i)
+        {
+            fields.append("key");
+            fields.append_number(i);
+            fields.append(", value ");
+            fields.append_number(i * 7);
+            fields.append("; flag\n");
+        }
+        run("string tokenize 100k lines x4 (first_of, not_of)", 7, [&] { return string_tokenize(fields); });
     }
     if (want("hashmap"))
     {

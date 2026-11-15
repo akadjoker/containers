@@ -8,6 +8,7 @@
 #include <cstring>
 #include <iterator>
 #include <limits>
+#include <locale.h>
 #include <new> 
 #include <type_traits>
 
@@ -172,6 +173,13 @@ namespace ct
             T t = detail::move(a);
             a = detail::move(b);
             b = detail::move(t);
+        }
+
+        // O separador decimal do locale actual (',' em pt_PT). Quem escreve ou le numeros em texto troca-o por '.'.
+        inline char decimal_point() noexcept
+        {
+            const lconv *lc = localeconv();
+            return (lc && lc->decimal_point && lc->decimal_point[0]) ? lc->decimal_point[0] : '.';
         }
 
         [[noreturn]] inline void fatal(const char *msg)

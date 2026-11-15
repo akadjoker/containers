@@ -458,6 +458,11 @@ namespace ct
             const size_type written = static_cast<size_type>(n) < sizeof(tmp) - 1
                                           ? static_cast<size_type>(n)
                                           : sizeof(tmp) - 1;
+            const char dp = detail::decimal_point();
+            if (dp != '.')
+                for (size_type i = 0; i < written; ++i)
+                    if (tmp[i] == dp)
+                        tmp[i] = '.';
             return append(tmp, written);
         }
 
@@ -652,7 +657,17 @@ namespace ct
         }
 
         int to_int() const { return static_cast<int>(std::strtol(c_str(), nullptr, 10)); }
-        float to_float() const { return std::strtof(c_str(), nullptr); }
+        float to_float() const
+        {
+            const char dp = detail::decimal_point();
+            if (dp == '.')
+                return std::strtof(c_str(), nullptr);
+            String local(*this); // num locale com virgula o strtof pararia no '.' de "1.5"
+            for (size_type i = 0; i < local.size(); ++i)
+                if (local[i] == '.')
+                    local[i] = dp;
+            return std::strtof(local.c_str(), nullptr);
+        }
 
         template <typename S>
         S to() const

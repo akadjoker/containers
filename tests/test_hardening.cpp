@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 
 #include <limits.h>
+#include <locale.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -1010,4 +1011,74 @@ TEST(Hardening, SortEStableSortComIteradoresQueNaoSaoPonteiros)
     one.push_back(4);
     ct::stable_sort(one.begin(), one.end());
     EXPECT_EQ(one[0], 4);
+}
+
+namespace
+{
+    // Poe um locale com virgula decimal (o do dono e pt_PT) enquanto vive e repoe o anterior no fim; ok() diz se achou um.
+    class CommaLocale
+    {
+    public:
+        CommaLocale() : ok_(false)
+        {
+            const char *current = setlocale(LC_ALL, nullptr);
+            saved_ = current ? current : "C";
+            static const char *const names[] = {"pt_PT.utf8", "pt_PT.UTF-8", "pt_BR.utf8", "pt_BR.UTF-8", "de_DE.utf8",
+                                                "de_DE.UTF-8", "fr_FR.utf8", "fr_FR.UTF-8", "es_ES.utf8", "it_IT.utf8"};
+            for (size_t i = 0; i < sizeof(names) / sizeof(names[0]) && !ok_; ++i)
+                if (setlocale(LC_ALL, names[i]) && localeconv()->decimal_point[0] == ',')
+                    ok_ = true;
+            if (!ok_)
+                setlocale(LC_ALL, saved_.c_str());
+        }
+        ~CommaLocale() { setlocale(LC_ALL, saved_.c_str()); }
+        bool ok() const { return ok_; }
+
+    private:
+        ct::String saved_;
+        bool ok_;
+    };
+}
+
+TEST(Hardening, NumerosDeVirgulaFlutuanteNaoDependemDoLocale)
+{
+    // Num locale com virgula decimal (pt_PT) String::number(1.5) dava "1,5", String("1.5").to_float() dava 1 e
+    // TextReader::read_double recusava "1.5": o Json, o Xml e o Ini ja tratavam o locale, estas funcoes nao.
+    CommaLocale locale;
+    if (!locale.ok())
+        GTEST_SKIP() << "nenhum locale com virgula decimal instalado";
+
+    EXPECT_TRUE(ct::String::number(1.5) == "1.5");
+    EXPECT_TRUE(ct::String::number(-0.125, 3) == "-0.125");
+    ct::String s("v=");
+    s.append_number(1234.5);
+    EXPECT_TRUE(s == "v=1234.5");
+    EXPECT_TRUE(ct::String::number(1e-5, 3) == "1e-05");
+    EXPECT_TRUE(ct::String::number(100.0) == "100");
+
+    EXPECT_EQ(ct::String("1.5").to_float(), 1.5f);
+    EXPECT_EQ(ct::String("-2.25e2").to_float(), -225.0f);
+    EXPECT_EQ(ct::String("3").to_float(), 3.0f);
+    EXPECT_EQ(ct::String("1,5").to_float(), 1.5f); // a virgula continua a servir neste locale, como antes
+
+    ct::MemoryStream out;
+    {
+        ct::TextWriter w(out);
+        w.number(2.5).write(' ').number(0.1, 3);
+    }
+    ct::String written;
+    out.seek(0, ct::Seek::Set);
+    out.read_all(written);
+    EXPECT_TRUE(written == "2.5 0.1");
+
+    const char *text = "1.5 -0.25 7";
+    ct::MemoryStream in(text, strlen(text));
+    ct::TextReader reader(in);
+    double a = 0, b = 0, c = 0;
+    EXPECT_TRUE(reader.read_double(a));
+    EXPECT_TRUE(reader.read_double(b));
+    EXPECT_TRUE(reader.read_double(c));
+    EXPECT_EQ(a, 1.5);
+    EXPECT_EQ(b, -0.25);
+    EXPECT_EQ(c, 7.0);
 }

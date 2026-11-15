@@ -2,9 +2,11 @@
 // cabecalhos C.
 
 #include <ct/binary.hpp>
+#include <ct/deque.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/json.hpp>
 #include <ct/soup.hpp>
+#include <ct/sort.hpp>
 #include <ct/stream.hpp>
 #include <ct/string.hpp>
 #include <ct/text.hpp>
@@ -911,4 +913,101 @@ TEST(Hardening, StreamReadAllNaoFalhaPorUmErroAntigo)
     ct::Vector<uint8_t> abc;
     EXPECT_TRUE(clean.read_all(abc));
     EXPECT_EQ(clean.error(), nullptr);
+}
+
+namespace
+{
+    bool mortal_less(const Mortal &a, const Mortal &b) { return a.id < b.id; }
+
+    // um Deque de ints com a parte de tras dobrada para o principio do buffer (first_span e second_span nao vazios):
+    // 40 empurrados (capacidade 64), 33 tirados da frente (a cabeca fica na posicao 33) e count (de 26 a 50) empurrados
+    void make_wrapped(ct::Deque<int> &d, int count)
+    {
+        for (int i = 0; i < 40; ++i)
+            d.push_back(1000 + i);
+        for (int i = 0; i < 33; ++i)
+            d.pop_front();
+        for (int i = 0; i < count; ++i)
+            d.push_back((i * 37 + 11) % 101);
+    }
+}
+
+TEST(Hardening, SortEStableSortComIteradoresQueNaoSaoPonteiros)
+{
+    // Antes da correcao sort(first, last) fazia &*first + (last - first), que so vale se os elementos forem
+    // contiguos: num Deque com o buffer dobrado e com iteradores inversos o intervalo saia do vetor (ASan:
+    // heap-buffer-overflow em sort.hpp) e ordenava a parte errada.
+    ct::Deque<int> d;
+    make_wrapped(d, 30);
+    ASSERT_GT(d.second_span().len, 0u) << "o teste precisa de um Deque dobrado";
+    ct::sort(d.begin(), d.end());
+    for (size_t i = 1; i < d.size(); ++i)
+        ASSERT_LE(d[i - 1], d[i]) << "Deque dobrado, sort, posicao " << i;
+
+    ct::Deque<int> e;
+    make_wrapped(e, 30);
+    ct::sort(e.begin(), e.end(), [](int a, int b) { return a > b; });
+    for (size_t i = 1; i < e.size(); ++i)
+        ASSERT_GE(e[i - 1], e[i]);
+
+    ct::Deque<int> f;
+    make_wrapped(f, 50);
+    ASSERT_GT(f.second_span().len, 0u);
+    ct::stable_sort(f.begin(), f.end());
+    for (size_t i = 1; i < f.size(); ++i)
+        ASSERT_LE(f[i - 1], f[i]);
+
+    // so uma parte do Deque
+    ct::Deque<int> g;
+    make_wrapped(g, 40);
+    const int first = g[0], last = g[g.size() - 1];
+    ct::sort(g.begin() + 5, g.end() - 5);
+    EXPECT_EQ(g[0], first);
+    EXPECT_EQ(g[g.size() - 1], last);
+    for (size_t i = 6; i + 5 < g.size(); ++i)
+        ASSERT_LE(g[i - 1], g[i]);
+
+    // iteradores inversos: ordenar de tras para a frente deixa o vetor por ordem decrescente
+    ct::Vector<int> v;
+    for (int i = 0; i < 50; ++i)
+        v.push_back((i * 29 + 3) % 53);
+    ct::sort(v.rbegin(), v.rend());
+    for (size_t i = 1; i < v.size(); ++i)
+        ASSERT_GE(v[i - 1], v[i]);
+    ct::Vector<int> w;
+    for (int i = 0; i < 50; ++i)
+        w.push_back((i * 31 + 7) % 53);
+    ct::stable_sort(w.rbegin(), w.rend(), [](int a, int b) { return a < b; });
+    for (size_t i = 1; i < w.size(); ++i)
+        ASSERT_GE(w[i - 1], w[i]);
+
+    // objetos com destrutor: nenhum perdido, nenhum usado depois de destruido
+    Mortal::live = 0;
+    Mortal::used_after_destroy = 0;
+    {
+        ct::Deque<Mortal> m;
+        for (int i = 0; i < 40; ++i)
+            m.push_back(Mortal(500 + i));
+        for (int i = 0; i < 33; ++i)
+            m.pop_front();
+        for (int i = 0; i < 40; ++i)
+            m.push_back(Mortal((i * 17 + 5) % 97));
+        ASSERT_GT(m.second_span().len, 0u);
+        ct::sort(m.begin(), m.end(), mortal_less);
+        for (size_t i = 1; i < m.size(); ++i)
+            ASSERT_LE(m[i - 1].id, m[i].id);
+        ct::stable_sort(m.rbegin(), m.rend(), mortal_less);
+        for (size_t i = 1; i < m.size(); ++i)
+            ASSERT_GE(m[i - 1].id, m[i].id);
+    }
+    EXPECT_EQ(Mortal::live, 0);
+    EXPECT_EQ(Mortal::used_after_destroy, 0);
+
+    // os tamanhos pequenos e vazios
+    ct::Deque<int> empty;
+    ct::sort(empty.begin(), empty.end());
+    ct::Deque<int> one;
+    one.push_back(4);
+    ct::stable_sort(one.begin(), one.end());
+    EXPECT_EQ(one[0], 4);
 }

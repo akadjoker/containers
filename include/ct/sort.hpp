@@ -247,42 +247,87 @@ namespace ct
             allocator.deallocate(buf, bytes);
         }
 
+        // Ponteiros: os elementos sao contiguos e ordena-se no sitio. Qualquer outro iterador (o do Deque, que da a
+        // volta ao buffer, os inversos, os dos outros) nao garante que &*first + n seja o fim, por isso passa para
+        // um buffer contiguo, ordena-se la e volta para o sitio.
+        template <typename It, typename C, typename Sorter>
+        inline void sort_iter(It first, It last, C cmp, Sorter sorter, true_type)
+        {
+            if (first == last)
+                return;
+            sorter(&*first, &*first + (last - first), cmp);
+        }
+
+        template <typename It, typename C, typename Sorter>
+        inline void sort_iter(It first, It last, C cmp, Sorter sorter, false_type)
+        {
+            using T = typename remove_ref<decltype(*first)>::type;
+            const std::size_t n = static_cast<std::size_t>(last - first);
+            if (n < 2)
+                return;
+            std::size_t bytes = 0;
+            if (!checked_mul(n, sizeof(T), bytes))
+                fatal("ct::sort: tamanho invalido");
+            alignas(T) unsigned char small[512]; // os intervalos pequenos nao pagam um malloc
+            HeapAlloc allocator;
+            T *buf = bytes <= sizeof(small) ? reinterpret_cast<T *>(small)
+                                            : static_cast<T *>(allocator.allocate(bytes, alignof(T)));
+            It it = first;
+            for (std::size_t i = 0; i < n; ++i, ++it)
+                ::new (static_cast<void *>(buf + i)) T(detail::move(*it));
+            sorter(buf, buf + n, cmp);
+            it = first;
+            for (std::size_t i = 0; i < n; ++i, ++it)
+            {
+                *it = detail::move(buf[i]);
+                buf[i].~T();
+            }
+            if (bytes > sizeof(small))
+                allocator.deallocate(buf, bytes);
+        }
+
+        struct IntroSorter
+        {
+            template <typename T, typename C>
+            void operator()(T *lo, T *hi, C cmp) const { intro_sort(lo, hi, cmp); }
+        };
+
+        struct StableSorter
+        {
+            template <typename T, typename C>
+            void operator()(T *lo, T *hi, C cmp) const { stable_sort_impl(lo, hi, cmp); }
+        };
+
     } 
 
     template <typename It, typename C>
     inline void sort(It first, It last, C cmp)
     {
-        if (first == last)
-            return;
-        detail::intro_sort(&*first, &*first + (last - first), cmp);
+        detail::sort_iter(first, last, cmp, detail::IntroSorter(),
+                          detail::integral_constant<bool, std::is_pointer<It>::value>());
     }
 
     template <typename It>
     inline void sort(It first, It last)
     {
-        if (first == last)
-            return;
         using T = typename detail::remove_ref<decltype(*first)>::type;
-        detail::intro_sort(&*first, &*first + (last - first),
-                           [](const T &a, const T &b) { return a < b; });
+        detail::sort_iter(first, last, [](const T &a, const T &b) { return a < b; }, detail::IntroSorter(),
+                          detail::integral_constant<bool, std::is_pointer<It>::value>());
     }
 
     template <typename It, typename C>
     inline void stable_sort(It first, It last, C cmp)
     {
-        if (first == last)
-            return;
-        detail::stable_sort_impl(&*first, &*first + (last - first), cmp);
+        detail::sort_iter(first, last, cmp, detail::StableSorter(),
+                          detail::integral_constant<bool, std::is_pointer<It>::value>());
     }
 
     template <typename It>
     inline void stable_sort(It first, It last)
     {
-        if (first == last)
-            return;
         using T = typename detail::remove_ref<decltype(*first)>::type;
-        detail::stable_sort_impl(&*first, &*first + (last - first),
-                                 [](const T &a, const T &b) { return a < b; });
+        detail::sort_iter(first, last, [](const T &a, const T &b) { return a < b; }, detail::StableSorter(),
+                          detail::integral_constant<bool, std::is_pointer<It>::value>());
     }
 
 #define CT_RADIX_SORT(T, U, KEY_EXPR)                                          \

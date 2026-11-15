@@ -683,7 +683,7 @@ namespace ct
             public:
                 Parser(const char16_t *p, std::size_t n, unsigned flags, Program &prog, Vector<Node> &nodes)
                     : p_(p), n_(n), i_(0), icase_((flags & F_IgnoreCase) != 0), multi_((flags & F_Multiline) != 0),
-                      dotall_((flags & F_DotAll) != 0), vmode_((flags & F_UnicodeSets) != 0),
+                      vmode_((flags & F_UnicodeSets) != 0),
                       uni_((flags & (F_Unicode | F_UnicodeSets)) != 0), prog_(prog), nodes_(nodes), err_(nullptr),
                       err_off_(0), depth_(0), ngroups_(0), total_groups_(0), has_named_(false), root_(-1)
                 {
@@ -751,7 +751,6 @@ namespace ct
                 std::size_t i_;
                 bool icase_;
                 bool multi_;
-                bool dotall_;
                 bool vmode_;
                 bool uni_;
                 Program &prog_;

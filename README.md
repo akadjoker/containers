@@ -477,3 +477,24 @@ CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) builds with GCC
 and Clang in Debug with `-Wall -Wextra -Wpedantic -Werror`, and runs a
 separate AddressSanitizer + UndefinedBehaviorSanitizer job against the test
 suite and the torture test.
+
+### One command for everything
+
+```sh
+tools/check.sh            # nostd, headers, release, asan, tsan, parse
+tools/check.sh --quick    # sanitizer stages without the JsRegex and Unicode suites
+tools/check.sh --deep     # fuzzers with 100000 operations per seed
+tools/check.sh nostd asan # only those stages
+```
+
+[tools/check.sh](tools/check.sh) prints one line per stage and exits non-zero
+if any stage fails (logs under `build-check/logs`). The `nostd` stage keeps the
+library off the standard library: every `std::` name and non-C `#include <...>`
+in `include/`, `tests/` and `bench/` is compared with
+[tools/nostd.baseline](tools/nostd.baseline), so a new use fails the check.
+The fuzzers are plain tests with fixed seeds
+([tests/test_fuzz.cpp](tests/test_fuzz.cpp), [tests/test_fuzz2.cpp](tests/test_fuzz2.cpp),
+`CT_FUZZ_ITERS` raises the operation count) plus `ct_parsefuzz`
+([tests/parsefuzz.cpp](tests/parsefuzz.cpp)), which mutates valid input for
+every parser. Problems that were seen but not proven or not fixed are listed
+in [docs/SUSPEITAS.md](docs/SUSPEITAS.md).

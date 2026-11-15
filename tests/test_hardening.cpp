@@ -1082,3 +1082,67 @@ TEST(Hardening, NumerosDeVirgulaFlutuanteNaoDependemDoLocale)
     EXPECT_EQ(b, -0.25);
     EXPECT_EQ(c, 7.0);
 }
+
+namespace
+{
+    // A maior profundidade da arvore (a raiz do documento esta a 0), sem recursao.
+    size_t soup_depth(const ct::Node &root)
+    {
+        ct::Vector<const ct::Node *> nodes;
+        ct::Vector<size_t> depths;
+        nodes.push_back(&root);
+        depths.push_back(0);
+        size_t best = 0;
+        while (!nodes.empty())
+        {
+            const ct::Node *node = nodes.back();
+            const size_t depth = depths.back();
+            nodes.pop_back();
+            depths.pop_back();
+            if (depth > best)
+                best = depth;
+            for (size_t i = 0; i < node->children.size(); ++i)
+            {
+                nodes.push_back(node->children[i]);
+                depths.push_back(depth + 1);
+            }
+        }
+        return best;
+    }
+}
+
+TEST(Hardening, SoupLimitaAProfundidadeDaArvore)
+{
+    // Antes da correcao 100000 <div> aninhados davam uma arvore de 100000 niveis e Node::html() e findAll(), que
+    // sao recursivos, estoiravam a pilha (SIGSEGV); o Json e o Xml ja recusavam isto (kMaxDepth 200) e os motores
+    // de regex tambem. Agora a arvore para nos 512 niveis (como os navegadores) e o que vem depois fica a esse nivel.
+    ct::String html;
+    for (int i = 0; i < 100000; ++i)
+        html.append("<div>");
+    html.append("fim");
+    ct::Soup soup = ct::Soup::parse(ct::StringView(html));
+    EXPECT_LE(soup_depth(soup.root()), 512u);
+    EXPECT_EQ(soup.findAll("div").size(), 100000u); // nenhum elemento se perde
+    EXPECT_GT(soup.root().html().size(), html.size());
+    EXPECT_TRUE(soup.getText() == "fim");
+    EXPECT_EQ(soup.select("div").size(), 100000u);
+
+    // 500 niveis continuam a ser 500 niveis e a ida e volta e igual
+    ct::String ok;
+    for (int i = 0; i < 500; ++i)
+        ok.append("<div>");
+    ok.append("x");
+    for (int i = 0; i < 500; ++i)
+        ok.append("</div>");
+    ct::Soup nested = ct::Soup::parse(ct::StringView(ok));
+    EXPECT_EQ(soup_depth(nested.root()), 501u); // 500 divs e o texto
+    EXPECT_TRUE(nested.root().html() == ok);
+
+    // o mesmo para inline (b dentro de b) e para listas
+    ct::String mixed;
+    for (int i = 0; i < 30000; ++i)
+        mixed.append("<ul><li><b><i>");
+    ct::Soup other = ct::Soup::parse(ct::StringView(mixed));
+    EXPECT_LE(soup_depth(other.root()), 512u);
+    EXPECT_GT(other.findAll("li").size(), 1000u);
+}

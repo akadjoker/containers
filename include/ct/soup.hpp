@@ -833,6 +833,8 @@ public:
     }
 
 private:
+    static constexpr std::size_t kMaxDepth = 512;
+
     StringView html_;
     std::size_t i_ = 0;
     Vector<Node*> open_;
@@ -1014,7 +1016,13 @@ private:
             return;
         }
 
-        open_.push_back(node);
+        // Como os navegadores, a arvore nao passa de kMaxDepth niveis: o que vem depois de ficar fundo demais fica ao
+        // nivel do ultimo elemento aberto. Sem isto <div> repetido 100000 vezes dava uma arvore de 100000 niveis e as
+        // funcoes recursivas (html, findAll, getText, o destrutor) estoiravam a pilha.
+        if (open_.size() < kMaxDepth)
+        {
+            open_.push_back(node);
+        }
     }
 
     void rawText(Node* node, StringView name)

@@ -68,6 +68,22 @@ namespace ct
             It operator+(difference_type n) const { It t = *this; t += n; return t; }
             It operator-(difference_type n) const { It t = *this; t -= n; return t; }
 
+            // O intervalo [*this, last) ocupa posicoes seguidas da memoria do Deque (nao da a volta ao fim do buffer)?
+            // Se sim, devolve os ponteiros para o principio e para o fim: e o que sort.hpp pergunta para ordenar no
+            // sitio. So o iterador sabe como o buffer esta, por isso a resposta nao e um palpite sobre enderecos.
+            bool contiguous_range(const It &last, Ptr &lo, Ptr &hi) const noexcept
+            {
+                if (base_ != last.base_ || mask_ != last.mask_ || last.i_ < i_)
+                    return false;
+                const size_type n = last.i_ - i_;
+                const size_type start = i_ & mask_;
+                if (n > mask_ + 1 - start)
+                    return false;
+                lo = base_ + start;
+                hi = lo + n;
+                return true;
+            }
+
             template <typename R2, typename P2>
             difference_type operator-(const It<R2, P2> &o) const
             {

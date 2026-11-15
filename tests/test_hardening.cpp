@@ -1180,3 +1180,103 @@ TEST(Hardening, TracosProprios)
     const make_unsigned<signed char>::type b = static_cast<make_unsigned<signed char>::type>(127);
     EXPECT_EQ(static_cast<signed char>(static_cast<make_unsigned<signed char>::type>(b + 1)), -128);
 }
+
+namespace
+{
+    // Conta cada construcao e atribuicao por copia e por move: dois ordenamentos do mesmo algoritmo sobre os mesmos
+    // dados fazem exactamente as mesmas, e um que passe por um buffer faz mais.
+    struct OpCounting
+    {
+        static long ops;
+        int v;
+        OpCounting(int x = 0) : v(x) {}
+        OpCounting(const OpCounting &o) : v(o.v) { ++ops; }
+        OpCounting(OpCounting &&o) noexcept : v(o.v) { ++ops; }
+        OpCounting &operator=(const OpCounting &o)
+        {
+            v = o.v;
+            ++ops;
+            return *this;
+        }
+        OpCounting &operator=(OpCounting &&o) noexcept
+        {
+            v = o.v;
+            ++ops;
+            return *this;
+        }
+    };
+    long OpCounting::ops = 0;
+    bool op_counting_less(const OpCounting &a, const OpCounting &b) { return a.v < b.v; }
+}
+
+TEST(Hardening, SortDeDequeNaoDobradoOrdenaNoSitioComoUmVetor)
+{
+    // O Deque diz ele proprio quando um intervalo e contiguo (Deque::It::contiguous_range): nesse caso ordena-se no
+    // sitio, com as mesmas operacoes que num vetor, sem passar por um buffer. Um intervalo dobrado e os iteradores
+    // inversos passam pelo buffer e ficam certos (testado acima).
+    const int n = 300;
+    ct::Vector<OpCounting> v;
+    ct::Deque<OpCounting> d;
+    for (int i = 0; i < n; ++i)
+    {
+        const int x = (i * 7919 + 13) % 1009;
+        v.push_back(OpCounting(x));
+        d.push_back(OpCounting(x));
+    }
+    ASSERT_EQ(d.second_span().len, 0u);
+
+    OpCounting::ops = 0;
+    ct::sort(v.begin(), v.end(), op_counting_less);
+    const long vector_ops = OpCounting::ops;
+    OpCounting::ops = 0;
+    ct::sort(d.begin(), d.end(), op_counting_less);
+    const long deque_ops = OpCounting::ops;
+    EXPECT_EQ(deque_ops, vector_ops) << "o Deque nao dobrado devia ordenar no sitio";
+    for (int i = 0; i < n; ++i)
+        ASSERT_EQ(d[static_cast<size_t>(i)].v, v[static_cast<size_t>(i)].v);
+
+    ct::Vector<OpCounting> w;
+    ct::Deque<OpCounting> e;
+    for (int i = 0; i < n; ++i)
+    {
+        const int x = (i * 3571 + 5) % 211;
+        w.push_back(OpCounting(x));
+        e.push_back(OpCounting(x));
+    }
+    OpCounting::ops = 0;
+    ct::stable_sort(w.begin(), w.end(), op_counting_less);
+    const long stable_vector_ops = OpCounting::ops;
+    OpCounting::ops = 0;
+    ct::stable_sort(e.begin(), e.end(), op_counting_less);
+    EXPECT_EQ(OpCounting::ops, stable_vector_ops);
+
+    // um pedaco do meio de um Deque nao dobrado tambem
+    ct::Deque<OpCounting> f;
+    ct::Vector<OpCounting> g;
+    for (int i = 0; i < 120; ++i)
+    {
+        f.push_back(OpCounting((i * 31 + 7) % 97));
+        g.push_back(OpCounting((i * 31 + 7) % 97));
+    }
+    OpCounting::ops = 0;
+    ct::sort(g.begin() + 10, g.end() - 10, op_counting_less);
+    const long part_vector_ops = OpCounting::ops;
+    OpCounting::ops = 0;
+    ct::sort(f.begin() + 10, f.end() - 10, op_counting_less);
+    EXPECT_EQ(OpCounting::ops, part_vector_ops);
+
+    // dobrado: certo, mas pelo buffer (mais operacoes que no sitio)
+    ct::Deque<OpCounting> wrapped;
+    for (int i = 0; i < 40; ++i)
+        wrapped.push_back(OpCounting(1000 + i));
+    for (int i = 0; i < 33; ++i)
+        wrapped.pop_front();
+    for (int i = 0; i < 30; ++i)
+        wrapped.push_back(OpCounting((i * 37 + 11) % 101));
+    ASSERT_GT(wrapped.second_span().len, 0u);
+    OpCounting::ops = 0;
+    ct::sort(wrapped.begin(), wrapped.end(), op_counting_less);
+    EXPECT_GE(OpCounting::ops, 2 * static_cast<long>(wrapped.size()));
+    for (size_t i = 1; i < wrapped.size(); ++i)
+        ASSERT_LE(wrapped[i - 1].v, wrapped[i].v);
+}

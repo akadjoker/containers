@@ -249,13 +249,29 @@ namespace ct
 
         // Ponteiros: os elementos sao contiguos e ordena-se no sitio. Qualquer outro iterador (o do Deque, que da a
         // volta ao buffer, os inversos, os dos outros) nao garante que &*first + n seja o fim, por isso passa para
-        // um buffer contiguo, ordena-se la e volta para o sitio.
+        // um buffer contiguo, ordena-se la e volta para o sitio, a menos que o proprio iterador diga que o intervalo
+        // e contiguo (try_contiguous).
         template <typename It, typename C, typename Sorter>
         inline void sort_iter(It first, It last, C cmp, Sorter sorter, true_type)
         {
             if (first == last)
                 return;
             sorter(&*first, &*first + (last - first), cmp);
+        }
+
+        // Um iterador que sabe dizer se o intervalo e contiguo na memoria (o do Deque: contiguous_range) deixa
+        // ordenar no sitio quando e; os outros dizem que nao.
+        template <typename It, typename P>
+        inline auto try_contiguous(const It &first, const It &last, P *&lo, P *&hi, int)
+            -> decltype(first.contiguous_range(last, lo, hi))
+        {
+            return first.contiguous_range(last, lo, hi);
+        }
+
+        template <typename It, typename P>
+        inline bool try_contiguous(const It &, const It &, P *&, P *&, long)
+        {
+            return false;
         }
 
         template <typename It, typename C, typename Sorter>
@@ -265,6 +281,13 @@ namespace ct
             const std::size_t n = static_cast<std::size_t>(last - first);
             if (n < 2)
                 return;
+            T *range_lo = nullptr;
+            T *range_hi = nullptr;
+            if (try_contiguous(first, last, range_lo, range_hi, 0))
+            {
+                sorter(range_lo, range_hi, cmp);
+                return;
+            }
             std::size_t bytes = 0;
             if (!checked_mul(n, sizeof(T), bytes))
                 fatal("ct::sort: tamanho invalido");

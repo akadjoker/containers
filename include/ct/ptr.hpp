@@ -43,9 +43,12 @@ namespace ct
         {
             if (this != &o)
             {
-                reset();
-                p_ = o.p_;
+                // Tira o ponteiro a origem antes de destruir o que este guarda: a origem pode viver dentro disso
+                // (head = ct::move(head->next) numa lista), e reset() destruiria-a antes de se ler.
+                T *p = o.p_;
                 o.p_ = nullptr;
+                reset();
+                p_ = p;
             }
             return *this;
         }

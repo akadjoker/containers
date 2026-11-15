@@ -135,6 +135,46 @@ TEST(Unique, MoveSemantics)
     EXPECT_EQ(Contado::vivos, 0);
 }
 
+namespace
+{
+    // Lista ligada de Unique: a origem de head = move(head->proximo) vive dentro do no que head guarda.
+    struct NoUnique
+    {
+        static int vivos;
+        Unique<NoUnique> proximo;
+        int valor;
+
+        explicit NoUnique(int v) : valor(v) { ++vivos; }
+        ~NoUnique() { --vivos; }
+    };
+    int NoUnique::vivos = 0;
+}
+
+TEST(Unique, AtribuirPorMoveUmMembroDoQueGuardaPercorreUmaLista)
+{
+    NoUnique::vivos = 0;
+    Unique<NoUnique> cabeca = make_unique<NoUnique>(1);
+    cabeca->proximo = make_unique<NoUnique>(2);
+    cabeca->proximo->proximo = make_unique<NoUnique>(3);
+    ASSERT_EQ(NoUnique::vivos, 3);
+
+    // O no 1 e destruido, e o no 2 (que ele guardava) passa a ser da cabeca: nao pode ser destruido com o no 1.
+    cabeca = ct::move(cabeca->proximo);
+    ASSERT_EQ(NoUnique::vivos, 2);
+    ASSERT_TRUE(cabeca);
+    EXPECT_EQ(cabeca->valor, 2);
+
+    cabeca = ct::move(cabeca->proximo);
+    ASSERT_EQ(NoUnique::vivos, 1);
+    ASSERT_TRUE(cabeca);
+    EXPECT_EQ(cabeca->valor, 3);
+
+    // O ultimo no tem o proximo vazio: a cabeca fica vazia e o no 3 e destruido.
+    cabeca = ct::move(cabeca->proximo);
+    EXPECT_EQ(NoUnique::vivos, 0);
+    EXPECT_FALSE(cabeca);
+}
+
 TEST(Unique, ResetAndSwap)
 {
     reset_contadores();

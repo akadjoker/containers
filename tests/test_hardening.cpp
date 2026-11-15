@@ -7,6 +7,7 @@
 #include <ct/soup.hpp>
 #include <ct/stream.hpp>
 #include <ct/string.hpp>
+#include <ct/text.hpp>
 #include <ct/thread.hpp>
 #include <ct/threadpool.hpp>
 #include <ct/vector.hpp>
@@ -806,4 +807,31 @@ TEST(Hardening, SoupReferenciasNumericasForaDoIntervaloDaoUFFFDEnaoDaoAVolta)
     ASSERT_NE(p, nullptr);
     EXPECT_TRUE(p->getText() == fffd);
     EXPECT_TRUE(p->attr("title") == fffd);
+}
+
+TEST(Hardening, TextReaderReadIntRecusaOQueNaoCabeEmVezDeSaturar)
+{
+    // Antes da correcao read_int devolvia true com LLONG_MAX (ou LLONG_MIN) para "9223372036854775808": o
+    // strtoll satura e poe errno em ERANGE, que ninguem verificava (o Ini::get_int verifica).
+    const char *text = "9223372036854775807 9223372036854775808 -9223372036854775808 -9223372036854775809 "
+                       "99999999999999999999 12 0x10 12abc -0 +7";
+    ct::MemoryStream ms(text, strlen(text));
+    ct::TextReader r(ms);
+    long long v = 0;
+    ASSERT_TRUE(r.read_int(v));
+    EXPECT_EQ(v, LLONG_MAX);
+    EXPECT_FALSE(r.read_int(v));
+    ASSERT_TRUE(r.read_int(v));
+    EXPECT_EQ(v, LLONG_MIN);
+    EXPECT_FALSE(r.read_int(v));
+    EXPECT_FALSE(r.read_int(v));
+    ASSERT_TRUE(r.read_int(v));
+    EXPECT_EQ(v, 12);
+    EXPECT_FALSE(r.read_int(v)); // "0x10": base 10, sobra o x
+    EXPECT_FALSE(r.read_int(v)); // "12abc"
+    ASSERT_TRUE(r.read_int(v));
+    EXPECT_EQ(v, 0);
+    ASSERT_TRUE(r.read_int(v));
+    EXPECT_EQ(v, 7);
+    EXPECT_FALSE(r.read_int(v)); // fim
 }

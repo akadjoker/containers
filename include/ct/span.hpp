@@ -266,13 +266,13 @@ namespace ct
 
         bool starts_with(StringView p) const noexcept
         {
-            return size_ >= p.size_ && std::memcmp(data_, p.data_, p.size_) == 0;
+            return size_ >= p.size_ && (p.size_ == 0 || std::memcmp(data_, p.data_, p.size_) == 0);
         }
 
         bool ends_with(StringView p) const noexcept
         {
             return size_ >= p.size_ &&
-                   std::memcmp(data_ + size_ - p.size_, p.data_, p.size_) == 0;
+                   (p.size_ == 0 || std::memcmp(data_ + size_ - p.size_, p.data_, p.size_) == 0);
         }
 
         int compare(StringView o) const noexcept

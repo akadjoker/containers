@@ -156,12 +156,14 @@ namespace ct
             std::size_t total = data_size();
             if (pos_ >= total) return 0;
             n = n < total - pos_ ? n : total - pos_;
+            if (!n) return 0;
             std::memcpy(dst, data_ptr() + pos_, n); pos_ += n; return n;
         }
         std::size_t write(const void *src, std::size_t n) override
         {
             if (!open_ || !writable_) { set_error("stream is not writable"); return 0; }
             if (pos_ + n < pos_) { set_error("stream too large"); return 0; }
+            if (!n) return 0;
             if (pos_ + n > own_.size()) own_.resize(pos_ + n);
             std::memcpy(own_.data() + pos_, src, n); pos_ += n; return n;
         }

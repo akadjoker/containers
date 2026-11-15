@@ -4,6 +4,7 @@
 #include <ct/binary.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/json.hpp>
+#include <ct/stream.hpp>
 #include <ct/string.hpp>
 #include <ct/thread.hpp>
 #include <ct/threadpool.hpp>
@@ -733,3 +734,42 @@ TEST(Hardening, BinaryWriterStringMaiorQue4GiBFalhaEmVezDeCorromperOStream)
     EXPECT_EQ(sink2.written, 7ull);
 }
 #endif
+
+TEST(Hardening, VistasEStreamsVaziosComPonteiroNuloNaoPassamNuloAoMemcmpNemAoMemcpy)
+{
+    // Antes da correcao UBSan dava "null pointer passed as argument 1, which is declared to never be null" em
+    // StringView::starts_with e ends_with (memcmp(nullptr, ..., 0)) e em MemoryStream::read e write com n == 0
+    // (memcpy). Um ct::Vector<char> vazio tem data() nulo, por isso StringView(vetor_vazio) acontece.
+    const ct::StringView nada(nullptr, 0);
+    EXPECT_TRUE(nada.starts_with(""));
+    EXPECT_TRUE(nada.ends_with(""));
+    EXPECT_TRUE(nada.starts_with(ct::StringView(nullptr, 0)));
+    EXPECT_TRUE(nada.ends_with(ct::StringView(nullptr, 0)));
+    EXPECT_FALSE(nada.starts_with("a"));
+    EXPECT_FALSE(nada.ends_with("a"));
+    EXPECT_TRUE(ct::StringView("abc").starts_with(ct::StringView(nullptr, 0)));
+    EXPECT_TRUE(ct::StringView("abc").ends_with(ct::StringView(nullptr, 0)));
+
+    ct::Vector<char> vazio;
+    const ct::StringView daqui(vazio);
+    EXPECT_TRUE(daqui.starts_with(""));
+    EXPECT_TRUE(daqui.ends_with(""));
+    EXPECT_TRUE(daqui == ct::StringView(""));
+
+    ct::MemoryStream escrita;
+    EXPECT_EQ(escrita.write(nullptr, 0), 0u);
+    EXPECT_EQ(escrita.read(nullptr, 0), 0u);
+    EXPECT_EQ(escrita.size(), 0);
+
+    ct::MemoryStream leitura("abc", 3);
+    EXPECT_EQ(leitura.read(nullptr, 0), 0u);
+    EXPECT_EQ(leitura.tell(), 0);
+    char c = 0;
+    EXPECT_EQ(leitura.read(&c, 1), 1u);
+    EXPECT_EQ(c, 'a');
+
+    ct::MemoryStream cheia;
+    EXPECT_EQ(cheia.write("xy", 2), 2u);
+    EXPECT_EQ(cheia.write(nullptr, 0), 0u);
+    EXPECT_EQ(cheia.size(), 2);
+}

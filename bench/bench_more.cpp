@@ -1,8 +1,9 @@
 // Caminhos quentes que o bench_hot nao cobre, so com a ct (sem biblioteca standard): Json (parse, escrita, copia),
 // Vector insert/erase no meio, String compare/hash/append de String, HashMap em varios fatores de carga e com chaves
-// de varios tipos, TextReader/TextWriter, MemoryStream e BinaryReader/BinaryWriter. Cada linha e o melhor de varias
+// de varios tipos, Variant, TextReader/TextWriter, MemoryStream e BinaryReader/BinaryWriter. Cada linha e o melhor de varias
 // repeticoes, em milissegundos; serve para comparar antes e depois de mexer num cabecalho (compilar contra duas arvores
-// de include com -I e comparar as colunas). O argumento escolhe um grupo (json, vector, string, hashmap, text, stream).
+// de include com -I e comparar as colunas). O argumento escolhe um grupo (json, vector, string, hashmap, variant, text,
+// stream).
 //
 //   c++ -std=c++14 -O3 -march=native -I include bench/bench_more.cpp -o bench_more -lpthread
 
@@ -13,6 +14,7 @@
 #include <ct/stream.hpp>
 #include <ct/string.hpp>
 #include <ct/text.hpp>
+#include <ct/variant.hpp>
 #include <ct/vector.hpp>
 
 #include <stdint.h>
@@ -358,6 +360,70 @@ namespace
         return acc;
     }
 
+    // ---- Variant -------------------------------------------------------------------------------------------
+
+    typedef ct::Variant<int, double, ct::String> Var3;
+
+    uint64_t variant_assign_scalars()
+    {
+        Var3 a(1);
+        Var3 b(2.5);
+        uint64_t n = 0;
+        for (int i = 0; i < 20000000; ++i)
+        {
+            if (i & 1)
+                a = b;
+            else
+                b = a;
+            n += a.index();
+        }
+        return n;
+    }
+
+    uint64_t variant_assign_strings()
+    {
+        Var3 a(ct::String("a string that is long enough to need the heap"));
+        Var3 b(ct::String("another long string, also on the heap, a bit longer"));
+        Var3 c(7);
+        uint64_t n = 0;
+        for (int i = 0; i < 2000000; ++i)
+        {
+            a = b;
+            b = c;
+            c = a;
+            n += a.index();
+        }
+        return n;
+    }
+
+    uint64_t variant_move_strings()
+    {
+        Var3 v[4] = {Var3(ct::String("a string that is long enough to need the heap")), Var3(3), Var3(1.5),
+                     Var3(ct::String("another long string, also on the heap, a bit longer"))};
+        uint64_t n = 0;
+        for (int i = 0; i < 20000000; ++i)
+        {
+            v[(i + 1) & 3] = ct::move(v[i & 3]);
+            n += v[i & 3].index();
+        }
+        return n;
+    }
+
+    uint64_t variant_vector_push()
+    {
+        ct::Vector<Var3> v;
+        for (int i = 0; i < 1000000; ++i)
+        {
+            if (i % 3 == 0)
+                v.push_back(Var3(i));
+            else if (i % 3 == 1)
+                v.push_back(Var3(i * 0.5));
+            else
+                v.push_back(Var3(ct::String("short")));
+        }
+        return v.size();
+    }
+
     // ---- Text / Stream -------------------------------------------------------------------------------------
 
     ct::String make_lines(int n)
@@ -526,6 +592,13 @@ int main(int argc, char **argv)
         run("hashmap<void*> find 300k", 5, [] { return hash_find_load<void *>(300000, 300000); });
         run("hashmap<Handle> find 300k", 5, [] { return hash_find_load<ct::Handle<int>>(300000, 300000); });
         run("hashmap<String> put+find 200k \"player-N\"", 5, [] { return hash_string_put_find(200000); });
+    }
+    if (want("variant"))
+    {
+        run("variant<int,double,String> assign scalars x20M", 7, [] { return variant_assign_scalars(); });
+        run("variant<int,double,String> assign strings x2M x3", 7, [] { return variant_assign_strings(); });
+        run("variant<int,double,String> move assign x20M", 7, [] { return variant_move_strings(); });
+        run("vector<variant> push_back 1M", 7, [] { return variant_vector_push(); });
     }
     if (want("text") || want("stream"))
     {

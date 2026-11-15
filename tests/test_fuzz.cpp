@@ -162,7 +162,7 @@ namespace
 
         for (int it = 0; it < iters; ++it)
         {
-            const uint32_t op = rng.below(22);
+            const uint32_t op = rng.below(23);
             const int id = static_cast<int>(rng.below(1000));
             const size_t pos = n ? rng.below(static_cast<uint32_t>(n)) : 0;
             const bool room = n + 40 < sizeof(ref) / sizeof(ref[0]);
@@ -334,6 +334,17 @@ namespace
                 n = to;
                 break;
             }
+            case 22:
+                if (n)
+                {
+                    const size_t to = rng.below(60);
+                    const int aid = M::id_of(v[pos]);
+                    v.assign(to, v[pos]);
+                    for (size_t i = 0; i < to; ++i)
+                        ref[i] = aid;
+                    n = to;
+                }
+                break;
             case 21:
                 if (n)
                 {

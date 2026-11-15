@@ -323,7 +323,7 @@ namespace
                 break;
             }
             case 19:
-                v = v;
+                { auto &same = v; v = same; } // por referencia: o clang avisa da auto-atribuicao directa, e e ela que se testa
                 break;
             case 20:
             {
@@ -523,7 +523,7 @@ namespace
                 {
                     ct::Deque<T> moved(ct::move(d));
                     d = ct::move(moved);
-                    d = d;
+                    { auto &same = d; d = same; } // por referencia: o clang avisa da auto-atribuicao directa, e e ela que se testa
                 }
                 else if (rng.below(8) == 0)
                 {
@@ -736,7 +736,7 @@ namespace
                     ct::String copy(s);
                     ct::String moved(ct::move(copy));
                     s = ct::move(moved);
-                    s = s;
+                    { auto &same = s; s = same; } // por referencia: o clang avisa da auto-atribuicao directa, e e ela que se testa
                     break;
                 }
                 case 15:
@@ -1039,7 +1039,7 @@ namespace
                 break;
             }
             case 14:
-                m = m;
+                { auto &same = m; m = same; } // por referencia: o clang avisa da auto-atribuicao directa, e e ela que se testa
                 break;
             case 15:
             {
@@ -1323,7 +1323,7 @@ namespace
                 break;
             }
             case 13:
-                m = m;
+                { auto &same = m; m = same; } // por referencia: o clang avisa da auto-atribuicao directa, e e ela que se testa
                 break;
             }
             ASSERT_EQ(m.size(), r.n) << "op " << op << " it " << it;

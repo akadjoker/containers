@@ -339,3 +339,91 @@ TEST(Hardening, FunctionVoidAceitaChamaveisQueDevolvemValor)
     ct::Function<long(int)> widen = [](int x) { return x; };
     EXPECT_EQ(widen(9), 9L);
 }
+
+namespace
+{
+    // Objeto que detecta o uso de um elemento ja destruido (a copia de um destruido conta como erro).
+    struct Mortal
+    {
+        static int live;
+        static int used_after_destroy;
+        int id;
+        unsigned magic;
+        Mortal() : id(0), magic(0xC0FFEEu) { ++live; }
+        explicit Mortal(int v) : id(v), magic(0xC0FFEEu) { ++live; }
+        Mortal(const Mortal &o) : id(o.id), magic(0xC0FFEEu)
+        {
+            if (o.magic != 0xC0FFEEu)
+                ++used_after_destroy;
+            ++live;
+        }
+        Mortal(Mortal &&o) noexcept : id(o.id), magic(0xC0FFEEu)
+        {
+            if (o.magic != 0xC0FFEEu)
+                ++used_after_destroy;
+            ++live;
+        }
+        Mortal &operator=(const Mortal &o)
+        {
+            if (magic != 0xC0FFEEu || o.magic != 0xC0FFEEu)
+                ++used_after_destroy;
+            id = o.id;
+            return *this;
+        }
+        Mortal &operator=(Mortal &&o) noexcept
+        {
+            if (magic != 0xC0FFEEu || o.magic != 0xC0FFEEu)
+                ++used_after_destroy;
+            id = o.id;
+            return *this;
+        }
+        ~Mortal()
+        {
+            magic = 0xDEADu;
+            --live;
+        }
+    };
+    int Mortal::live = 0;
+    int Mortal::used_after_destroy = 0;
+}
+
+TEST(Hardening, VectorAssignComUmElementoDoProprioVetor)
+{
+    // Antes da correcao assign(n, value) fazia clear() (destruia value) e so depois resize(n, value) copiava-o:
+    // uso depois de destruir (ASan: heap-use-after-free com Vector<String>; aqui o Mortal conta as copias de um
+    // objeto destruido).
+    Mortal::live = 0;
+    Mortal::used_after_destroy = 0;
+    {
+        ct::Vector<Mortal> v;
+        for (int i = 0; i < 5; ++i)
+            v.emplace_back(i + 10);
+        v.assign(7, v[2]);
+        ASSERT_EQ(v.size(), 7u);
+        for (size_t i = 0; i < v.size(); ++i)
+            EXPECT_EQ(v[i].id, 12);
+        v.assign(2, v[1]);
+        ASSERT_EQ(v.size(), 2u);
+        EXPECT_EQ(v[0].id, 12);
+        EXPECT_EQ(v[1].id, 12);
+        v.assign(40, v[0]);
+        ASSERT_EQ(v.size(), 40u);
+        EXPECT_EQ(v[39].id, 12);
+        v.assign(0, v[0]);
+        EXPECT_TRUE(v.empty());
+    }
+    EXPECT_EQ(Mortal::used_after_destroy, 0);
+    EXPECT_EQ(Mortal::live, 0);
+
+    ct::Vector<ct::String> s;
+    for (int i = 0; i < 4; ++i)
+    {
+        ct::String t("uma string maior do que cabe no SSO de vinte e tres bytes #");
+        t.append_number(i);
+        s.push_back(t);
+    }
+    s.assign(9, s[3]);
+    ASSERT_EQ(s.size(), 9u);
+    for (size_t i = 0; i < s.size(); ++i)
+        EXPECT_TRUE(s[i] == "uma string maior do que cabe no SSO de vinte e tres bytes #3");
+}

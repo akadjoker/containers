@@ -133,6 +133,13 @@ namespace ct
 
         void assign(size_type n, const T &value)
         {
+            if (contains_address(&value))
+            {
+                T stable(value);
+                clear();
+                resize(n, stable);
+                return;
+            }
             clear();
             resize(n, value);
         }

@@ -4,6 +4,7 @@
 #include <ct/binary.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/json.hpp>
+#include <ct/soup.hpp>
 #include <ct/stream.hpp>
 #include <ct/string.hpp>
 #include <ct/thread.hpp>
@@ -772,4 +773,37 @@ TEST(Hardening, VistasEStreamsVaziosComPonteiroNuloNaoPassamNuloAoMemcmpNemAoMem
     EXPECT_EQ(cheia.write("xy", 2), 2u);
     EXPECT_EQ(cheia.write(nullptr, 0), 0u);
     EXPECT_EQ(cheia.size(), 2);
+}
+
+TEST(Hardening, SoupReferenciasNumericasForaDoIntervaloDaoUFFFDEnaoDaoAVolta)
+{
+    // Antes da correcao o valor acumulava num unsigned de 32 bits e dava a volta (&#4294967361; era 'A'),
+    // &#x110000; e &#xFFFFFFFF; desapareciam e &#xD800; saia como os bytes ED A0 80 (UTF-8 invalido). O HTML5
+    // manda um U+FFFD (EF BF BD) em todos.
+    const ct::String fffd("\xEF\xBF\xBD");
+    EXPECT_TRUE(ct::decodeEntities("&#4294967361;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#x100000041;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#x110000;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#1114112;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#xFFFFFFFF;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#xD800;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#xDFFF;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("&#55296;") == fffd);
+    EXPECT_TRUE(ct::decodeEntities("a&#x110000;b") == ct::String("a") + fffd + ct::String("b"));
+
+    // os limites que continuam validos
+    EXPECT_TRUE(ct::decodeEntities("&#x10FFFF;") == ct::String("\xF4\x8F\xBF\xBF"));
+    EXPECT_TRUE(ct::decodeEntities("&#xD7FF;") == ct::String("\xED\x9F\xBF"));
+    EXPECT_TRUE(ct::decodeEntities("&#xE000;") == ct::String("\xEE\x80\x80"));
+    EXPECT_TRUE(ct::decodeEntities("&#65;") == "A");
+    EXPECT_TRUE(ct::decodeEntities("&#x41;") == "A");
+    EXPECT_TRUE(ct::decodeEntities("&#xe9;") == ct::String("\xC3\xA9"));
+    EXPECT_TRUE(ct::decodeEntities("&#0;") == "&#0;");   // nao se mexeu
+    EXPECT_TRUE(ct::decodeEntities("&amp;&lt;") == "&<");
+
+    ct::Soup soup = ct::Soup::parse("<p title=\"&#4294967361;\">&#x110000;</p>");
+    const ct::Node *p = soup.selectOne("p");
+    ASSERT_NE(p, nullptr);
+    EXPECT_TRUE(p->getText() == fffd);
+    EXPECT_TRUE(p->attr("title") == fffd);
 }

@@ -393,6 +393,8 @@ inline String decodeEntities(StringView text)
                     {
                         ok = false;
                     }
+                    if (cp > 0x10FFFFu)
+                        cp = 0x110000u; // satura: sem isto um numero comprido da a volta e vira outro caracter
                 }
             }
             else
@@ -406,11 +408,16 @@ inline String decodeEntities(StringView text)
                     else
                     {
                         cp = cp * 10u + (unsigned)(body[k] - '0');
+                        if (cp > 0x10FFFFu)
+                            cp = 0x110000u;
                     }
                 }
             }
             if (ok && cp != 0)
             {
+                // fora do intervalo ou surrogate: U+FFFD, como o HTML5 (antes sumia ou saia UTF-8 invalido)
+                if (cp > 0x10FFFFu || (cp >= 0xD800u && cp <= 0xDFFFu))
+                    cp = 0xFFFDu;
                 appendUtf8(out, cp);
                 i = end + 1;
                 continue;

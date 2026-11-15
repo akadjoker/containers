@@ -304,7 +304,7 @@ namespace ct
     inline void sort(It first, It last, C cmp)
     {
         detail::sort_iter(first, last, cmp, detail::IntroSorter(),
-                          detail::integral_constant<bool, std::is_pointer<It>::value>());
+                          detail::integral_constant<bool, detail::is_pointer<It>::value>());
     }
 
     template <typename It>
@@ -312,14 +312,14 @@ namespace ct
     {
         using T = typename detail::remove_ref<decltype(*first)>::type;
         detail::sort_iter(first, last, [](const T &a, const T &b) { return a < b; }, detail::IntroSorter(),
-                          detail::integral_constant<bool, std::is_pointer<It>::value>());
+                          detail::integral_constant<bool, detail::is_pointer<It>::value>());
     }
 
     template <typename It, typename C>
     inline void stable_sort(It first, It last, C cmp)
     {
         detail::sort_iter(first, last, cmp, detail::StableSorter(),
-                          detail::integral_constant<bool, std::is_pointer<It>::value>());
+                          detail::integral_constant<bool, detail::is_pointer<It>::value>());
     }
 
     template <typename It>
@@ -327,7 +327,7 @@ namespace ct
     {
         using T = typename detail::remove_ref<decltype(*first)>::type;
         detail::sort_iter(first, last, [](const T &a, const T &b) { return a < b; }, detail::StableSorter(),
-                          detail::integral_constant<bool, std::is_pointer<It>::value>());
+                          detail::integral_constant<bool, detail::is_pointer<It>::value>());
     }
 
 #define CT_RADIX_SORT(T, U, KEY_EXPR)                                          \

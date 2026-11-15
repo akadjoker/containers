@@ -1146,3 +1146,37 @@ TEST(Hardening, SoupLimitaAProfundidadeDaArvore)
     EXPECT_LE(soup_depth(other.root()), 512u);
     EXPECT_GT(other.findAll("li").size(), 1000u);
 }
+
+TEST(Hardening, TracosProprios)
+{
+    // detail::is_pointer e detail::make_unsigned fazem o que os tracos de mesmo nome da biblioteca standard fazem
+    // (a ct nao junta nomes da biblioteca standard a cada correccao).
+    using ct::detail::is_pointer;
+    using ct::detail::is_same;
+    using ct::detail::make_unsigned;
+    static_assert(is_pointer<int *>::value, "int *");
+    static_assert(is_pointer<const char *>::value, "const char *");
+    static_assert(is_pointer<int *const>::value, "int *const");
+    static_assert(is_pointer<int *volatile>::value, "int *volatile");
+    static_assert(is_pointer<int *const volatile>::value, "int *const volatile");
+    static_assert(is_pointer<void (*)(int)>::value, "ponteiro para funcao");
+    static_assert(is_pointer<void *>::value, "void *");
+    static_assert(!is_pointer<int>::value, "int");
+    static_assert(!is_pointer<int &>::value, "int &");
+    static_assert(!is_pointer<int[3]>::value, "int[3]");
+    static_assert(!is_pointer<decltype(nullptr)>::value, "nullptr_t");
+    static_assert(is_same<make_unsigned<signed char>::type, unsigned char>::value, "signed char");
+    static_assert(is_same<make_unsigned<char>::type, unsigned char>::value, "char");
+    static_assert(is_same<make_unsigned<short>::type, unsigned short>::value, "short");
+    static_assert(is_same<make_unsigned<int>::type, unsigned int>::value, "int");
+    static_assert(sizeof(make_unsigned<long>::type) == sizeof(long), "long");
+    static_assert(sizeof(make_unsigned<long long>::type) == sizeof(long long), "long long");
+    static_assert(sizeof(make_unsigned<wchar_t>::type) == sizeof(wchar_t), "wchar_t");
+    static_assert(sizeof(make_unsigned<char16_t>::type) == 2, "char16_t");
+    static_assert(sizeof(make_unsigned<char32_t>::type) == 4, "char32_t");
+    // a conta sem sinal da a volta e converte de volta para o tipo com sinal
+    const make_unsigned<int>::type a = static_cast<make_unsigned<int>::type>(INT_MAX);
+    EXPECT_EQ(static_cast<int>(static_cast<make_unsigned<int>::type>(a + 1u)), INT_MIN);
+    const make_unsigned<signed char>::type b = static_cast<make_unsigned<signed char>::type>(127);
+    EXPECT_EQ(static_cast<signed char>(static_cast<make_unsigned<signed char>::type>(b + 1)), -128);
+}

@@ -218,7 +218,6 @@ include/ct/detail/utils.hpp	std::uint64_t
 include/ct/detail/utils.hpp	std::uintptr_t
 include/ct/flatmap.hpp	std::size_t
 include/ct/function.hpp	std::decay
-include/ct/function.hpp	std::is_pointer
 include/ct/function.hpp	std::max_align_t
 include/ct/function.hpp	std::nullptr_t
 include/ct/function.hpp	std::size_t
@@ -326,7 +325,6 @@ include/ct/socket.hpp	std::strerror
 include/ct/socket_stream.hpp	std::int64_t
 include/ct/socket_stream.hpp	std::size_t
 include/ct/sort.hpp	include <new>
-include/ct/sort.hpp	std::is_pointer
 include/ct/sort.hpp	std::memcpy
 include/ct/sort.hpp	std::memset
 include/ct/sort.hpp	std::ptrdiff_t
@@ -397,7 +395,6 @@ include/ct/thread.hpp	std::is_floating_point
 include/ct/thread.hpp	std::is_integral
 include/ct/thread.hpp	std::is_pointer
 include/ct/thread.hpp	std::is_same
-include/ct/thread.hpp	std::make_unsigned
 include/ct/thread.hpp	std::memcpy
 include/ct/thread.hpp	std::ptrdiff_t
 include/ct/thread.hpp	std::size_t

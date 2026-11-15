@@ -23,7 +23,7 @@ namespace ct
                       !detail::is_same<typename std::decay<F>::type, Function>::value, int>::type = 0>
         Function(F f) : heap_(nullptr), on_heap_(false), invoke_(nullptr), manage_(nullptr)
         {
-            if (is_null_pointer(f, detail::integral_constant<bool, std::is_pointer<F>::value>{}))
+            if (is_null_pointer(f, detail::integral_constant<bool, detail::is_pointer<F>::value>{}))
                 return;
             construct(detail::move(f));
         }

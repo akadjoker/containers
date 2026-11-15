@@ -256,7 +256,7 @@ namespace ct
         // atomica (int no maximo + 1 em int e um overflow com sinal, comportamento indefinido).
         static T advance(T old, Diff d, bool subtract, detail::false_type) noexcept
         {
-            using U = typename std::make_unsigned<T>::type;
+            using U = typename detail::make_unsigned<T>::type;
             return static_cast<T>(subtract ? static_cast<U>(static_cast<U>(old) - static_cast<U>(d))
                                            : static_cast<U>(static_cast<U>(old) + static_cast<U>(d)));
         }

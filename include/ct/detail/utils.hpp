@@ -126,6 +126,58 @@ namespace ct
         };
 
         template <typename T>
+        struct is_pointer : false_type
+        {
+        };
+        template <typename T>
+        struct is_pointer<T *> : true_type
+        {
+        };
+        template <typename T>
+        struct is_pointer<T *const> : true_type
+        {
+        };
+        template <typename T>
+        struct is_pointer<T *volatile> : true_type
+        {
+        };
+        template <typename T>
+        struct is_pointer<T *const volatile> : true_type
+        {
+        };
+
+        // O inteiro sem sinal do tamanho de T, para contas que dao a volta sem overflow com sinal. So para tipos
+        // inteiros (nao bool): o resultado serve para converter de volta para T.
+        template <std::size_t Size>
+        struct unsigned_of_size;
+        template <>
+        struct unsigned_of_size<1>
+        {
+            using type = unsigned char;
+        };
+        template <>
+        struct unsigned_of_size<2>
+        {
+            using type = unsigned short;
+        };
+        template <>
+        struct unsigned_of_size<4>
+        {
+            using type = unsigned int;
+        };
+        template <>
+        struct unsigned_of_size<8>
+        {
+            using type = unsigned long long;
+        };
+
+        template <typename T>
+        struct make_unsigned
+        {
+            using type = typename unsigned_of_size<sizeof(T)>::type;
+        };
+
+        template <typename T>
         using is_trivially_copyable_t = integral_constant<bool, std::is_trivially_copyable<T>::value>;
 
         template <typename T>

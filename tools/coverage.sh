@@ -73,12 +73,16 @@ awk 'NR == 1 { next } /^-+$/ { next } NF >= 13 && $1 !~ /^Filename/ {
 "$LLVMCOV" export "$DIR/ct_tests" -instr-profile="$DIR/cov.profdata" -format=lcov -ignore-filename-regex="$IGNORE" \
     >"$DIR/coverage.lcov" 2>/dev/null
 
-# funcoes por chamar: FN:linha,nome / FNDA:vezes,nome; o nome desmistifica-se com c++filt
+# funcoes por chamar: FN:linha,nome / FNDA:vezes,nome. Cada instanciacao de um template e um nome, por isso agrupa-se
+# por (ficheiro, linha) e so conta como por chamar a funcao que nenhuma instanciacao chamou, como faz o llvm-cov report.
 awk -v root="$ROOT/include/ct/" '
     /^SF:/ { f = substr($0, 4); sub(root, "", f); next }
-    /^FN:/ { split(substr($0, 4), a, ","); line[f SUBSEP a[2]] = a[1]; file[a[2]] = f; next }
+    /^FN:/ { split(substr($0, 4), a, ","); file[a[2]] = f; line[a[2]] = a[1]; next }
     /^FNDA:/ { split(substr($0, 6), a, ","); calls[a[2]] += a[1]; next }
-    END { for (n in file) if (!(n in calls) || calls[n] == 0) printf "%s\t%s\t%s\n", file[n], line[file[n] SUBSEP n], n }
+    END {
+        for (n in file) { k = file[n] SUBSEP line[n]; total[k] += calls[n]; rep[k] = n }
+        for (k in total) if (total[k] == 0) { split(k, p, SUBSEP); printf "%s\t%s\t%s\n", p[1], p[2], rep[k] }
+    }
 ' "$DIR/coverage.lcov" | sort -t "$(printf '\t')" -k1,1 -k2,2n >"$DIR/functions.raw"
 if command -v c++filt >/dev/null 2>&1; then
     while IFS="$(printf '\t')" read -r f l n; do

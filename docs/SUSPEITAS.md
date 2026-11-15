@@ -26,8 +26,14 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
   depois de libertar. O caso natural e percorrer uma lista: com `struct No { Variant<int, Rc<No>> next; };`,
   `cursor = cursor.get<Rc<No>>()->next;` e `cursor = ct::move(cursor.get<Rc<No>>()->next);` dao
   heap-use-after-free sob ASan (e o segundo da lixo em Release).
-- O `std::variant` do libstdc++ faz o mesmo (destroi e depois constroi), por isso nao e uma divergencia do std; o
-  `Json` e o `Xml`, que sao arvores, foram corrigidos nesta ronda.
+- O `std::variant` do libstdc++ 13 tem o mesmo uso depois de libertar quando o indice muda (confirmado com ASan numa
+  copia de `No` com `std::variant<int, std::shared_ptr<No>>`: o segundo passo da lista, de `shared_ptr` para `int`,
+  le o `int` de um no ja destruido). Quando o indice e o mesmo, o `std::variant` atribui a alternativa no sitio (o
+  `shared_ptr::operator=` e seguro) e por isso o primeiro passo passa; o `ct::Variant` destroi e reconstroi sempre, e
+  falha tambem esse. O `Json` e o `Xml`, que sao arvores, foram corrigidos nesta ronda. Atribuir a alternativa no sitio
+  quando o indice e o mesmo exigiria que todas as alternativas fossem atribuiveis (hoje basta copiar e destruir) e
+  muda as construcoes e destruicoes que um tipo com contadores observa (nao ha nenhum teste de `Variant` com
+  contadores que o dissesse); nao se experimentou.
 - Corrige-se copiando/movendo a origem para um Variant local antes de destruir, so quando a alternativa actual tem
   destrutor (as triviais nao podem ser donas de nada). Foi escrito, testado (a lista acima, copia e move, mais um
   `Unique<No>`) e medido com um grupo `variant` de `bench/bench_more.cpp`, 9 rondas a alternar, minimos: atribuir

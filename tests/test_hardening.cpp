@@ -5,6 +5,7 @@
 #include <ct/json.hpp>
 #include <ct/string.hpp>
 #include <ct/thread.hpp>
+#include <ct/xml.hpp>
 
 #include <gtest/gtest.h>
 
@@ -469,4 +470,31 @@ TEST(Hardening, JsonAtribuirPorMoveUmFilhoDoProprioDocumento)
     ct::Json &alias = self;
     self = ct::move(alias);
     EXPECT_EQ(self.dump(), "[1,2]");
+}
+
+TEST(Hardening, XmlAtribuirPorMoveUmFilhoDoProprioDocumento)
+{
+    // Antes da correcao operator=(Xml&&) apagava os filhos (e com eles o proprio argumento) antes de lhe ler o
+    // ponteiro dos filhos: heap-use-after-free sob ASan; sem sanitizer o resultado vinha sem os netos.
+    ct::Xml x = ct::Xml::parse("<r a=\"1\"><item k=\"um valor de atributo comprido, fora do SSO\">"
+                               "<sub>texto comprido dentro do sub-elemento, fora do SSO</sub><sub n=\"2\"/></item>"
+                               "<other/></r>");
+    ASSERT_TRUE(x.tag() == "r");
+    ASSERT_EQ(x.children().size(), 2u);
+    const ct::String esperado = x.children()[0].dump();
+    x = ct::move(x.children()[0]);
+    EXPECT_TRUE(x.tag() == "item");
+    EXPECT_TRUE(x.attr_cstr("k") == ct::String("um valor de atributo comprido, fora do SSO"));
+    ASSERT_EQ(x.children().size(), 2u);
+    EXPECT_TRUE(x.children()[0].text() == "texto comprido dentro do sub-elemento, fora do SSO");
+    EXPECT_EQ(x.dump(), esperado);
+
+    ct::Xml chain = ct::Xml::parse("<a><b><c><d>fim da cadeia, com texto fora do SSO</d></c></b></a>");
+    for (int i = 0; i < 3; ++i)
+    {
+        ASSERT_EQ(chain.children().size(), 1u);
+        chain = ct::move(chain.children()[0]);
+    }
+    EXPECT_TRUE(chain.tag() == "d");
+    EXPECT_TRUE(chain.text() == "fim da cadeia, com texto fora do SSO");
 }

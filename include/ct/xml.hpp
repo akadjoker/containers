@@ -377,13 +377,16 @@ namespace ct
     {
         if (this != &o)
         {
+            // o pode ser um descendente de *this (x = move(x.children()[0])): os filhos antigos so se apagam depois
+            // de o ler.
+            Children *old = children_;
             tag_ = detail::move(o.tag_);
             attrs_ = detail::move(o.attrs_);
             text_ = detail::move(o.text_);
             tail_ = detail::move(o.tail_);
-            del_children(children_);
             children_ = o.children_;
             o.children_ = nullptr;
+            del_children(old);
         }
         return *this;
     }

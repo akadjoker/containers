@@ -289,8 +289,52 @@ TEST(StringFind, NotOfAndLastOf)
     EXPECT_EQ(String("  texto").find_first_not_of(" "), 2u);
     EXPECT_TRUE(String("   ").find_first_not_of(" ") == String::npos);
     EXPECT_EQ(String("file.json").find_last_of("."), 4u);
-    EXPECT_EQ(String("a.b.c").find_last_of(".", 3), 1u);
+    EXPECT_EQ(String("a.b.c").find_last_of(".", 3), 3u); // pos inclusivo: o '.' da posicao 3 conta
+    EXPECT_EQ(String("a.b.c").find_last_of(".", 2), 1u);
     EXPECT_TRUE(String("abc").find_last_of(".") == String::npos);
+}
+
+TEST(StringFind, FindLastOfComPosInclusivoComoOStdString)
+{
+    // pos e a ultima posicao onde se procura (procura em [0, pos]), como no find_last_of da biblioteca standard. Antes era
+    // exclusivo ([0, pos)): ("abcabc", "c", 2) dava npos e ("abcabc", "a", 0) dava npos.
+    EXPECT_EQ(String("abcabc").find_last_of("c", 2), 2u);
+    EXPECT_EQ(String("abcabc").find_last_of("a", 0), 0u);
+    EXPECT_EQ(String("abcabc").find_last_of("c", 1), String::npos);
+    EXPECT_EQ(String("abcabc").find_last_of("a", 2), 0u);
+    EXPECT_EQ(String("abcabc").find_last_of("c", 4), 2u);
+    EXPECT_EQ(String("abcabc").find_last_of("c", 5), 5u);
+    EXPECT_EQ(String("abcabc").find_last_of("c", 6), 5u); // pos == size()
+    EXPECT_EQ(String("abcabc").find_last_of("c", 1000), 5u);
+    EXPECT_EQ(String("abcabc").find_last_of("c", String::npos), 5u);
+    EXPECT_EQ(String("abcabc").find_last_of("ab", 3), 3u);
+    EXPECT_EQ(String("ba").find_last_of("a", 0), String::npos);
+    EXPECT_EQ(String("ab").find_last_of("b", 0), String::npos);
+    EXPECT_EQ(String("").find_last_of("a", 0), String::npos);
+    EXPECT_EQ(String("").find_last_of("a"), String::npos);
+    EXPECT_EQ(String("abc").find_last_of("", 2), String::npos);
+
+    // contra um modelo simples (o que o find_last_of da biblioteca standard define), todas as posicoes
+    const char *const texts[] = {"", "a", "abcabc", "a.b.c", "xyzzy", "aaaa", "cba"};
+    const char *const sets[] = {"", "a", "c", "ab", "xyz", ".", "zq"};
+    for (size_t t = 0; t < sizeof(texts) / sizeof(texts[0]); ++t)
+        for (size_t k = 0; k < sizeof(sets) / sizeof(sets[0]); ++k)
+        {
+            const String s(texts[t]);
+            for (size_t pos = 0; pos <= s.size() + 2; ++pos)
+            {
+                size_t want = String::npos;
+                const size_t count = pos < s.size() ? pos + 1 : s.size(); // posicoes 0..pos, sem passar do fim
+                for (size_t i = count; i > 0 && want == String::npos; --i)
+                    for (const char *c = sets[k]; *c; ++c)
+                        if (*c == texts[t][i - 1])
+                        {
+                            want = i - 1;
+                            break;
+                        }
+                EXPECT_EQ(s.find_last_of(sets[k], pos), want) << "\"" << texts[t] << "\" set \"" << sets[k] << "\" pos " << pos;
+            }
+        }
 }
 
 // ---------- fatias / utils ----------

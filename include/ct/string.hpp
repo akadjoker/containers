@@ -553,14 +553,16 @@ namespace ct
             return npos;
         }
 
+        // pos e a ultima posicao onde se procura (procura em [0, pos]), como o find_last_of da biblioteca standard;
+        // npos, ou qualquer pos >= size(), procura em tudo.
         size_type find_last_of(const char *set, size_type pos = npos) const
         {
             if (!set)
                 detail::fatal("ct::String::find_last_of: conjunto invalido");
             const CharSet chars(set);
             const char *d = data();
-            const size_type last = pos < size() ? pos : size();
-            for (size_type i = last; i > 0; --i)
+            const size_type count = pos < size() ? pos + 1 : size();
+            for (size_type i = count; i > 0; --i)
                 if (chars.has(d[i - 1]))
                     return i - 1;
             return npos;

@@ -1630,9 +1630,9 @@ namespace
                 }
             ASSERT_EQ(s.find_first_not_of(set, pos), want_not) << "find_first_not_of pos " << pos;
 
-            // find_last_of: pos exclusivo (ver docs/SUSPEITAS.md), por omissao tudo
-            const size_t last_pos = rng.below(3) == 0 ? ct::String::npos : pos;
-            const size_t bound = last_pos < n ? last_pos : n;
+            // find_last_of: pos inclusivo (procura em [0, pos]) como na biblioteca standard, por omissao (npos) procura tudo
+            const size_t last_pos = rng.below(3) == 0 ? ct::String::npos : rng.below(static_cast<uint32_t>(n + 4));
+            const size_t bound = last_pos < n ? last_pos + 1 : n;
             size_t want_last = ct::String::npos;
             for (size_t i = bound; i > 0; --i)
                 if (model_in_set(set, s[i - 1]))
@@ -1641,6 +1641,50 @@ namespace
                     break;
                 }
             ASSERT_EQ(s.find_last_of(set, last_pos), want_last) << "find_last_of pos " << last_pos;
+
+            // o resto da familia find_*, com pos explicito (de 0 a size() + 3): find(char), find(const char *) e
+            // find(String), contra ciclos simples; rfind(char) nao tem pos
+            const char c = static_cast<char>(rng.below(8) == 0 ? 0 : 'a' + rng.below(6));
+            size_t want_char = ct::String::npos;
+            for (size_t i = pos; i < n; ++i)
+                if (s[i] == c)
+                {
+                    want_char = i;
+                    break;
+                }
+            ASSERT_EQ(s.find(c, pos), want_char) << "find(char) pos " << pos;
+
+            size_t want_rchar = ct::String::npos;
+            for (size_t i = n; i > 0; --i)
+                if (s[i - 1] == c)
+                {
+                    want_rchar = i - 1;
+                    break;
+                }
+            ASSERT_EQ(s.rfind(c), want_rchar) << "rfind(char)";
+
+            char needle[5];
+            const size_t nl = rng.below(4);
+            for (size_t i = 0; i < nl; ++i)
+                needle[i] = static_cast<char>('a' + rng.below(4));
+            needle[nl] = '\0';
+            size_t want_needle = ct::String::npos;
+            if (pos <= n)
+            {
+                for (size_t i = pos; i + nl <= n; ++i)
+                {
+                    size_t k = 0;
+                    while (k < nl && s[i + k] == needle[k])
+                        ++k;
+                    if (k == nl)
+                    {
+                        want_needle = i;
+                        break;
+                    }
+                }
+            }
+            ASSERT_EQ(s.find(needle, pos), want_needle) << "find(const char *) pos " << pos << " needle " << needle;
+            ASSERT_EQ(s.find(ct::String(needle), pos), want_needle) << "find(String) pos " << pos;
         }
     }
 

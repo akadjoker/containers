@@ -7,18 +7,6 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
 
 ## Provadas, mas nao corrigidas (precisam de uma decisao)
 
-### String::find_last_of(set, pos) trata pos como exclusivo
-
-- `include/ct/string.hpp`, `String::find_last_of`.
-- `std::string::find_last_of(set, pos)` procura em `[0, pos]`; esta procura em `[0, pos)`. Num diferencial contra
-  `std::string` com 300000 combinacoes aleatorias, `find_last_of` e a unica funcao de `String` ou `StringView` que
-  difere, e so com `pos` explicito: `String("abcabc").find_last_of("c", 2)` da `npos` (std: 2),
-  `find_last_of("a", 0)` da `npos` (std: 0). Com `pos` por omissao (npos) e igual.
-- `tests/test_string.cpp` (`EXPECT_EQ(String("a.b.c").find_last_of(".", 3), 1u)`) fixa o comportamento actual como se
-  fosse de proposito, e o codigo dos outros tres projectos pode depender dele. Mudar e alterar comportamento visivel.
-  `Fuzz2.StringSets` tambem o fixa.
-- Decisao: ou se mantem e se escreve no README que `pos` e exclusivo, ou se alinha com o std e se mudam os dois testes.
-
 ### Json::operator== nao e reflexivo com NaN
 
 - `Json(NAN) == Json(NAN)` da falso e o `dump()` escreve `null`. Um documento com NaN nao e igual a si mesmo. E o que o

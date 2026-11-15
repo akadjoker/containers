@@ -67,9 +67,18 @@ namespace ct
                 done_cv_.notify_all();
         }
 
+        // Espera que o trabalho acabe, e o que garante depende de quem chama:
+        //  - de fora da pool (uma thread que nao esta a correr um job desta pool): volta quando a fila esta vazia e
+        //    nenhum job corre. E uma barreira: tudo o que foi submetido antes, e tudo o que esses jobs submeteram
+        //    (a qualquer profundidade, com wait_all aninhados pelo meio), esta feito quando volta.
+        //  - de dentro de um job desta pool: volta quando a fila esta vazia e todos os outros jobs que correm estao
+        //    eles proprios dentro de um wait_all (dois jobs a esperar um pelo outro nunca acabariam). Nao espera pelo
+        //    que esses jobs fazem depois de o seu wait_all voltar: quem precisa disso espera de fora.
+        // Enquanto espera a thread corre jobs da fila.
         void wait_all()
         {
             mutex_.lock();
+            const bool inside = runs_a_job_of_this_pool();
             const std::size_t marked = mark_waiting();
             for (;;)
             {
@@ -78,7 +87,7 @@ namespace ct
                     help_one();
                     continue;
                 }
-                if (active_ == waiting_)
+                if (active_ == (inside ? waiting_ : 0))
                     break;
                 ++sleepers_;
                 done_cv_.wait(mutex_);
@@ -160,6 +169,14 @@ namespace ct
         {
             static thread_local Frame *top = nullptr;
             return top;
+        }
+
+        bool runs_a_job_of_this_pool() const noexcept
+        {
+            for (const Frame *f = top_frame(); f; f = f->prev)
+                if (f->pool == this)
+                    return true;
+            return false;
         }
 
         std::size_t mark_waiting()

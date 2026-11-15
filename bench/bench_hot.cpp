@@ -428,6 +428,39 @@ namespace
         return static_cast<uint64_t>(counter.load());
     }
 
+    // muitas esperas curtas: e o custo de cada wait_all (o predicado e a decisao de dormir) que conta aqui
+    uint64_t threadpool_wait_rounds()
+    {
+        ct::ThreadPool pool(3);
+        ct::Atomic<int> counter(0);
+        for (int r = 0; r < 20000; ++r)
+        {
+            for (int i = 0; i < 8; ++i)
+                pool.submit([&counter] { counter.fetch_add(1); });
+            pool.wait_all();
+        }
+        return static_cast<uint64_t>(counter.load());
+    }
+
+    // jobs que submetem outros e esperam por eles (wait_all aninhado), esperados de fora
+    uint64_t threadpool_nested_wait()
+    {
+        ct::ThreadPool pool(3);
+        ct::Atomic<int> counter(0);
+        for (int r = 0; r < 2000; ++r)
+        {
+            for (int a = 0; a < 4; ++a)
+                pool.submit([&pool, &counter] {
+                    for (int b = 0; b < 4; ++b)
+                        pool.submit([&counter] { counter.fetch_add(1); });
+                    pool.wait_all();
+                    counter.fetch_add(1);
+                });
+            pool.wait_all();
+        }
+        return static_cast<uint64_t>(counter.load());
+    }
+
     uint64_t threadpool_parallel_for()
     {
         ct::ThreadPool pool(3);
@@ -536,6 +569,8 @@ int main(int argc, char **argv)
         run("mutex lock+unlock uncontended x30M", 5, [] { return mutex_uncontended(); });
         run("atomic fetch_add x50M", 5, [] { return atomic_add(); });
         run("threadpool submit 100k jobs + wait_all", 5, [] { return threadpool_jobs(); });
+        run("threadpool 20k x (submit 8 jobs + wait_all)", 5, [] { return threadpool_wait_rounds(); });
+        run("threadpool 2k x (4 jobs, each submits 4 + waits)", 5, [] { return threadpool_nested_wait(); });
         run("threadpool parallel_for 4M x10", 5, [] { return threadpool_parallel_for(); });
     }
     printf("sink %llu\n", static_cast<unsigned long long>(g_sink));

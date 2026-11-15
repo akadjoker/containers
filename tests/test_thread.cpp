@@ -599,3 +599,66 @@ TEST(ThreadPool, TempestadeDeWaitAllAninhadosTerminaSempre)
         delete pool;
     }
 }
+
+TEST(ThreadPool, WaitAllDeForaEsperaPeloQueUmJobFazDepoisDeUmWaitAllAninhado)
+{
+    // Antes da correcao o wait_all de uma thread de fora voltava quando todos os jobs que estavam a correr estavam
+    // dentro de um wait_all (active_ == waiting_), mas um job nesse estado volta e continua: aqui o job A espera
+    // pelo C num wait_all aninhado e depois ainda trabalha (a pausa depois do wait_all e o ponto onde se alarga a
+    // janela); a thread principal corre o C (so ela o pode apanhar, a unica worker esta ocupada com o A), e quando o
+    // C acaba o A e o unico job a correr e esta no wait_all: o wait_all da principal dava a fila vazia e voltava
+    // com done a 0. Agora so volta quando nada corre.
+    ThreadPool pool(1);
+    Atomic<int> a_started(0);
+    Atomic<int> c_started(0);
+    Atomic<int> done(0);
+    pool.submit([&] {
+        a_started.store(1);
+        pool.submit([&] {
+            c_started.store(1);
+            Thread::sleep_ms(30); // o A entra no wait_all e adormece enquanto o C corre
+        });
+        while (c_started.load() == 0)
+            Thread::yield();
+        pool.wait_all();
+        Thread::sleep_ms(30); // o que o A ainda faz depois do wait_all
+        done.store(1);
+    });
+    while (a_started.load() == 0)
+        Thread::yield();
+    pool.wait_all();
+    EXPECT_EQ(done.load(), 1) << "o wait_all de fora voltou antes de o A acabar";
+}
+
+TEST(ThreadPool, WaitAllDeForaEBarreiraParaTudoOQueOsJobsSubmetem)
+{
+    // O que o wait_all de fora garante: quando volta, nao ha nada na fila nem a correr, por isso tudo o que foi
+    // submetido antes e tudo o que esses jobs submeteram (a qualquer profundidade, com wait_all aninhados pelo meio)
+    // esta feito.
+    for (int round = 0; round < 30; ++round)
+    {
+        ThreadPool pool(1 + static_cast<unsigned>(round % 3));
+        Atomic<int> done(0);
+        for (int a = 0; a < 4; ++a)
+            pool.submit([&, a] {
+                for (int b = 0; b < 3; ++b)
+                    pool.submit([&, b] {
+                        pool.submit([&] {
+                            pool.submit([&] { done.fetch_add(1); });
+                            done.fetch_add(1);
+                        });
+                        if (b % 2)
+                            pool.wait_all();
+                        Thread::yield();
+                        done.fetch_add(1);
+                    });
+                if (a % 2)
+                    pool.wait_all();
+                Thread::yield();
+                done.fetch_add(1);
+            });
+        pool.wait_all();
+        ASSERT_EQ(done.load(), 4 * (1 + 3 * 3)) << "ronda " << round;
+        EXPECT_EQ(pool.pending(), 0u);
+    }
+}

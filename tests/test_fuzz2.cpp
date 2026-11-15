@@ -1408,6 +1408,72 @@ namespace
         }
     }
 
+    // ---- String: conjuntos de caracteres ----------------------------------------------------------------------------
+
+    // modelo: dois ciclos, sem tabelas nem strchr; o NUL do texto nunca pertence ao conjunto (o conjunto acaba nele)
+    bool model_in_set(const char *set, char c)
+    {
+        for (const char *p = set; *p; ++p)
+            if (*p == c)
+                return c != '\0';
+        return false;
+    }
+
+    void fuzz_string_sets(uint64_t seed, int iters)
+    {
+        Rng rng(seed);
+        for (int it = 0; it < iters; ++it)
+        {
+            ct::String s;
+            const size_t n = rng.below(rng.below(6) == 0 ? 120 : 14);
+            for (size_t i = 0; i < n; ++i)
+            {
+                const uint32_t k = rng.below(10);
+                s.push_back(k == 0 ? '\0' : k == 1 ? static_cast<char>(0x80 + rng.below(128)) : static_cast<char>('a' + rng.below(5)));
+            }
+            char set[12];
+            const size_t m = rng.below(8);
+            size_t len = 0;
+            for (size_t i = 0; i < m; ++i)
+            {
+                const uint32_t k = rng.below(8);
+                set[len++] = k == 0 ? static_cast<char>(0x80 + rng.below(128)) : static_cast<char>('a' + rng.below(7));
+            }
+            set[len] = '\0';
+            const size_t pos = rng.below(static_cast<uint32_t>(n + 4));
+
+            size_t want_first = ct::String::npos;
+            for (size_t i = pos; i < n; ++i)
+                if (model_in_set(set, s[i]))
+                {
+                    want_first = i;
+                    break;
+                }
+            ASSERT_EQ(s.find_first_of(set, pos), want_first) << "find_first_of pos " << pos;
+
+            size_t want_not = ct::String::npos;
+            for (size_t i = pos; i < n; ++i)
+                if (!model_in_set(set, s[i]))
+                {
+                    want_not = i;
+                    break;
+                }
+            ASSERT_EQ(s.find_first_not_of(set, pos), want_not) << "find_first_not_of pos " << pos;
+
+            // find_last_of: pos exclusivo (ver docs/SUSPEITAS.md), por omissao tudo
+            const size_t last_pos = rng.below(3) == 0 ? ct::String::npos : pos;
+            const size_t bound = last_pos < n ? last_pos : n;
+            size_t want_last = ct::String::npos;
+            for (size_t i = bound; i > 0; --i)
+                if (model_in_set(set, s[i - 1]))
+                {
+                    want_last = i - 1;
+                    break;
+                }
+            ASSERT_EQ(s.find_last_of(set, last_pos), want_last) << "find_last_of pos " << last_pos;
+        }
+    }
+
     // ---- sort e PriorityQueue -----------------------------------------------------------------------------------
 
     struct Tagged
@@ -1625,5 +1691,6 @@ CT_FUZZ2(Variant, fuzz_variant, 3000)
 CT_FUZZ2(SlotMap, fuzz_slotmap, 3000)
 CT_FUZZ2(Pool, fuzz_pool, 3000)
 CT_FUZZ2(Arena, fuzz_arena, 600)
+CT_FUZZ2(StringSets, fuzz_string_sets, 20000)
 CT_FUZZ2(Sort, fuzz_sort, 400)
 CT_FUZZ2(PriorityQueue, fuzz_priority_queue, 3000)

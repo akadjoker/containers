@@ -18,11 +18,13 @@
 #include <ct/sort.hpp>
 #include <ct/stream.hpp>
 #include <ct/string.hpp>
+#include <ct/text.hpp>
 #include <ct/variant.hpp>
 #include <ct/vector.hpp>
 
 #include <gtest/gtest.h>
 
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -569,6 +571,174 @@ namespace
                 }
                 else
                     ASSERT_FALSE(r.ok()) << "um stream truncado em " << keep << " de " << total << " bytes leu tudo sem falhar";
+            }
+        }
+    }
+
+    // ---- TextReader ------------------------------------------------------------------------------------------
+
+    bool model_space(int c)
+    {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\v' || c == '\f' || c == '\r';
+    }
+
+    // modelo: os bytes do ficheiro (sem o BOM, que o TextReader deita fora se for o primeiro que le) e uma posicao
+    void fuzz_text_reader(uint64_t seed, int iters)
+    {
+        Rng rng(seed);
+        static const char kAlphabet[] = "ab  \n\n\r\t1-9.e+x\v\f";
+        for (int round = 0; round < iters / 25 + 1; ++round)
+        {
+            unsigned char data[700];
+            size_t total = 0;
+            const uint32_t bom = rng.below(6);
+            if (bom == 0)
+            {
+                data[total++] = 0xEF;
+                data[total++] = 0xBB;
+                data[total++] = 0xBF;
+            }
+            else if (bom == 1)
+            {
+                data[total++] = 0xEF;
+                data[total++] = 0xBB;
+            }
+            const size_t n = rng.below(rng.below(4) == 0 ? 600 : 40);
+            for (size_t i = 0; i < n && total < 690; ++i)
+                data[total++] = rng.below(40) == 0 ? static_cast<unsigned char>(0x80 + rng.below(128))
+                                                  : static_cast<unsigned char>(kAlphabet[rng.below(sizeof(kAlphabet) - 1)]);
+            const bool has_bom = total >= 3 && data[0] == 0xEF && data[1] == 0xBB && data[2] == 0xBF;
+            const unsigned char *body = data + (has_bom ? 3 : 0);
+            const size_t body_size = total - (has_bom ? 3 : 0);
+
+            ct::MemoryStream mem(data, total);
+            Dribble slow(mem, rng, 1 + rng.below(9));
+            ct::TextReader reader(slow);
+            size_t pos = 0;
+            bool started = false;
+            bool finished = false;
+            ct::String trace("dados:");   // para a mensagem de uma falha: o que havia e o que se fez
+            for (size_t i = 0; i < total; ++i)
+            {
+                trace.push_back(' ');
+                trace.append_number(static_cast<int>(data[i]));
+            }
+            trace.append(" | ops:");
+            for (int op = 0; op < 40 && !finished; ++op)
+            {
+                const uint32_t which = rng.below(8);
+                trace.push_back(' ');
+                trace.append_number(static_cast<int>(which));
+                SCOPED_TRACE(trace.c_str());
+                switch (which)
+                {
+                case 0:
+                {
+                    const int got = reader.get();
+                    started = true;
+                    const int want = pos < body_size ? body[pos] : -1;
+                    ASSERT_EQ(got, want);
+                    if (want != -1)
+                        ++pos;
+                    break;
+                }
+                case 1:
+                {
+                    const int got = reader.peek();
+                    started = true;
+                    ASSERT_EQ(got, pos < body_size ? static_cast<int>(body[pos]) : -1);
+                    break;
+                }
+                case 2:
+                case 3:
+                {
+                    ct::String line("lixo antigo");
+                    const bool got = reader.read_line(line);
+                    started = true;
+                    ct::String want;
+                    bool want_ok = false;
+                    while (pos < body_size)
+                    {
+                        const unsigned char c = body[pos++];
+                        if (c == '\n')
+                        {
+                            want_ok = true;
+                            break;
+                        }
+                        if (c == '\r')
+                        {
+                            if (pos < body_size && body[pos] == '\n')
+                                ++pos;
+                            want_ok = true;
+                            break;
+                        }
+                        want.push_back(static_cast<char>(c));
+                    }
+                    if (!want_ok)
+                        want_ok = !want.empty();
+                    ASSERT_EQ(got, want_ok);
+                    ASSERT_TRUE(line == want) << "read_line deu [" << line.c_str() << "] em vez de [" << want.c_str() << "]";
+                    break;
+                }
+                case 4:
+                {
+                    ct::String word("lixo antigo");
+                    const bool got = reader.read_word(word);
+                    started = true;
+                    while (pos < body_size && model_space(body[pos]))
+                        ++pos;
+                    ct::String want;
+                    while (pos < body_size && !model_space(body[pos]))
+                        want.push_back(static_cast<char>(body[pos++]));
+                    if (!want.empty() && pos < body_size)
+                        ++pos;   // o espaco que acaba a palavra e lido (get) e nao fica
+                    ASSERT_EQ(got, !want.empty());
+                    ASSERT_TRUE(word == want);
+                    break;
+                }
+                case 5:
+                {
+                    long long v = 7;
+                    const bool got = reader.read_int(v);
+                    started = true;
+                    while (pos < body_size && model_space(body[pos]))
+                        ++pos;
+                    ct::String want;
+                    while (pos < body_size && !model_space(body[pos]))
+                        want.push_back(static_cast<char>(body[pos++]));
+                    if (!want.empty() && pos < body_size)
+                        ++pos;
+                    if (want.empty())
+                        ASSERT_FALSE(got);
+                    else
+                    {
+                        char *end = nullptr;
+                        errno = 0;
+                        const long long expected = strtoll(want.c_str(), &end, 10);
+                        const bool ok = *end == '\0' && errno != ERANGE;
+                        ASSERT_EQ(got, ok);
+                        ASSERT_EQ(v, expected);
+                    }
+                    break;
+                }
+                case 6:
+                {
+                    ct::String all("lixo antigo");
+                    ASSERT_TRUE(reader.read_all(all));
+                    started = true;
+                    ct::String want(reinterpret_cast<const char *>(body) + pos, body_size - pos);
+                    ASSERT_TRUE(all == want);
+                    pos = body_size;
+                    finished = true;
+                    break;
+                }
+                case 7:
+                    if (started)
+                    {
+                        ASSERT_EQ(reader.eof(), pos >= body_size) << "pos " << pos << " de " << body_size;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -1684,6 +1854,7 @@ static const uint64_t kSeeds[] = {1, 2, 3, 17, 99, 12345};
 CT_FUZZ2(MemoryStream, fuzz_memory_stream, 4000)
 CT_FUZZ2(SubStream, fuzz_substream, 4000)
 CT_FUZZ2(BinaryRoundTrip, fuzz_binary, 600)
+CT_FUZZ2(TextReader, fuzz_text_reader, 2000)
 CT_FUZZ2(JsonRoundTrip, fuzz_json, 600)
 CT_FUZZ2(Function, fuzz_function, 3000)
 CT_FUZZ2(Rc, fuzz_rc, 3000)

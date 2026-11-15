@@ -9,6 +9,8 @@
 
 #include <gtest/gtest.h>
 
+#include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -497,4 +499,33 @@ TEST(Hardening, XmlAtribuirPorMoveUmFilhoDoProprioDocumento)
     }
     EXPECT_TRUE(chain.tag() == "d");
     EXPECT_TRUE(chain.text() == "fim da cadeia, com texto fora do SSO");
+}
+
+TEST(Hardening, AtomicIncrementoNoLimiteDaVoltaSemOverflowComSinal)
+{
+    // Antes da correcao ++, --, += e -= calculavam o valor devolvido como fetch_add(d) + d em T: com int no maximo
+    // era um overflow com sinal (UBSan: "signed integer overflow: 2147483647 + 1 cannot be represented in type
+    // 'int'"), apesar de a operacao atomica em si dar a volta.
+    ct::Atomic<int> a(INT_MAX);
+    EXPECT_EQ(++a, INT_MIN);
+    EXPECT_EQ(a.load(), INT_MIN);
+    EXPECT_EQ(--a, INT_MAX);
+    EXPECT_EQ(a++, INT_MAX);
+    EXPECT_EQ(a.load(), INT_MIN);
+    EXPECT_EQ(a--, INT_MIN);
+    EXPECT_EQ(a.load(), INT_MAX);
+    EXPECT_EQ(a += 2, INT_MIN + 1);
+    EXPECT_EQ(a -= 3, INT_MAX - 1);
+    EXPECT_EQ(a += INT_MAX, -3);
+
+    ct::Atomic<long long> b(LLONG_MAX);
+    EXPECT_EQ(++b, LLONG_MIN);
+    EXPECT_EQ(b -= 1, LLONG_MAX);
+
+    ct::Atomic<int8_t> c(127);
+    EXPECT_EQ(++c, -128);
+    EXPECT_EQ(--c, 127);
+    ct::Atomic<uint32_t> d(0xFFFFFFFFu);
+    EXPECT_EQ(++d, 0u);
+    EXPECT_EQ(--d, 0xFFFFFFFFu);
 }

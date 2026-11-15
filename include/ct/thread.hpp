@@ -228,14 +228,27 @@ namespace ct
             store(v);
             return v;
         }
-        T operator++() noexcept { return step(1, false, IsPointer()) + 1; }
+        T operator++() noexcept { return advance(step(1, false, IsPointer()), 1, false, IsPointer()); }
         T operator++(int) noexcept { return step(1, false, IsPointer()); }
-        T operator--() noexcept { return step(1, true, IsPointer()) - 1; }
+        T operator--() noexcept { return advance(step(1, true, IsPointer()), 1, true, IsPointer()); }
         T operator--(int) noexcept { return step(1, true, IsPointer()); }
-        T operator+=(Diff v) noexcept { return step(v, false, IsPointer()) + v; }
-        T operator-=(Diff v) noexcept { return step(v, true, IsPointer()) - v; }
+        T operator+=(Diff v) noexcept { return advance(step(v, false, IsPointer()), v, false, IsPointer()); }
+        T operator-=(Diff v) noexcept { return advance(step(v, true, IsPointer()), v, true, IsPointer()); }
 
     private:
+        // O valor novo a partir do antigo. Nos inteiros a conta e feita sem sinal para dar a volta como a operacao
+        // atomica (int no maximo + 1 em int e um overflow com sinal, comportamento indefinido).
+        static T advance(T old, Diff d, bool subtract, detail::false_type) noexcept
+        {
+            using U = typename std::make_unsigned<T>::type;
+            return static_cast<T>(subtract ? static_cast<U>(static_cast<U>(old) - static_cast<U>(d))
+                                           : static_cast<U>(static_cast<U>(old) + static_cast<U>(d)));
+        }
+        static T advance(T old, Diff d, bool subtract, detail::true_type) noexcept
+        {
+            return subtract ? old - d : old + d;
+        }
+
         T step(Diff d, bool subtract, detail::false_type) noexcept
         {
             return subtract ? fetch_sub(d) : fetch_add(d);

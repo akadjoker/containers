@@ -5,6 +5,7 @@
 #include <ct/json.hpp>
 #include <ct/string.hpp>
 #include <ct/thread.hpp>
+#include <ct/vector.hpp>
 #include <ct/xml.hpp>
 
 #include <gtest/gtest.h>
@@ -528,4 +529,48 @@ TEST(Hardening, AtomicIncrementoNoLimiteDaVoltaSemOverflowComSinal)
     ct::Atomic<uint32_t> d(0xFFFFFFFFu);
     EXPECT_EQ(++d, 0u);
     EXPECT_EQ(--d, 0xFFFFFFFFu);
+}
+
+TEST(Hardening, AtomicFetchAddEFetchSubDePonteirosAvancamEmElementos)
+{
+    // Antes da correcao fetch_add e fetch_sub recebiam um T (um ponteiro, em Atomic<int *>): p.fetch_add(3) nao
+    // compilava ("invalid conversion from 'int' to 'int*'") e o unico modo de os chamar somava bytes
+    // (__atomic_fetch_add num ponteiro soma bytes), ao contrario de ++ e +=. Agora recebem a distancia.
+    int values[32] = {};
+    ct::Atomic<int *> p(values);
+    EXPECT_EQ(p.fetch_add(3), values);
+    EXPECT_EQ(p.load(), values + 3);
+    EXPECT_EQ(p.fetch_add(2, ct::MemoryOrder::Relaxed), values + 3);
+    EXPECT_EQ(p.fetch_sub(4), values + 5);
+    EXPECT_EQ(p.load(), values + 1);
+    EXPECT_EQ(p.fetch_add(-1, ct::MemoryOrder::AcqRel), values + 1);
+    EXPECT_EQ(p.load(), values);
+
+    struct Wide
+    {
+        char bytes[24];
+    } wide[8];
+    ct::Atomic<Wide *> q(wide);
+    EXPECT_EQ(q.fetch_add(5, ct::MemoryOrder::Release), wide);
+    EXPECT_EQ(reinterpret_cast<char *>(q.load()) - reinterpret_cast<char *>(wide), 5 * 24);
+    EXPECT_EQ(q.fetch_sub(2), wide + 5);
+    EXPECT_EQ(q.load(), wide + 3);
+
+    // quatro threads reservam posicoes de um buffer com fetch_add: cada posicao sai uma vez
+    static int claimed[4 * 4000];
+    memset(claimed, 0, sizeof(claimed));
+    ct::Atomic<int *> cursor(claimed);
+    ct::Vector<ct::Thread> threads;
+    for (int t = 0; t < 4; ++t)
+        threads.emplace_back(ct::Thread::Fn([&] {
+            for (int k = 0; k < 4000; ++k)
+                ++*cursor.fetch_add(1);
+        }));
+    for (size_t i = 0; i < threads.size(); ++i)
+        threads[i].join();
+    EXPECT_EQ(cursor.load(), claimed + 4 * 4000);
+    int wrong = 0;
+    for (int i = 0; i < 4 * 4000; ++i)
+        wrong += claimed[i] != 1;
+    EXPECT_EQ(wrong, 0);
 }

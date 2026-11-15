@@ -148,15 +148,15 @@ namespace ct
         T load(MemoryOrder = MemoryOrder::SeqCst) const noexcept { return from_raw(Ops::load(raw())); }
         void store(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept { Ops::store(raw(), to_raw(v)); }
         T exchange(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept { return from_raw(Ops::exchange(raw(), to_raw(v))); }
-        T fetch_add(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept
+        T fetch_add(Diff v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
         {
             require_arithmetic();
-            return from_raw(Ops::fetch_add(raw(), to_raw(v)));
+            return fetch_add_impl(v, order, IsPointer());
         }
-        T fetch_sub(T v, MemoryOrder = MemoryOrder::SeqCst) noexcept
+        T fetch_sub(Diff v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
         {
             require_arithmetic();
-            return from_raw(Ops::fetch_add(raw(), static_cast<Raw>(static_cast<Raw>(0) - to_raw(v))));
+            return fetch_sub_impl(v, order, IsPointer());
         }
         bool compare_exchange(T &expected, T desired, MemoryOrder = MemoryOrder::SeqCst,
                               MemoryOrder = MemoryOrder::SeqCst) noexcept
@@ -169,6 +169,14 @@ namespace ct
         }
 
     private:
+        T fetch_add_impl(Diff v, MemoryOrder, detail::false_type) noexcept
+        {
+            return from_raw(Ops::fetch_add(raw(), to_raw(v)));
+        }
+        T fetch_sub_impl(Diff v, MemoryOrder, detail::false_type) noexcept
+        {
+            return from_raw(Ops::fetch_add(raw(), static_cast<Raw>(static_cast<Raw>(0) - to_raw(v))));
+        }
         volatile Raw *raw() const noexcept { return reinterpret_cast<volatile Raw *>(const_cast<T *>(&v_)); }
         static Raw to_raw(T v) noexcept
         {
@@ -199,15 +207,15 @@ namespace ct
             __atomic_exchange(&v_, &v, &result, detail::order_value(order));
             return result;
         }
-        T fetch_add(T v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
+        T fetch_add(Diff v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
         {
             require_arithmetic();
-            return __atomic_fetch_add(&v_, v, detail::order_value(order));
+            return fetch_add_impl(v, order, IsPointer());
         }
-        T fetch_sub(T v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
+        T fetch_sub(Diff v, MemoryOrder order = MemoryOrder::SeqCst) noexcept
         {
             require_arithmetic();
-            return __atomic_fetch_sub(&v_, v, detail::order_value(order));
+            return fetch_sub_impl(v, order, IsPointer());
         }
         // Se falhar, expected fica com o valor que la estava. A ordem de falha nao pode ser Release nem AcqRel.
         bool compare_exchange(T &expected, T desired, MemoryOrder success = MemoryOrder::SeqCst,
@@ -218,6 +226,14 @@ namespace ct
         }
 
     private:
+        T fetch_add_impl(Diff v, MemoryOrder order, detail::false_type) noexcept
+        {
+            return __atomic_fetch_add(&v_, v, detail::order_value(order));
+        }
+        T fetch_sub_impl(Diff v, MemoryOrder order, detail::false_type) noexcept
+        {
+            return __atomic_fetch_sub(&v_, v, detail::order_value(order));
+        }
 #endif
         T v_;
 
@@ -228,12 +244,12 @@ namespace ct
             store(v);
             return v;
         }
-        T operator++() noexcept { return advance(step(1, false, IsPointer()), 1, false, IsPointer()); }
-        T operator++(int) noexcept { return step(1, false, IsPointer()); }
-        T operator--() noexcept { return advance(step(1, true, IsPointer()), 1, true, IsPointer()); }
-        T operator--(int) noexcept { return step(1, true, IsPointer()); }
-        T operator+=(Diff v) noexcept { return advance(step(v, false, IsPointer()), v, false, IsPointer()); }
-        T operator-=(Diff v) noexcept { return advance(step(v, true, IsPointer()), v, true, IsPointer()); }
+        T operator++() noexcept { return advance(step(1, false), 1, false, IsPointer()); }
+        T operator++(int) noexcept { return step(1, false); }
+        T operator--() noexcept { return advance(step(1, true), 1, true, IsPointer()); }
+        T operator--(int) noexcept { return step(1, true); }
+        T operator+=(Diff v) noexcept { return advance(step(v, false), v, false, IsPointer()); }
+        T operator-=(Diff v) noexcept { return advance(step(v, true), v, true, IsPointer()); }
 
     private:
         // O valor novo a partir do antigo. Nos inteiros a conta e feita sem sinal para dar a volta como a operacao
@@ -249,19 +265,19 @@ namespace ct
             return subtract ? old - d : old + d;
         }
 
-        T step(Diff d, bool subtract, detail::false_type) noexcept
+        // Nos ponteiros o __atomic_fetch_add somaria bytes e nao elementos, por isso soma-se com compare_exchange.
+        T fetch_add_impl(Diff d, MemoryOrder order, detail::true_type) noexcept { return cas_step(d, false, order); }
+        T fetch_sub_impl(Diff d, MemoryOrder order, detail::true_type) noexcept { return cas_step(d, true, order); }
+        T cas_step(Diff d, bool subtract, MemoryOrder order) noexcept
         {
-            return subtract ? fetch_sub(d) : fetch_add(d);
-        }
-        T step(Diff d, bool subtract, detail::true_type) noexcept
-        {
-            require_arithmetic();
-            T current = load();
-            while (!compare_exchange(current, subtract ? current - d : current + d))
+            T current = load(MemoryOrder::Relaxed);
+            while (!compare_exchange(current, subtract ? current - d : current + d, order, MemoryOrder::Relaxed))
             {
             }
             return current;
         }
+
+        T step(Diff d, bool subtract) noexcept { return subtract ? fetch_sub(d) : fetch_add(d); }
     };
 
     namespace detail

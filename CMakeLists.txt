@@ -242,6 +242,11 @@ add_executable(ct_bench_hot
 target_link_libraries(ct_bench_hot PRIVATE ct_threads)
 target_compile_options(ct_bench_hot PRIVATE ${CT_BENCH_OPTIONS})
 
+add_executable(ct_bench_more
+  bench/bench_more.cpp)
+target_link_libraries(ct_bench_more PRIVATE ct_threads)
+target_compile_options(ct_bench_more PRIVATE ${CT_BENCH_OPTIONS})
+
 add_executable(ct_bench_regex
   bench/bench_regex.cpp)
 target_link_libraries(ct_bench_regex PRIVATE ct)

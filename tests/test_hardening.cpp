@@ -636,3 +636,50 @@ TEST(Hardening, ParallelForPertoDoMaximoDoSizeTNaoDaAVolta)
         EXPECT_EQ(outside.load(), 0);
     }
 }
+
+namespace
+{
+    int double_it(int x) { return x * 2; }
+}
+
+TEST(Hardening, FunctionConstruidaComPonteiroNuloFicaVazia)
+{
+    // Antes da correcao um ponteiro para funcao nulo dava uma Function "cheia" (operator bool verdadeiro) que
+    // rebentava com SIGSEGV ao ser chamada; o equivalente da biblioteca standard fica vazio. Agora fica vazia e chama-la da o
+    // "chamada com alvo vazio" de sempre.
+    void (*none)() = nullptr;
+    ct::Function<void()> f(none);
+    EXPECT_FALSE(static_cast<bool>(f));
+    EXPECT_TRUE(f == nullptr);
+    EXPECT_FALSE(f != nullptr);
+
+    int (*none_int)(int) = nullptr;
+    ct::Function<int(int)> g = none_int;
+    EXPECT_FALSE(static_cast<bool>(g));
+
+    ct::Function<long(int)> widened(none_int);
+    EXPECT_FALSE(static_cast<bool>(widened));
+
+    ct::Function<int(int)> h([](int x) { return x + 1; });
+    ASSERT_TRUE(static_cast<bool>(h));
+    h = none_int;
+    EXPECT_FALSE(static_cast<bool>(h));
+
+    // um ponteiro que nao e nulo continua a funcionar, copia e move incluidos
+    int (*real)(int) = double_it;
+    ct::Function<int(int)> k(real);
+    ASSERT_TRUE(static_cast<bool>(k));
+    EXPECT_EQ(k(21), 42);
+    ct::Function<int(int)> copy(k);
+    ct::Function<int(int)> moved(ct::move(copy));
+    EXPECT_EQ(moved(4), 8);
+    ct::Function<int(int)> from_name(double_it);
+    EXPECT_EQ(from_name(5), 10);
+}
+
+TEST(HardeningDeathTest, FunctionVaziaPorPonteiroNuloChamadaAborta)
+{
+    void (*none)() = nullptr;
+    ct::Function<void()> f(none);
+    EXPECT_DEATH(f(), "alvo vazio");
+}

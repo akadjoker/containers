@@ -23,6 +23,8 @@ namespace ct
                       !detail::is_same<typename std::decay<F>::type, Function>::value, int>::type = 0>
         Function(F f) : heap_(nullptr), on_heap_(false), invoke_(nullptr), manage_(nullptr)
         {
+            if (is_null_pointer(f, detail::integral_constant<bool, std::is_pointer<F>::value>{}))
+                return;
             construct(detail::move(f));
         }
 
@@ -108,6 +110,18 @@ namespace ct
         bool on_heap_;
         InvokeFn invoke_;
         ManageFn manage_;
+
+        // Um ponteiro para funcao nulo da uma Function vazia, como no equivalente da biblioteca standard.
+        template <typename P>
+        static bool is_null_pointer(const P &p, detail::true_type) noexcept
+        {
+            return p == nullptr;
+        }
+        template <typename P>
+        static bool is_null_pointer(const P &, detail::false_type) noexcept
+        {
+            return false;
+        }
 
         void *storage_mut() noexcept { return on_heap_ ? heap_ : static_cast<void *>(buf_); }
         const void *storage() const noexcept

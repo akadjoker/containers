@@ -526,8 +526,11 @@ namespace ct
         {
             if (!set)
                 detail::fatal("ct::String::find_first_of: conjunto invalido");
-            for (size_type i = pos; i < size(); ++i)
-                if (in_set(set, data()[i]))
+            const CharSet chars(set);
+            const char *d = data();
+            const size_type n = size();
+            for (size_type i = pos; i < n; ++i)
+                if (chars.has(d[i]))
                     return i;
             return npos;
         }
@@ -536,8 +539,11 @@ namespace ct
         {
             if (!set)
                 detail::fatal("ct::String::find_first_not_of: conjunto invalido");
-            for (size_type i = pos; i < size(); ++i)
-                if (!in_set(set, data()[i]))
+            const CharSet chars(set);
+            const char *d = data();
+            const size_type n = size();
+            for (size_type i = pos; i < n; ++i)
+                if (!chars.has(d[i]))
                     return i;
             return npos;
         }
@@ -546,9 +552,11 @@ namespace ct
         {
             if (!set)
                 detail::fatal("ct::String::find_last_of: conjunto invalido");
+            const CharSet chars(set);
+            const char *d = data();
             const size_type last = pos < size() ? pos : size();
             for (size_type i = last; i > 0; --i)
-                if (in_set(set, data()[i - 1]))
+                if (chars.has(d[i - 1]))
                     return i - 1;
             return npos;
         }
@@ -676,10 +684,26 @@ namespace ct
             return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
         }
 
-        static bool in_set(const char *set, char c)
+        // O conjunto como 256 bits: um teste por caracter em vez de um strchr. O NUL nunca esta (o conjunto acaba nele).
+        struct CharSet
         {
-            return c != '\0' && std::strchr(set, c) != nullptr;
-        }
+            std::uint64_t bits[4];
+
+            explicit CharSet(const char *set)
+            {
+                bits[0] = bits[1] = bits[2] = bits[3] = 0;
+                for (; *set; ++set)
+                {
+                    const unsigned char c = static_cast<unsigned char>(*set);
+                    bits[c >> 6] |= std::uint64_t(1) << (c & 63);
+                }
+            }
+            bool has(char ch) const
+            {
+                const unsigned char c = static_cast<unsigned char>(ch);
+                return ((bits[c >> 6] >> (c & 63)) & 1) != 0;
+            }
+        };
 
         template <typename I>
         String &append_integral(I v, detail::true_type)

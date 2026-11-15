@@ -97,7 +97,7 @@ namespace ct
 
             inline std::uint32_t nf_maybe_bits(Form f) noexcept
             {
-                return f == NFC ? kNfcMaybe : f == NFKC ? kNfkcMaybe : 0;
+                return f == NFC ? kNfcMaybe : f == NFKC ? kNfkcMaybe : std::uint32_t(0);
             }
 
             inline std::uint32_t next_cp(const char16_t *s, std::size_t n, std::size_t &i) noexcept

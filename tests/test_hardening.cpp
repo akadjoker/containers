@@ -1,6 +1,7 @@
 // Regressoes de bugs apanhados por sanitizers e por testes de stress. Sem biblioteca standard: so ct e os
 // cabecalhos C.
 
+#include <ct/binary.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/json.hpp>
 #include <ct/string.hpp>
@@ -683,3 +684,52 @@ TEST(HardeningDeathTest, FunctionVaziaPorPonteiroNuloChamadaAborta)
     ct::Function<void()> f(none);
     EXPECT_DEATH(f(), "alvo vazio");
 }
+
+namespace
+{
+    // Stream que so conta os bytes escritos e nunca le a origem.
+    class CountingSink : public ct::Stream
+    {
+    public:
+        unsigned long long written = 0;
+        size_t read(void *, size_t) override { return 0; }
+        size_t write(const void *, size_t n) override
+        {
+            written += n;
+            return n;
+        }
+        bool seek(int64_t, ct::Seek) override { return false; }
+        int64_t tell() const override { return 0; }
+        int64_t size() const override { return 0; }
+        void close() override {}
+        bool is_open() const override { return true; }
+        bool eof() const override { return true; }
+        bool can_read() const override { return false; }
+        bool can_write() const override { return true; }
+        bool can_seek() const override { return false; }
+    };
+}
+
+#if SIZE_MAX > 0xFFFFFFFFu
+TEST(Hardening, BinaryWriterStringMaiorQue4GiBFalhaEmVezDeCorromperOStream)
+{
+    // Antes da correcao o prefixo era static_cast<uint32_t>(size) (5 para 4 GiB + 5) e escrevia-se a string toda:
+    // quem lesse o stream encontrava um comprimento de 5 e dados a mais. A origem nunca e lida (ponteiro de
+    // faz de conta): se a verificacao falhar, o CountingSink conta os bytes sem lhes tocar.
+    const size_t huge = static_cast<size_t>(0x100000005ull);
+    CountingSink sink;
+    ct::BinaryWriter w(sink);
+    w.u8(7);
+    w.string(ct::StringView(reinterpret_cast<const char *>(0x1000), huge));
+    EXPECT_FALSE(w.ok());
+    EXPECT_EQ(sink.written, 1ull);
+    w.u8(8);
+    EXPECT_EQ(sink.written, 1ull);
+
+    CountingSink sink2;
+    ct::BinaryWriter w2(sink2);
+    w2.string(ct::StringView("abc", 3));
+    EXPECT_TRUE(w2.ok());
+    EXPECT_EQ(sink2.written, 7ull);
+}
+#endif

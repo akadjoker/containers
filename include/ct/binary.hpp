@@ -82,7 +82,11 @@ namespace ct
         void f64(double v) { std::uint64_t bits; std::memcpy(&bits, &v, sizeof(bits)); u64(bits); }
         void boolean(bool v) { u8(v ? 1 : 0); }
         void varint(std::uint32_t v) { do { std::uint8_t byte = static_cast<std::uint8_t>(v & 0x7f); v >>= 7; u8(static_cast<std::uint8_t>(byte | (v ? 0x80 : 0))); } while (v); }
-        void string(StringView value) { u32(static_cast<std::uint32_t>(value.size())); bytes(value.data(), value.size()); }
+        void string(StringView value)
+        {
+            if (static_cast<std::uint64_t>(value.size()) > 0xFFFFFFFFull) { ok_ = false; return; }
+            u32(static_cast<std::uint32_t>(value.size())); bytes(value.data(), value.size());
+        }
         bool bytes(const void *src, std::size_t n) { if (!ok_ || !stream_.write_all(src, n)) { ok_ = false; return false; } return true; }
         template <typename T> bool pod(const T &value) { static_assert(std::is_trivially_copyable<T>::value, "pod requires a trivially copyable type"); return bytes(&value, sizeof(T)); }
         bool ok() const noexcept { return ok_; }

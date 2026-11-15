@@ -71,6 +71,71 @@ namespace ct
             using type = typename VariantTypeAt<I - 1, Rest...>::type;
         };
 
+        // T sabe ser atribuida (por copia ou por move) a partir de outra T? Tipos com membros const ou com operator=
+        // apagado, e os que so se constroem, dizem que nao, e o Variant destroi e reconstroi em vez de atribuir.
+        template <typename T>
+        struct variant_copy_assignable
+        {
+            template <typename U>
+            static auto test(int) -> decltype((void)(declval<U &>() = declval<const U &>()), true_type());
+            template <typename U>
+            static false_type test(...);
+            static constexpr bool value = decltype(test<T>(0))::value;
+        };
+        template <typename T>
+        struct variant_move_assignable
+        {
+            template <typename U>
+            static auto test(int) -> decltype((void)(declval<U &>() = declval<U &&>()), true_type());
+            template <typename U>
+            static false_type test(...);
+            static constexpr bool value = decltype(test<T>(0))::value;
+        };
+
+        template <typename T>
+        inline bool variant_assign_copy(void *dst, const void *src, true_type)
+        {
+            *static_cast<T *>(dst) = *static_cast<const T *>(src);
+            return true;
+        }
+        template <typename T>
+        inline bool variant_assign_copy(void *, const void *, false_type)
+        {
+            return false;
+        }
+        template <typename T>
+        inline bool variant_assign_move(void *dst, void *src, true_type)
+        {
+            *static_cast<T *>(dst) = move(*static_cast<T *>(src));
+            return true;
+        }
+        template <typename T>
+        inline bool variant_assign_move(void *, void *, false_type)
+        {
+            return false;
+        }
+
+        // Bit i a 1 se a alternativa i tem destrutor (nao e trivial): so essas podem ser donas de memoria onde viva
+        // a origem de uma atribuicao. Com mais de 64 alternativas as de indice 64 em diante contam sempre como donas.
+        template <typename... Ts>
+        struct VariantOwnsMask
+        {
+            static constexpr unsigned long long value = 0;
+        };
+        template <typename T, typename... Rest>
+        struct VariantOwnsMask<T, Rest...>
+        {
+            static constexpr unsigned long long value =
+                (is_trivially_destructible_t<T>::value ? 0ull : 1ull) | (VariantOwnsMask<Rest...>::value << 1);
+        };
+        template <typename... Ts>
+        inline bool variant_owns(std::size_t idx) noexcept
+        {
+            return sizeof...(Ts) > 64 ||
+                   (VariantOwnsMask<Ts...>::value != 0 &&
+                    (idx >= 64 || ((VariantOwnsMask<Ts...>::value >> idx) & 1ull) != 0));
+        }
+
         template <typename... Ts>
         struct VariantOps
         {
@@ -80,6 +145,24 @@ namespace ct
                 fatal("ct::Variant: indice invalido");
             }
             static void move_construct(std::size_t, void *, void *)
+            {
+                fatal("ct::Variant: indice invalido");
+            }
+            static bool copy_assign(std::size_t, void *, const void *)
+            {
+                fatal("ct::Variant: indice invalido");
+            }
+            static bool move_assign(std::size_t, void *, void *)
+            {
+                fatal("ct::Variant: indice invalido");
+            }
+            template <typename Full>
+            static void replace_by_copy(std::size_t, std::size_t, void *, const void *)
+            {
+                fatal("ct::Variant: indice invalido");
+            }
+            template <typename Full>
+            static void replace_by_move(std::size_t, std::size_t, void *, void *)
             {
                 fatal("ct::Variant: indice invalido");
             }
@@ -107,6 +190,49 @@ namespace ct
                     ::new (dst) T(move(*static_cast<T *>(src)));
                 else
                     VariantOps<Rest...>::move_construct(idx - 1, dst, src);
+            }
+            // Os dois estao na alternativa idx: atribui no sitio, com o operator= da alternativa, e diz que o fez.
+            // Devolve false (sem tocar em nada) se a alternativa nao sabe ser atribuida.
+            static bool copy_assign(std::size_t idx, void *dst, const void *src)
+            {
+                if (idx == 0)
+                    return variant_assign_copy<T>(dst, src,
+                                                  integral_constant<bool, variant_copy_assignable<T>::value>());
+                return VariantOps<Rest...>::copy_assign(idx - 1, dst, src);
+            }
+            static bool move_assign(std::size_t idx, void *dst, void *src)
+            {
+                if (idx == 0)
+                    return variant_assign_move<T>(dst, src,
+                                                  integral_constant<bool, variant_move_assignable<T>::value>());
+                return VariantOps<Rest...>::move_assign(idx - 1, dst, src);
+            }
+            // Troca a alternativa cur que esta em dst pela alternativa idx de src, passando por um T local: a origem
+            // copia-se (ou move-se) antes de a actual ser destruida, porque pode viver dentro dela. Full e o
+            // VariantOps da lista toda, que sabe destruir qualquer indice (este so conhece o fim da lista).
+            template <typename Full>
+            static void replace_by_copy(std::size_t idx, std::size_t cur, void *dst, const void *src)
+            {
+                if (idx == 0)
+                {
+                    T local(*static_cast<const T *>(src));
+                    Full::destroy(cur, dst);
+                    ::new (dst) T(move(local));
+                }
+                else
+                    VariantOps<Rest...>::template replace_by_copy<Full>(idx - 1, cur, dst, src);
+            }
+            template <typename Full>
+            static void replace_by_move(std::size_t idx, std::size_t cur, void *dst, void *src)
+            {
+                if (idx == 0)
+                {
+                    T local(move(*static_cast<T *>(src)));
+                    Full::destroy(cur, dst);
+                    ::new (dst) T(move(local));
+                }
+                else
+                    VariantOps<Rest...>::template replace_by_move<Full>(idx - 1, cur, dst, src);
             }
         };
 
@@ -159,22 +285,64 @@ namespace ct
             detail::VariantOps<Ts...>::move_construct(index_, storage_, o.storage_);
         }
 
-        Variant &operator=(const Variant &o)
+        // A origem da atribuicao (o) pode viver dentro do que este Variant guarda: o cursor de uma lista,
+        // cursor = cursor.get<Rc<No>>()->next, onde next e um membro do no que o cursor segura. Por isso:
+        //  - com o mesmo indice e uma alternativa atribuivel, atribui-se no sitio com o operator= da alternativa
+        //    (como o variant da biblioteca standard), e a seguranca fica nesse operator= (o do Rc e o do Unique
+        //    tiram a origem antes de largar o que tinham);
+        //  - nos outros casos, se a alternativa actual tem destrutor (pode ser dona da origem) a origem passa
+        //    primeiro para um objecto local, a alternativa actual destroi-se, e a nova constroi-se por move a partir
+        //    do local: custa um move e uma destruicao a mais. Sem destrutor nao pode ser dona de nada e destroi-se e
+        //    constroi-se directamente. (O variant da biblioteca standard destroi antes de copiar quando a copia nao
+        //    lanca, e ai tem o mesmo uso depois de libertar com o indice a mudar.)
+        // Os dois operadores sao CT_FORCEINLINE: com os ramos a mais o compilador deixava de os meter inline em
+        // alguns sitios (a atribuicao de escalares ficava 2 a 3 vezes mais lenta), e inline e como sempre foram.
+        CT_FORCEINLINE Variant &operator=(const Variant &o)
         {
             if (this == &o)
                 return *this;
-            detail::VariantOps<Ts...>::destroy(index_, storage_);
-            detail::VariantOps<Ts...>::copy_construct(o.index_, storage_, o.storage_);
-            index_ = o.index_;
+            const std::size_t from = index_;
+            const std::size_t to = o.index_;
+            if (from == to || detail::variant_owns<Ts...>(from))
+            {
+                if (from == to && detail::VariantOps<Ts...>::copy_assign(from, storage_, o.storage_))
+                    return *this;
+                if (detail::variant_owns<Ts...>(from))
+                {
+                    // o pode ja nao existir depois da troca (vivia na alternativa que se destruiu)
+                    detail::VariantOps<Ts...>::template replace_by_copy<detail::VariantOps<Ts...>>(
+                        to, from, storage_, o.storage_);
+                    index_ = to;
+                    return *this;
+                }
+            }
+            detail::VariantOps<Ts...>::destroy(from, storage_);
+            detail::VariantOps<Ts...>::copy_construct(to, storage_, o.storage_);
+            index_ = to;
             return *this;
         }
-        Variant &operator=(Variant &&o) noexcept
+        CT_FORCEINLINE Variant &operator=(Variant &&o) noexcept
         {
             if (this == &o)
                 return *this;
-            detail::VariantOps<Ts...>::destroy(index_, storage_);
-            detail::VariantOps<Ts...>::move_construct(o.index_, storage_, o.storage_);
-            index_ = o.index_;
+            const std::size_t from = index_;
+            const std::size_t to = o.index_;
+            if (from == to || detail::variant_owns<Ts...>(from))
+            {
+                if (from == to && detail::VariantOps<Ts...>::move_assign(from, storage_, o.storage_))
+                    return *this;
+                if (detail::variant_owns<Ts...>(from))
+                {
+                    // o pode ja nao existir depois da troca (vivia na alternativa que se destruiu)
+                    detail::VariantOps<Ts...>::template replace_by_move<detail::VariantOps<Ts...>>(
+                        to, from, storage_, o.storage_);
+                    index_ = to;
+                    return *this;
+                }
+            }
+            detail::VariantOps<Ts...>::destroy(from, storage_);
+            detail::VariantOps<Ts...>::move_construct(to, storage_, o.storage_);
+            index_ = to;
             return *this;
         }
 

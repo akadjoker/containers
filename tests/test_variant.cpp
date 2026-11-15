@@ -1,9 +1,12 @@
 #include <ct/variant.hpp>
+#include <ct/ptr.hpp>
 #include <ct/string.hpp>
 
 #include <gtest/gtest.h>
 
+using ct::Rc;
 using ct::String;
+using ct::Unique;
 using ct::Variant;
 
 namespace
@@ -158,4 +161,460 @@ TEST(Variant, SingleAlternative)
     EXPECT_EQ(v.get<int>(), 5);
     v = 6;
     EXPECT_EQ(v.get<int>(), 6);
+}
+// ---- atribuir a partir de um membro do que o proprio Variant guarda ------------------------------------------------
+
+namespace
+{
+    // Listas ligadas em que o proximo no e um membro do no que o cursor guarda: a origem da atribuicao vive dentro da
+    // alternativa que a atribuicao vai substituir.
+    struct NoRc
+    {
+        static int vivos;
+        Variant<int, Rc<NoRc>> next;
+        String rotulo;
+        NoRc() { ++vivos; }
+        ~NoRc() { --vivos; }
+    };
+    int NoRc::vivos = 0;
+
+    struct NoUnico
+    {
+        static int vivos;
+        Variant<int, Unique<NoUnico>> next;
+        String rotulo;
+        NoUnico() { ++vivos; }
+        ~NoUnico() { --vivos; }
+    };
+    int NoUnico::vivos = 0;
+
+    // Dois tipos de no que se alternam: todos os passos mudam o indice (Rc<NoA> para Rc<NoB> e de volta).
+    struct NoA;
+    struct NoB;
+    typedef Variant<int, Rc<NoA>, Rc<NoB>> Elo;
+    struct NoA
+    {
+        static int vivos;
+        Elo next;
+        String rotulo;
+        NoA() { ++vivos; }
+        ~NoA() { --vivos; }
+    };
+    struct NoB
+    {
+        static int vivos;
+        Elo next;
+        String rotulo;
+        NoB() { ++vivos; }
+        ~NoB() { --vivos; }
+    };
+    int NoA::vivos = 0;
+    int NoB::vivos = 0;
+
+    const char *const kRotulo = "um rotulo que nao cabe no SSO da String, para o no ter memoria propria";
+
+    // cabeca -> n1 -> n2 -> n3 -> 42; so a cabeca (o Variant devolvido) e dona do primeiro no.
+    Variant<int, Rc<NoRc>> faz_lista_rc()
+    {
+        Rc<NoRc> n3 = ct::make_rc<NoRc>();
+        n3->next = 42;
+        n3->rotulo = kRotulo;
+        Rc<NoRc> n2 = ct::make_rc<NoRc>();
+        n2->next = n3;
+        n2->rotulo = kRotulo;
+        Rc<NoRc> n1 = ct::make_rc<NoRc>();
+        n1->next = n2;
+        n1->rotulo = kRotulo;
+        return Variant<int, Rc<NoRc>>(n1);
+    }
+
+    // a1 -> b1 -> a2 -> b2 -> 99
+    Elo faz_lista_alternada()
+    {
+        Rc<NoB> b2 = ct::make_rc<NoB>();
+        b2->next = 99;
+        b2->rotulo = kRotulo;
+        Rc<NoA> a2 = ct::make_rc<NoA>();
+        a2->next = b2;
+        a2->rotulo = kRotulo;
+        Rc<NoB> b1 = ct::make_rc<NoB>();
+        b1->next = a2;
+        b1->rotulo = kRotulo;
+        Rc<NoA> a1 = ct::make_rc<NoA>();
+        a1->next = b1;
+        a1->rotulo = kRotulo;
+        return Elo(a1);
+    }
+}
+
+TEST(VariantAtribuir, PercorrerUmaListaDeRcPorCopia)
+{
+    // Antes de o Variant copiar a origem antes de destruir a alternativa actual, isto lia memoria libertada (ASan:
+    // heap-use-after-free) e, sem ASan, o no seguinte ja tinha sido destruido com o anterior (vivos dava 0).
+    NoRc::vivos = 0;
+    {
+        Variant<int, Rc<NoRc>> cursor = faz_lista_rc();
+        ASSERT_EQ(NoRc::vivos, 3);
+        // Rc para Rc: mesmo indice, atribuicao no sitio
+        cursor = cursor.get<Rc<NoRc>>()->next;
+        ASSERT_EQ(NoRc::vivos, 2);
+        ASSERT_EQ(cursor.index(), 1u);
+        cursor = cursor.get<Rc<NoRc>>()->next;
+        ASSERT_EQ(NoRc::vivos, 1);
+        ASSERT_EQ(cursor.index(), 1u);
+        // Rc para int: o indice muda e a origem (o int) vive no no que a atribuicao vai libertar
+        cursor = cursor.get<Rc<NoRc>>()->next;
+        EXPECT_EQ(NoRc::vivos, 0);
+        ASSERT_EQ(cursor.index(), 0u);
+        EXPECT_EQ(cursor.get<int>(), 42);
+    }
+    EXPECT_EQ(NoRc::vivos, 0);
+}
+
+TEST(VariantAtribuir, PercorrerUmaListaDeRcPorMove)
+{
+    NoRc::vivos = 0;
+    {
+        Variant<int, Rc<NoRc>> cursor = faz_lista_rc();
+        ASSERT_EQ(NoRc::vivos, 3);
+        cursor = ct::move(cursor.get<Rc<NoRc>>()->next);
+        ASSERT_EQ(NoRc::vivos, 2);
+        ASSERT_EQ(cursor.index(), 1u);
+        cursor = ct::move(cursor.get<Rc<NoRc>>()->next);
+        ASSERT_EQ(NoRc::vivos, 1);
+        ASSERT_EQ(cursor.index(), 1u);
+        cursor = ct::move(cursor.get<Rc<NoRc>>()->next);
+        EXPECT_EQ(NoRc::vivos, 0);
+        ASSERT_EQ(cursor.index(), 0u);
+        EXPECT_EQ(cursor.get<int>(), 42);
+    }
+    EXPECT_EQ(NoRc::vivos, 0);
+}
+
+TEST(VariantAtribuir, PercorrerUmaListaDeUniqueSoPorMove)
+{
+    NoUnico::vivos = 0;
+    {
+        Unique<NoUnico> n3 = ct::make_unique<NoUnico>();
+        n3->next = 7;
+        n3->rotulo = kRotulo;
+        Unique<NoUnico> n2 = ct::make_unique<NoUnico>();
+        n2->next = ct::move(n3);
+        n2->rotulo = kRotulo;
+        Unique<NoUnico> n1 = ct::make_unique<NoUnico>();
+        n1->next = ct::move(n2);
+        n1->rotulo = kRotulo;
+        Variant<int, Unique<NoUnico>> cursor(ct::move(n1));
+        ASSERT_EQ(NoUnico::vivos, 3);
+        // Unique para Unique: atribuicao no sitio, pelo operator= do Unique
+        cursor = ct::move(cursor.get<Unique<NoUnico>>()->next);
+        ASSERT_EQ(NoUnico::vivos, 2);
+        ASSERT_EQ(cursor.index(), 1u);
+        cursor = ct::move(cursor.get<Unique<NoUnico>>()->next);
+        ASSERT_EQ(NoUnico::vivos, 1);
+        ASSERT_EQ(cursor.index(), 1u);
+        // Unique para int
+        cursor = ct::move(cursor.get<Unique<NoUnico>>()->next);
+        EXPECT_EQ(NoUnico::vivos, 0);
+        ASSERT_EQ(cursor.index(), 0u);
+        EXPECT_EQ(cursor.get<int>(), 7);
+    }
+    EXPECT_EQ(NoUnico::vivos, 0);
+}
+
+TEST(VariantAtribuir, ListaEmQueTodosOsPassosMudamDeIndice)
+{
+    // Rc<NoA> para Rc<NoB>, Rc<NoB> para Rc<NoA>, e por fim Rc<NoB> para int: as duas direcoes, por copia e por move.
+    NoA::vivos = 0;
+    NoB::vivos = 0;
+    {
+        Elo cursor = faz_lista_alternada();
+        ASSERT_EQ(NoA::vivos + NoB::vivos, 4);
+        ASSERT_EQ(cursor.index(), 1u);
+        cursor = cursor.get<Rc<NoA>>()->next; // A para B
+        ASSERT_EQ(cursor.index(), 2u);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 3);
+        cursor = cursor.get<Rc<NoB>>()->next; // B para A
+        ASSERT_EQ(cursor.index(), 1u);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 2);
+        cursor = cursor.get<Rc<NoA>>()->next; // A para B
+        ASSERT_EQ(cursor.index(), 2u);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 1);
+        cursor = cursor.get<Rc<NoB>>()->next; // B para int
+        ASSERT_EQ(cursor.index(), 0u);
+        EXPECT_EQ(cursor.get<int>(), 99);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 0);
+    }
+    {
+        Elo cursor = faz_lista_alternada();
+        cursor = ct::move(cursor.get<Rc<NoA>>()->next);
+        ASSERT_EQ(cursor.index(), 2u);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 3);
+        cursor = ct::move(cursor.get<Rc<NoB>>()->next);
+        ASSERT_EQ(cursor.index(), 1u);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 2);
+        cursor = ct::move(cursor.get<Rc<NoA>>()->next);
+        ASSERT_EQ(cursor.index(), 2u);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 1);
+        cursor = ct::move(cursor.get<Rc<NoB>>()->next);
+        ASSERT_EQ(cursor.index(), 0u);
+        EXPECT_EQ(cursor.get<int>(), 99);
+        EXPECT_EQ(NoA::vivos + NoB::vivos, 0);
+    }
+    EXPECT_EQ(NoA::vivos + NoB::vivos, 0);
+}
+
+TEST(VariantAtribuir, SemAliasingEAutoAtribuicaoContinuamIguais)
+{
+    Variant<int, String> a(String("uma string com mais de vinte e tres bytes de comprimento, na memoria dinamica"));
+    Variant<int, String> b(5);
+    b = a;
+    EXPECT_EQ(b.index(), 1u);
+    a = 3;
+    EXPECT_EQ(a.get<int>(), 3);
+    a = b;
+    EXPECT_TRUE(a.get<String>() == b.get<String>());
+    Variant<int, String> &mesmo = a;
+    a = mesmo;
+    a = ct::move(mesmo);
+    EXPECT_TRUE(a.get<String>() == "uma string com mais de vinte e tres bytes de comprimento, na memoria dinamica");
+}
+
+namespace
+{
+    // Conta cada construcao, copia, move, atribuicao e destruicao; Tag separa os contadores de tipos diferentes.
+    template <int Tag>
+    struct Conta
+    {
+        static int vivos, construidos, copias, moves, atrib_copias, atrib_moves, destruidos;
+        int v;
+        explicit Conta(int x) : v(x)
+        {
+            ++construidos;
+            ++vivos;
+        }
+        Conta(const Conta &o) : v(o.v)
+        {
+            ++construidos;
+            ++copias;
+            ++vivos;
+        }
+        Conta(Conta &&o) noexcept : v(o.v)
+        {
+            ++construidos;
+            ++moves;
+            ++vivos;
+        }
+        Conta &operator=(const Conta &o)
+        {
+            v = o.v;
+            ++atrib_copias;
+            return *this;
+        }
+        Conta &operator=(Conta &&o) noexcept
+        {
+            v = o.v;
+            ++atrib_moves;
+            return *this;
+        }
+        ~Conta()
+        {
+            ++destruidos;
+            --vivos;
+        }
+        // zera as contas das operacoes; vivos nao se zera (diz quantos objectos existem)
+        static void zera() { construidos = copias = moves = atrib_copias = atrib_moves = destruidos = 0; }
+    };
+    template <int Tag> int Conta<Tag>::vivos = 0;
+    template <int Tag> int Conta<Tag>::construidos = 0;
+    template <int Tag> int Conta<Tag>::copias = 0;
+    template <int Tag> int Conta<Tag>::moves = 0;
+    template <int Tag> int Conta<Tag>::atrib_copias = 0;
+    template <int Tag> int Conta<Tag>::atrib_moves = 0;
+    template <int Tag> int Conta<Tag>::destruidos = 0;
+
+    // Como Conta, mas sem operator= (membro const): o Variant tem de destruir e reconstruir.
+    template <int Tag>
+    struct ContaFixa
+    {
+        static int vivos, construidos, copias, moves, destruidos;
+        const int v;
+        explicit ContaFixa(int x) : v(x)
+        {
+            ++construidos;
+            ++vivos;
+        }
+        ContaFixa(const ContaFixa &o) : v(o.v)
+        {
+            ++construidos;
+            ++copias;
+            ++vivos;
+        }
+        ContaFixa(ContaFixa &&o) noexcept : v(o.v)
+        {
+            ++construidos;
+            ++moves;
+            ++vivos;
+        }
+        ~ContaFixa()
+        {
+            ++destruidos;
+            --vivos;
+        }
+        static void zera() { construidos = copias = moves = destruidos = 0; }
+    };
+    template <int Tag> int ContaFixa<Tag>::vivos = 0;
+    template <int Tag> int ContaFixa<Tag>::construidos = 0;
+    template <int Tag> int ContaFixa<Tag>::copias = 0;
+    template <int Tag> int ContaFixa<Tag>::moves = 0;
+    template <int Tag> int ContaFixa<Tag>::destruidos = 0;
+
+    typedef Conta<0> C0;
+    typedef Conta<1> C1;
+    typedef ContaFixa<2> F2;
+    typedef ContaFixa<3> F3;
+    typedef Variant<int, C0, C1> VC;
+    typedef Variant<int, F2, F3> VF;
+
+    void zera_tudo()
+    {
+        C0::zera();
+        C1::zera();
+        F2::zera();
+        F3::zera();
+    }
+}
+
+TEST(VariantAtribuir, MesmoIndiceAtribuiNoSitio)
+{
+    zera_tudo();
+    {
+        VC a{C0(1)};
+        VC b{C0(2)};
+        zera_tudo();
+
+        a = b; // copia: um operator= da alternativa, nada mais
+        EXPECT_EQ(C0::atrib_copias, 1);
+        EXPECT_EQ(C0::atrib_moves, 0);
+        EXPECT_EQ(C0::construidos, 0);
+        EXPECT_EQ(C0::destruidos, 0);
+        EXPECT_EQ(a.get<C0>().v, 2);
+
+        VC t{C0(3)};
+        zera_tudo();
+        b = ct::move(t); // move: um operator= de move, nada mais
+        EXPECT_EQ(C0::atrib_moves, 1);
+        EXPECT_EQ(C0::atrib_copias, 0);
+        EXPECT_EQ(C0::copias + C0::moves, 0);
+        EXPECT_EQ(C0::construidos, 0);
+        EXPECT_EQ(C0::destruidos, 0);
+        EXPECT_EQ(b.get<C0>().v, 3);
+    }
+    EXPECT_EQ(C0::vivos, 0);
+}
+
+TEST(VariantAtribuir, IndiceDiferenteComAlternativaActualComDestrutorPassaPorUmLocal)
+{
+    zera_tudo();
+    {
+        VC a{C0(1)};
+        VC c{C1(7)};
+        zera_tudo();
+
+        a = c; // copia para um local, destroi o C0, move o local para o sitio, destroi o local
+        EXPECT_EQ(C1::copias, 1);
+        EXPECT_EQ(C1::moves, 1);
+        EXPECT_EQ(C1::construidos, 2);
+        EXPECT_EQ(C1::destruidos, 1); // o local, ja movido
+        EXPECT_EQ(C1::atrib_copias + C1::atrib_moves, 0);
+        EXPECT_EQ(C0::destruidos, 1); // a alternativa que la estava
+        EXPECT_EQ(C0::construidos, 0);
+        ASSERT_EQ(a.index(), 2u);
+        EXPECT_EQ(a.get<C1>().v, 7);
+        EXPECT_EQ(c.get<C1>().v, 7);
+
+        zera_tudo();
+        VC d{C0(5)};
+        zera_tudo();
+        a = ct::move(d); // move: dois moves de C0 (para o local e para o sitio); o C1 que la estava e destruido
+        EXPECT_EQ(C0::moves, 2);
+        EXPECT_EQ(C0::copias, 0);
+        EXPECT_EQ(C0::construidos, 2);
+        EXPECT_EQ(C0::destruidos, 1); // o local, ja movido
+        EXPECT_EQ(C1::destruidos, 1); // o C1 que a tinha
+        ASSERT_EQ(a.index(), 1u);
+        EXPECT_EQ(a.get<C0>().v, 5);
+    }
+    EXPECT_EQ(C0::vivos, 0);
+    EXPECT_EQ(C1::vivos, 0);
+}
+
+TEST(VariantAtribuir, IndiceDiferenteComAlternativaActualSemDestrutorConstroiDirecto)
+{
+    zera_tudo();
+    {
+        VC a{3}; // int: nao pode ser dona de nada
+        VC c{C1(8)};
+        zera_tudo();
+        a = c;
+        EXPECT_EQ(C1::copias, 1);
+        EXPECT_EQ(C1::moves, 0);
+        EXPECT_EQ(C1::construidos, 1);
+        EXPECT_EQ(C1::destruidos, 0);
+        ASSERT_EQ(a.index(), 2u);
+        EXPECT_EQ(a.get<C1>().v, 8);
+
+        VC d{4};
+        VC e{C1(9)};
+        zera_tudo();
+        d = ct::move(e);
+        EXPECT_EQ(C1::moves, 1);
+        EXPECT_EQ(C1::copias, 0);
+        EXPECT_EQ(C1::construidos, 1);
+        EXPECT_EQ(C1::destruidos, 0);
+        EXPECT_EQ(d.get<C1>().v, 9);
+    }
+    EXPECT_EQ(C1::vivos, 0);
+}
+
+TEST(VariantAtribuir, AlternativaSemOperatorIgualDestroiEReconstroi)
+{
+    zera_tudo();
+    {
+        VF a{F2(1)};
+        VF b{F2(2)};
+        zera_tudo();
+        a = b; // mesmo indice mas sem operator=: tem destrutor, passa por um local
+        EXPECT_EQ(F2::copias, 1);
+        EXPECT_EQ(F2::moves, 1);
+        EXPECT_EQ(F2::construidos, 2);
+        EXPECT_EQ(F2::destruidos, 2); // o antigo e o local
+        EXPECT_EQ(a.get<F2>().v, 2);
+
+        a = VF(F2(3));
+        EXPECT_EQ(a.get<F2>().v, 3);
+        EXPECT_EQ(F2::vivos, 2); // a e b
+
+        a = VF(F3(4)); // outro indice
+        EXPECT_EQ(a.index(), 2u);
+        EXPECT_EQ(a.get<F3>().v, 4);
+    }
+    EXPECT_EQ(F2::vivos, 0);
+    EXPECT_EQ(F3::vivos, 0);
+}
+
+TEST(VariantAtribuir, EscalaresContinuamAAtribuir)
+{
+    // Sem alternativas com destrutor nunca ha local (a mascara e 0 e o ramo desaparece); com uma String ha.
+    static_assert(ct::detail::VariantOwnsMask<int, double, char>::value == 0, "escalares nao tem destrutor");
+    static_assert(ct::detail::VariantOwnsMask<int, String>::value == 2, "so a String (indice 1) tem destrutor");
+    Variant<int, double, char> a(1);
+    Variant<int, double, char> b(2.5);
+    a = b;
+    EXPECT_EQ(a.get<double>(), 2.5);
+    b = Variant<int, double, char>('x');
+    EXPECT_EQ(b.get<char>(), 'x');
+    a = b;
+    a = Variant<int, double, char>(7);
+    EXPECT_EQ(a.get<int>(), 7);
 }

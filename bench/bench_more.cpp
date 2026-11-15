@@ -432,6 +432,85 @@ namespace
         return n;
     }
 
+    // As atribuicoes por caminho: mesmo indice (atribui no sitio), indice diferente com a alternativa actual a ter
+    // destrutor (String) e sem ele (int).
+    uint64_t variant_same_index_scalars()
+    {
+        Var3 a(1);
+        Var3 b(2);
+        uint64_t n = 0;
+        for (int i = 0; i < 20000000; ++i)
+        {
+            if (i & 1)
+                a = b;
+            else
+                b = a;
+            n += static_cast<uint64_t>(a.get<int>());
+        }
+        return n;
+    }
+
+    uint64_t variant_same_index_strings()
+    {
+        Var3 a(ct::String("a string that is long enough to need the heap"));
+        Var3 b(ct::String("another long string, also on the heap, a bit longer"));
+        uint64_t n = 0;
+        for (int i = 0; i < 5000000; ++i)
+        {
+            a = b;
+            b = a;
+            n += a.get<ct::String>().size();
+        }
+        return n;
+    }
+
+    uint64_t variant_move_same_index_strings()
+    {
+        Var3 a(ct::String("a string that is long enough to need the heap"));
+        Var3 b(ct::String("another long string, also on the heap, a bit longer"));
+        uint64_t n = 0;
+        for (int i = 0; i < 20000000; ++i)
+        {
+            a = ct::move(b);
+            b = ct::move(a);
+            n += a.index();
+        }
+        return n;
+    }
+
+    // String<-int (a alternativa actual tem destrutor), int<-String (nao tem) e String<-String (mesmo indice)
+    uint64_t variant_copy_index_changes()
+    {
+        Var3 a(ct::String("a string that is long enough to need the heap"));
+        Var3 s(ct::String("another long string, also on the heap, a bit longer"));
+        Var3 b(7);
+        uint64_t n = 0;
+        for (int i = 0; i < 2000000; ++i)
+        {
+            a = b;
+            a = s;
+            s = a;
+            n += a.index();
+        }
+        return n;
+    }
+
+    uint64_t variant_move_index_changes()
+    {
+        Var3 a(ct::String("a string that is long enough to need the heap"));
+        Var3 s(ct::String("another long string, also on the heap, a bit longer"));
+        Var3 b(7);
+        uint64_t n = 0;
+        for (int i = 0; i < 20000000; ++i)
+        {
+            a = ct::move(b);
+            a = ct::move(s);
+            s = ct::move(a);
+            n += a.index();
+        }
+        return n;
+    }
+
     uint64_t variant_vector_push()
     {
         ct::Vector<Var3> v;
@@ -631,6 +710,11 @@ int main(int argc, char **argv)
         run("variant<int,double,String> assign scalars x20M", 7, [] { return variant_assign_scalars(); });
         run("variant<int,double,String> assign strings x2M x3", 7, [] { return variant_assign_strings(); });
         run("variant<int,double,String> move assign x20M", 7, [] { return variant_move_strings(); });
+        run("variant<int,double,String> assign ints, same index x20M", 7, [] { return variant_same_index_scalars(); });
+        run("variant<int,double,String> assign Strings, same index x5M x2", 7, [] { return variant_same_index_strings(); });
+        run("variant<int,double,String> move Strings, same index x20M x2", 7, [] { return variant_move_same_index_strings(); });
+        run("variant<int,double,String> copy String<-int,<-String x2M x3", 7, [] { return variant_copy_index_changes(); });
+        run("variant<int,double,String> move String<-int,<-String x20M x3", 7, [] { return variant_move_index_changes(); });
         run("vector<variant> push_back 1M", 7, [] { return variant_vector_push(); });
     }
     if (want("text") || want("stream"))

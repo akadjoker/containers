@@ -19,29 +19,6 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
   `Fuzz2.StringSets` tambem o fixa.
 - Decisao: ou se mantem e se escreve no README que `pos` e exclusivo, ou se alinha com o std e se mudam os dois testes.
 
-### Variant: atribuir a partir de um membro do que o proprio Variant guarda
-
-- `include/ct/variant.hpp`, `operator=(const Variant &)` e `operator=(Variant &&)`.
-- Destroem a alternativa actual antes de copiar/mover a origem. Se a origem vive dentro da alternativa actual, e uso
-  depois de libertar. O caso natural e percorrer uma lista: com `struct No { Variant<int, Rc<No>> next; };`,
-  `cursor = cursor.get<Rc<No>>()->next;` e `cursor = ct::move(cursor.get<Rc<No>>()->next);` dao
-  heap-use-after-free sob ASan (e o segundo da lixo em Release).
-- O `std::variant` do libstdc++ 13 tem o mesmo uso depois de libertar quando o indice muda (confirmado com ASan numa
-  copia de `No` com `std::variant<int, std::shared_ptr<No>>`: o segundo passo da lista, de `shared_ptr` para `int`,
-  le o `int` de um no ja destruido). Quando o indice e o mesmo, o `std::variant` atribui a alternativa no sitio (o
-  `shared_ptr::operator=` e seguro) e por isso o primeiro passo passa; o `ct::Variant` destroi e reconstroi sempre, e
-  falha tambem esse. O `Json` e o `Xml`, que sao arvores, foram corrigidos nesta ronda. Atribuir a alternativa no sitio
-  quando o indice e o mesmo exigiria que todas as alternativas fossem atribuiveis (hoje basta copiar e destruir) e
-  muda as construcoes e destruicoes que um tipo com contadores observa (nao ha nenhum teste de `Variant` com
-  contadores que o dissesse); nao se experimentou.
-- Corrige-se copiando/movendo a origem para um Variant local antes de destruir, so quando a alternativa actual tem
-  destrutor (as triviais nao podem ser donas de nada). Foi escrito, testado (a lista acima, copia e move, mais um
-  `Unique<No>`) e medido com um grupo `variant` de `bench/bench_more.cpp`, 9 rondas a alternar, minimos: atribuir
-  escalares igual (15.0 ms contra 15.0), atribuir Strings por copia **+5% a +9%** (40.2 contra 43.8), atribuir por move
-  com Strings **+99%** (80.4 contra 160.2: o move passa a ser dois). Como o dono nao aceita nada mais lento, ficou de
-  fora. A correccao e pequena: um `replace_with(Variant &)` privado (destroi, constroi por move a partir do local) e uma
-  `VariantOps::trivially_destructible(idx)`.
-
 ### Json::operator== nao e reflexivo com NaN
 
 - `Json(NAN) == Json(NAN)` da falso e o `dump()` escreve `null`. Um documento com NaN nao e igual a si mesmo. E o que o

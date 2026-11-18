@@ -157,13 +157,17 @@ namespace ct
         bool read_ready(Connection &connection)
         {
             char buffer[8192];
-            long count = connection.stream.recv(buffer, sizeof(buffer));
-            if (count == 0) return false;
-            if (count < 0) return connection.stream.would_block();
-            HttpRequest request;
-            HttpParser::State state = connection.parser.feed(buffer, static_cast<std::size_t>(count), request);
-            if (state == HttpParser::Error) bad_request(connection);
-            else if (state == HttpParser::Done) prepare_response(connection, request);
+            for (std::size_t budget = 1024 * 1024; budget >= sizeof(buffer); budget -= sizeof(buffer))
+            {
+                long count = connection.stream.recv(buffer, sizeof(buffer));
+                if (count == 0) return false;
+                if (count < 0) return connection.stream.would_block();
+                HttpRequest request;
+                HttpParser::State state = connection.parser.feed(buffer, static_cast<std::size_t>(count), request);
+                if (state == HttpParser::Error) bad_request(connection);
+                else if (state == HttpParser::Done) prepare_response(connection, request);
+                if (state != HttpParser::NeedMore) break;
+            }
             return true;
         }
 

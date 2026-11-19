@@ -553,6 +553,22 @@ namespace ct
             return w;
         }
 
+        // O mesmo para um grupo completo de 8: o tamanho conhecido deixa o compilador fazer uma so carga (o memcpy de tamanho
+        // variavel de meta_group saia como uma sequencia de saltos, e o seu codigo mudava com as decisoes de inlining)
+        template <bool Tagged = false>
+        inline std::uint64_t meta_group8(const unsigned char *m) noexcept
+        {
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            std::uint64_t w;
+            std::memcpy(&w, m, 8);
+            if (Tagged)
+                w &= 0x8080808080808080ull;
+            return w;
+#else
+            return meta_group<Tagged>(m, 8);
+#endif
+        }
+
         // Iterador das tabelas de hash: le a meta 8 slots de cada vez e visita os ocupados pelos bits acesos da palavra,
         // por isso o custo por elemento nao depende de quantos buracos ha pelo meio (a 38 % de carga eram quatro
         // quintos dos ciclos). E o ocupado atual e o bit mais baixo que resta.
@@ -604,7 +620,7 @@ namespace ct
                 while (mg_ != mend_)
                 {
                     const std::size_t n = group_size();
-                    bits_ = meta_group<Tagged>(mg_, n);
+                    bits_ = n == 8 ? meta_group8<Tagged>(mg_) : meta_group<Tagged>(mg_, n);
                     if (bits_)
                         return;
                     mg_ += n;

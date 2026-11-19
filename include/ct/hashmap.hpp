@@ -177,7 +177,9 @@ namespace ct
     //   deslocamento movem elementos), excepto quando a entrada e grande (chave + valor acima de detail::kHashInlineMax, 128
     //   por omissao): ai o VALOR vive num bloco que nunca se move, e uma referencia ao valor sobrevive ao rehash e a insercoes
     //   (nao ao erase desse elemento, nem ao clear); a chave e a entrada (iteradores, Entry &) continuam a mover-se. Os
-    //   blocos dos valores apagados ficam no mapa para os proximos put; so o clear e o destrutor os devolvem ao alocador.
+    //   blocos dos valores apagados ficam no mapa para os proximos put (como a tabela, que tambem fica com a capacidade); so o
+    //   clear e o destrutor os devolvem ao alocador. Nota: num `const Entry &` a referencia `value` nao e const (o valor
+    //   esta noutro bloco); o que se le por um iterador de const HashMap pode ser alterado por esse caminho: nao o faca.
     // - A meta (um byte por slot) diz se o slot esta ocupado; para chaves que nao sao inteiros, enumeracoes nem ponteiros
     //   (strings, chaves compostas, entradas grandes) guarda tambem a distancia do elemento ao seu slot de origem (0x81 + dist, e
     //   0xFF para 126 ou mais), de modo que a sondagem so compara chaves onde a distancia bate (uma falha quase nunca
@@ -457,8 +459,6 @@ namespace ct
             meta_[i] = 0;
             --size_;
             CT_HASH_TOUCH();
-            if (kMode != 0 && size_ == 0)
-                slab().release_all(allocator()); // vazio: os blocos voltam ao alocador
         }
 
         void clear()
@@ -547,8 +547,6 @@ namespace ct
                 size_ -= removed;
                 CT_HASH_TOUCH();
                 rehash(mask_ + 1);
-                if (kMode != 0 && size_ == 0)
-                    slab().release_all(allocator());
             }
             return removed;
         }
@@ -573,11 +571,14 @@ namespace ct
 
         // Com o valor fora da tabela o endereco do valor e uma referencia lida do slot: o compilador nao sabe que nao e
         // nula e deixava um teste a mais em cada hit.
-        V *value_ptr(size_type i) const noexcept
+        V *value_ptr(size_type i) const noexcept { return value_ptr_impl(i, Mode()); }
+        V *value_ptr_impl(size_type i, detail::integral_constant<int, 0>) const noexcept { return &entry(i).value; }
+        V *value_ptr_impl(size_type i, detail::integral_constant<int, 2>) const noexcept { return &entry(i).value; }
+        V *value_ptr_impl(size_type i, detail::integral_constant<int, 1>) const noexcept
         {
-            V *p = &entry(i).value;
+            V *p = &slots_[i].value;
 #if defined(__GNUC__) || defined(__clang__)
-            if (kMode == 1 && !p)
+            if (!p)
                 __builtin_unreachable();
 #endif
             return p;

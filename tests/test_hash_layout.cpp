@@ -183,12 +183,11 @@ TEST(HashLayoutBig, BytesPerElementAreCloseToTheEntrySize)
             m.put(i, Big(static_cast<uint64_t>(i)));
         EXPECT_EQ(m.size(), 100000u);
         EXPECT_LT(CountingAlloc::live_bytes, before + before / 100) << "os blocos libertados foram reutilizados";
-        // quando o mapa fica vazio o slab volta ao alocador
+        // o clear devolve os blocos ao alocador (a tabela fica com a capacidade, como sempre)
         m.erase_if([](const int &, Big &) { return true; });
         EXPECT_EQ(m.size(), 0u);
-        EXPECT_LT(CountingAlloc::live_bytes, 20u * 1000 * 1000);
         m.clear();
-        EXPECT_LT(CountingAlloc::live_bytes, 20u * 1000 * 1000);
+        EXPECT_LT(CountingAlloc::live_bytes, 5u * 1000 * 1000); // so a tabela
     }
     EXPECT_EQ(CountingAlloc::live_bytes, 0u) << "tudo libertado";
 }

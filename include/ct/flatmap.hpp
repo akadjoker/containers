@@ -11,9 +11,12 @@ namespace ct
     class FlatMap : private L
     {
     public:
+        // O que os iteradores mostram: a chave e const (uma chave alterada por um iterador desordena o mapa). A memoria e a do
+        // Item que o vector guarda e desloca (mesmo tamanho, alinhamento e posicao dos membros: static_assert em baixo); o
+        // value de um `const Entry` e const por ser um membro directo.
         struct Entry
         {
-            K key;
+            const K key;
             V value;
         };
 
@@ -57,7 +60,7 @@ namespace ct
                 return entries_[i].value;
             }
             entries_.emplace(entries_.begin() + i,
-                             Entry{detail::forward<KK>(k), detail::forward<VV>(v)});
+                             Item{detail::forward<KK>(k), detail::forward<VV>(v)});
             return entries_[i].value;
         }
 
@@ -66,7 +69,7 @@ namespace ct
             size_type i = lower_bound(k);
             if (i < entries_.size() && equal(entries_[i].key, k))
                 return entries_[i].value;
-            entries_.emplace(entries_.begin() + i, Entry{k, V()});
+            entries_.emplace(entries_.begin() + i, Item{k, V()});
             return entries_[i].value;
         }
 
@@ -84,18 +87,28 @@ namespace ct
         void clear() { entries_.clear(); }
         void reserve(size_type n) { entries_.reserve(n); }
 
-        iterator begin() noexcept { return entries_.begin(); }
-        iterator end() noexcept { return entries_.end(); }
-        const_iterator begin() const noexcept { return entries_.begin(); }
-        const_iterator end() const noexcept { return entries_.end(); }
+        iterator begin() noexcept { return show(entries_.begin()); }
+        iterator end() noexcept { return show(entries_.end()); }
+        const_iterator begin() const noexcept { return show(entries_.begin()); }
+        const_iterator end() const noexcept { return show(entries_.end()); }
 
         iterator lower_bound_it(const K &k) noexcept
         {
-            return entries_.begin() + lower_bound(k);
+            return show(entries_.begin() + lower_bound(k));
         }
 
     private:
-        Vector<Entry> entries_;
+        // O que o vector guarda e desloca (a chave nao e const para poder mover-se)
+        struct Item
+        {
+            K key;
+            V value;
+        };
+        static_assert(sizeof(Entry) == sizeof(Item) && alignof(Entry) == alignof(Item), "ct::FlatMap: a vista tem de ter o layout do item");
+        static Entry *show(Item *p) noexcept { return reinterpret_cast<Entry *>(p); }
+        static const Entry *show(const Item *p) noexcept { return reinterpret_cast<const Entry *>(p); }
+
+        Vector<Item> entries_;
 
         bool less(const K &a, const K &b) const
         {

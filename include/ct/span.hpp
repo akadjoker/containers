@@ -102,8 +102,9 @@ namespace ct
         {
             if (CT_UNLIKELY(offset > size_))
                 detail::fatal("ct::Span::subspan: offset fora dos limites");
+            // uma so verificacao (offset <= size_); data_ + 0 e valido mesmo com data_ nulo, por isso sem ramo para o offset 0
             const size_type resto = size_ - offset;
-            return Span(offset ? data_ + offset : data_, n < resto ? n : resto);
+            return Span(data_ + offset, n < resto ? n : resto);
         }
 
     private:

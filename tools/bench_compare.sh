@@ -7,6 +7,7 @@
 #   tools/bench_compare.sh ir         instrucoes por operacao com callgrind (so se houver valgrind; ficheiro $OUT/ir.tsv)
 #   tools/bench_compare.sh layout     tamanho do contentor vazio, fator de carga, bytes por elemento, crescimento
 #   tools/bench_compare.sh compile    tempo e memoria do compilador e tamanho do objeto, por biblioteca
+#   tools/bench_compare.sh regex      ct::Regex contra std::regex e RE2 (tempo de CPU, ficheiro $OUT/regex.txt; RE2 so se houver <re2/re2.h>)
 #   tools/bench_compare.sh tables     junta os ficheiros em tabelas markdown ($OUT/tables.md)
 #   tools/bench_compare.sh all        build time ir layout compile tables
 #
@@ -69,6 +70,8 @@ compare_libs() {
         f=$(ls /usr/lib/x86_64-linux-gnu/libabsl_$l.so.* 2>/dev/null | head -1)
         [ -n "$f" ] && libs="$libs;$f"
     done
+    f=$(ls /usr/lib/x86_64-linux-gnu/libre2.so.* 2>/dev/null | head -1)
+    [ -n "$f" ] && libs="$libs;$f"
     echo "$libs"
 }
 
@@ -284,10 +287,14 @@ stage_compile() {
     echo "$OUT/compile.tsv"
 }
 
+stage_regex() {
+    cap "$BUILD/cmp_regex" >"$OUT/regex.txt" 2>>"$OUT/errors.log" && echo "$OUT/regex.txt"
+}
+
 stage_tables() { python3 -I "$ROOT/tools/bench_tables.py" "$OUT" >"$OUT/tables.md" && echo "$OUT/tables.md"; }
 
 stages=${*:-all}
-[ "$stages" = all ] && stages="build time ir layout compile tables"
+[ "$stages" = all ] && stages="build time ir layout compile regex tables"
 for s in $stages; do
     case $s in
     fetch) stage_fetch ;;
@@ -296,6 +303,7 @@ for s in $stages; do
     ir) stage_ir ;;
     layout) stage_layout ;;
     compile) stage_compile ;;
+    regex) stage_regex ;;
     tables) stage_tables ;;
     *) echo "etapa desconhecida: $s" >&2; exit 2 ;;
     esac

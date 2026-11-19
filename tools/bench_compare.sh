@@ -93,26 +93,28 @@ matrix() {
     case $fam in
     vector)
         for t in int p16 mo b256; do
-            local ns=$NS
-            [ "$t" = b256 ] && { ns="1000 100000"; [ "$QUICK" = 1 ] || ns="1000 100000 1000000"; }
-            for s in build build_reserved emplace iterate index copy move clear resize insert_mid erase_front; do
-                for n in $ns; do
-                    # de 1e6 para cima so os cenarios que contam (insert/erase no meio sao O(N) por operacao e medem a memoria)
-                    if [ "$n" -ge 1000000 ]; then case $s in build | build_reserved | iterate | copy) ;; *) continue ;; esac; fi
-                    for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done
-                done
+            local ns="1000 100000" big="10000000"
+            [ "$QUICK" = 1 ] && big=""
+            [ "$t" = b256 ] && big="1000000"
+            [ "$t" = b256 ] && [ "$QUICK" = 1 ] && big=""
+            for s in build build_reserved iterate index copy move clear insert_mid; do
+                for n in $ns; do for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done; done
+            done
+            # de 1e6 para cima so os cenarios que contam (insert no meio e O(N) por operacao e mede a memoria)
+            for s in build build_reserved iterate copy; do
+                for n in $big; do for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done; done
             done
         done ;;
     map)
         for t in int-int int-p16 int-mo int-b256 s8-int s20-int s40-int; do
-            local ns=$NS
-            case $t in int-b256) ns="1000 100000" ;; s*) ns="1000 100000"; [ "$QUICK" = 1 ] || ns="1000 100000 1000000" ;; esac
-            for s in build build_reserved hit miss erase iterate copy move clear churn; do
-                for n in $ns; do
-                    # de 1e6 para cima so os cenarios que importam; o resto fica em 1e5 e 1e3
-                    if [ "$n" -ge 1000000 ]; then case $s in build | hit | erase) ;; *) continue ;; esac; fi
-                    for i in $MAP_IMPLS; do echo "cmp_map $i $s $t $n"; done
-                done
+            local ns="1000 100000" big=""
+            case $t in int-int) big="10000000" ;; int-p16 | int-mo | s8-int | s40-int) big="1000000" ;; esac
+            [ "$QUICK" = 1 ] && big=""
+            for s in build hit miss erase iterate copy churn; do
+                for n in $ns; do for i in $MAP_IMPLS; do echo "cmp_map $i $s $t $n"; done; done
+            done
+            for s in build hit erase; do
+                for n in $big; do for i in $MAP_IMPLS; do echo "cmp_map $i $s $t $n"; done; done
             done
         done ;;
     string)
@@ -145,19 +147,21 @@ matrix() {
         done ;;
     misc)
         for t in int p16 b256; do
-            for n in 1000 100000 1000000; do
+            for n in 1000 100000; do
                 for i in ct std boost; do for s in push_back push_front iterate index drain fifo; do echo "cmp_misc deque $i $s $t $n"; done; done
             done
         done
+        for i in ct std boost; do for s in push_back push_front iterate drain fifo; do echo "cmp_misc deque $i $s int 1000000"; done; done
         for t in int s20; do
             for n in 1000 100000 1000000; do
+                [ "$n" = 1000000 ] && [ "$t" = s20 ] && continue
                 for i in ctree cflat stdmap btree bflat; do
                     [ "$n" = 1000000 ] && { [ "$i" = cflat ] || [ "$i" = bflat ]; } && continue
                     for s in build hit miss erase iterate; do echo "cmp_misc ordered $i $s $t $n"; done
                 done
             done
         done
-        for n in 1000 100000 1000000; do for i in ct std; do echo "cmp_misc pq $i pushpop int $n"; for s in construct_small construct_big call copy; do echo "cmp_misc function $i $s x $n"; done; done; done ;;
+        for n in 1000 100000; do for i in ct std; do echo "cmp_misc pq $i pushpop int $n"; for s in construct_small construct_big call copy; do echo "cmp_misc function $i $s x $n"; done; done; done ;;
     esac
 }
 

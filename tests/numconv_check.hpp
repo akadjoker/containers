@@ -6,11 +6,55 @@
 
 #include <ct/numconv.hpp>
 
+#include <locale.h>
 #include <math.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+
+namespace numconv_check
+{
+    // O oracle (printf e strtod do sistema) corre sempre no locale "C", mesmo quando o programa pos outro (para ver que a
+    // ct nao depende dele): g_c_locale e o locale "C" criado por quem quiser esse teste, e cada chamada ao oracle passa por
+    // aqui.
+    inline locale_t &c_locale()
+    {
+        static locale_t l = nullptr;
+        return l;
+    }
+    struct OracleScope
+    {
+        locale_t prev;
+        OracleScope() : prev(c_locale() ? uselocale(c_locale()) : nullptr) {}
+        ~OracleScope()
+        {
+            if (c_locale())
+                uselocale(prev);
+        }
+    };
+    inline int os_snprintf(char *buf, size_t n, const char *fmt, ...)
+    {
+        OracleScope scope;
+        va_list args;
+        va_start(args, fmt);
+        const int r = vsnprintf(buf, n, fmt, args);
+        va_end(args);
+        return r;
+    }
+    inline double os_strtod(const char *s, char **end)
+    {
+        OracleScope scope;
+        return strtod(s, end);
+    }
+    inline float os_strtof(const char *s, char **end)
+    {
+        OracleScope scope;
+        return strtof(s, end);
+    }
+}
 
 namespace numconv_check
 {
@@ -103,7 +147,7 @@ namespace numconv_check
         {
             if (strcmp(buf, "nan"))
             {
-                snprintf(msg, msg_size, "nan escreveu %s", buf);
+                os_snprintf(msg, msg_size, "nan escreveu %s", buf);
                 return false;
             }
             return true;
@@ -112,16 +156,16 @@ namespace numconv_check
         {
             if (strcmp(buf, v > 0 ? "inf" : "-inf"))
             {
-                snprintf(msg, msg_size, "inf escreveu %s", buf);
+                os_snprintf(msg, msg_size, "inf escreveu %s", buf);
                 return false;
             }
             return true;
         }
         char *end;
-        const double back = strtod(buf, &end);
+        const double back = os_strtod(buf, &end);
         if (*end || bits_of(back) != bits_of(v))
         {
-            snprintf(msg, msg_size, "%016llx escreveu %s que le %016llx", (unsigned long long)bits_of(v), buf,
+            os_snprintf(msg, msg_size, "%016llx escreveu %s que le %016llx", (unsigned long long)bits_of(v), buf,
                      (unsigned long long)bits_of(back));
             return false;
         }
@@ -129,7 +173,7 @@ namespace numconv_check
         char t[64];
         if (n > 1)
         {
-            snprintf(t, sizeof t, "%.*e", n - 2, v);
+            os_snprintf(t, sizeof t, "%.*e", n - 2, v);
             bool neg;
             unsigned long long D;
             int E;
@@ -139,16 +183,16 @@ namespace numconv_check
                 if (D + static_cast<unsigned long long>(d) == 0)
                     continue;
                 char u[64];
-                snprintf(u, sizeof u, "%s%llue%d", neg ? "-" : "", D + static_cast<unsigned long long>(d), E - (n - 2));
-                if (bits_of(strtod(u, nullptr)) == bits_of(v))
+                os_snprintf(u, sizeof u, "%s%llue%d", neg ? "-" : "", D + static_cast<unsigned long long>(d), E - (n - 2));
+                if (bits_of(os_strtod(u, nullptr)) == bits_of(v))
                 {
-                    snprintf(msg, msg_size, "%016llx escreveu %s (%d algarismos) mas %s tambem volta", (unsigned long long)bits_of(v), buf, n, u);
+                    os_snprintf(msg, msg_size, "%016llx escreveu %s (%d algarismos) mas %s tambem volta", (unsigned long long)bits_of(v), buf, n, u);
                     return false;
                 }
             }
         }
-        snprintf(t, sizeof t, "%.*e", n - 1, v);
-        if (bits_of(strtod(t, nullptr)) == bits_of(v))
+        os_snprintf(t, sizeof t, "%.*e", n - 1, v);
+        if (bits_of(os_strtod(t, nullptr)) == bits_of(v))
         {
             char a[64], b[64];
             int na = 0, nb = 0;
@@ -169,7 +213,7 @@ namespace numconv_check
                 --eb;
             if (ea - sa != eb || memcmp(a + sa, b, static_cast<size_t>(eb)))
             {
-                snprintf(msg, msg_size, "%016llx escreveu %s mas o mais proximo e %s", (unsigned long long)bits_of(v), buf, t);
+                os_snprintf(msg, msg_size, "%016llx escreveu %s mas o mais proximo e %s", (unsigned long long)bits_of(v), buf, t);
                 return false;
             }
         }
@@ -183,17 +227,17 @@ namespace numconv_check
         if (v != v || v - v != 0)
             return true;
         char *end;
-        const float back = strtof(buf, &end);
+        const float back = os_strtof(buf, &end);
         if (*end || bits_of(back) != bits_of(v))
         {
-            snprintf(msg, msg_size, "float %08x escreveu %s que le %08x", bits_of(v), buf, bits_of(back));
+            os_snprintf(msg, msg_size, "float %08x escreveu %s que le %08x", bits_of(v), buf, bits_of(back));
             return false;
         }
         const int n = significant_digits(buf);
         if (n > 1)
         {
             char t[64];
-            snprintf(t, sizeof t, "%.*e", n - 2, static_cast<double>(v));
+            os_snprintf(t, sizeof t, "%.*e", n - 2, static_cast<double>(v));
             bool neg;
             unsigned long long D;
             int E;
@@ -203,10 +247,10 @@ namespace numconv_check
                 if (D + static_cast<unsigned long long>(d) == 0)
                     continue;
                 char u[64];
-                snprintf(u, sizeof u, "%s%llue%d", neg ? "-" : "", D + static_cast<unsigned long long>(d), E - (n - 2));
-                if (bits_of(strtof(u, nullptr)) == bits_of(v))
+                os_snprintf(u, sizeof u, "%s%llue%d", neg ? "-" : "", D + static_cast<unsigned long long>(d), E - (n - 2));
+                if (bits_of(os_strtof(u, nullptr)) == bits_of(v))
                 {
-                    snprintf(msg, msg_size, "float %08x escreveu %s (%d algarismos) mas %s tambem volta", bits_of(v), buf, n, u);
+                    os_snprintf(msg, msg_size, "float %08x escreveu %s (%d algarismos) mas %s tambem volta", bits_of(v), buf, n, u);
                     return false;
                 }
             }
@@ -224,10 +268,10 @@ namespace numconv_check
         if (!e)
             return true;
         *e = 0;
-        snprintf(b, sizeof b, "%.*g", p, v);
+        os_snprintf(b, sizeof b, "%.*g", p, v);
         if (strcmp(a, b))
         {
-            snprintf(msg, msg_size, "%%.%dg de %016llx: escreveu %s, o printf %s", p, (unsigned long long)bits_of(v), a, b);
+            os_snprintf(msg, msg_size, "%%.%dg de %016llx: escreveu %s, o printf %s", p, (unsigned long long)bits_of(v), a, b);
             return false;
         }
         return true;
@@ -238,31 +282,60 @@ namespace numconv_check
     {
         const size_t len = strlen(s);
         char *end1;
-        const double d1 = strtod(s, &end1);
+        const double d1 = os_strtod(s, &end1);
         double d2;
         const char *e2 = ct::parse_double(s, s + len, d2);
         char *end3;
-        const float f1 = strtof(s, &end3);
+        float f1 = os_strtof(s, &end3);
+        // O strtof da glibc arredonda mal alguns hexadecimais subnormais (0x1.8b9ff5p-128 da ...fe, o certo e ...ff):
+        // com ate 13 algarismos hexadecimais (52 bits) o strtod e exacto e o corte para float e um so arredondamento.
+        {
+            const char *h = s;
+            if (*h == '-' || *h == '+')
+                ++h;
+            if (h[0] == '0' && (h[1] == 'x' || h[1] == 'X') && d1 - d1 == 0)
+            {
+                int hex_digits = 0;
+                bool leading = true;
+                for (const char *q = h + 2; (*q >= '0' && *q <= '9') || (*q >= 'a' && *q <= 'f') || (*q >= 'A' && *q <= 'F') || *q == '.'; ++q)
+                {
+                    if (*q == '.')
+                        continue;
+                    if (leading && *q == '0')
+                        continue;
+                    leading = false;
+                    ++hex_digits;
+                }
+                if (hex_digits <= 13)
+                {
+                    const double a = d1 < 0 ? -d1 : d1;
+                    if (a >= 3.4028235677973366e38)
+                        f1 = d1 < 0 ? -float_of(0x7F800000u) : float_of(0x7F800000u);
+                    else
+                        f1 = static_cast<float>(d1);
+                }
+            }
+        }
         float f2;
         const char *e3 = ct::parse_float(s, s + len, f2);
         if (bits_of(d1) != bits_of(d2) && !(d1 != d1 && d2 != d2))
         {
-            snprintf(msg, msg_size, "double '%.200s': strtod %016llx, ct %016llx", s, (unsigned long long)bits_of(d1), (unsigned long long)bits_of(d2));
+            os_snprintf(msg, msg_size, "double '%.200s': strtod %016llx, ct %016llx", s, (unsigned long long)bits_of(d1), (unsigned long long)bits_of(d2));
             return false;
         }
         if (end1 - s != e2 - s)
         {
-            snprintf(msg, msg_size, "double '%.200s': strtod parou em %ld, ct em %ld", s, (long)(end1 - s), (long)(e2 - s));
+            os_snprintf(msg, msg_size, "double '%.200s': strtod parou em %ld, ct em %ld", s, (long)(end1 - s), (long)(e2 - s));
             return false;
         }
         if (bits_of(f1) != bits_of(f2) && !(f1 != f1 && f2 != f2))
         {
-            snprintf(msg, msg_size, "float '%.200s': strtof %08x, ct %08x", s, bits_of(f1), bits_of(f2));
+            os_snprintf(msg, msg_size, "float '%.200s': strtof %08x, ct %08x", s, bits_of(f1), bits_of(f2));
             return false;
         }
         if (end3 - s != e3 - s)
         {
-            snprintf(msg, msg_size, "float '%.200s': strtof parou em %ld, ct em %ld", s, (long)(end3 - s), (long)(e3 - s));
+            os_snprintf(msg, msg_size, "float '%.200s': strtof parou em %ld, ct em %ld", s, (long)(end3 - s), (long)(e3 - s));
             return false;
         }
         // o caminho exacto sozinho (so para texto decimal)
@@ -315,13 +388,13 @@ namespace numconv_check
             const uint64_t bd = ct::detail::slow_real<ct::detail::DoubleTraits>(mb, me, ex, neg);
             if (bd != bits_of(d1))
             {
-                snprintf(msg, msg_size, "caminho exacto double '%.200s': strtod %016llx, ct %016llx", s, (unsigned long long)bits_of(d1), (unsigned long long)bd);
+                os_snprintf(msg, msg_size, "caminho exacto double '%.200s': strtod %016llx, ct %016llx", s, (unsigned long long)bits_of(d1), (unsigned long long)bd);
                 return false;
             }
             const uint64_t bf = ct::detail::slow_real<ct::detail::FloatTraits>(mb, me, ex, neg);
             if (static_cast<uint32_t>(bf) != bits_of(f1))
             {
-                snprintf(msg, msg_size, "caminho exacto float '%.200s': strtof %08x, ct %08x", s, bits_of(f1), static_cast<unsigned>(bf));
+                os_snprintf(msg, msg_size, "caminho exacto float '%.200s': strtof %08x, ct %08x", s, bits_of(f1), static_cast<unsigned>(bf));
                 return false;
             }
         }
@@ -409,19 +482,19 @@ namespace numconv_check
         char buf[1400];
         if (v - v == 0)
         {
-            snprintf(buf, sizeof buf, "%.17g", v);
+            os_snprintf(buf, sizeof buf, "%.17g", v);
             if (!check_parse(buf, msg, msg_size))
                 return false;
-            snprintf(buf, sizeof buf, "%.*g", p, v);
+            os_snprintf(buf, sizeof buf, "%.*g", p, v);
             if (!check_parse(buf, msg, msg_size))
                 return false;
-            snprintf(buf, sizeof buf, "%.*e", static_cast<int>(r.below(25)), v);
+            os_snprintf(buf, sizeof buf, "%.*e", static_cast<int>(r.below(25)), v);
             if (!check_parse(buf, msg, msg_size))
                 return false;
-            snprintf(buf, sizeof buf, "%a", v);
+            os_snprintf(buf, sizeof buf, "%a", v);
             if (!check_parse(buf, msg, msg_size))
                 return false;
-            snprintf(buf, sizeof buf, "%.*a", static_cast<int>(r.below(20)), v);
+            os_snprintf(buf, sizeof buf, "%.*a", static_cast<int>(r.below(20)), v);
             if (!check_parse(buf, msg, msg_size))
                 return false;
         }
@@ -476,7 +549,7 @@ namespace numconv_check
             return true;
         char buf[1400];
         const long double mid = (static_cast<long double>(v) + static_cast<long double>(w)) / 2;
-        snprintf(buf, sizeof buf, "%.*Le", 780, mid);
+        os_snprintf(buf, sizeof buf, "%.*Le", 780, mid);
         if (!check_parse(buf, msg, msg_size))
             return false;
         char *e = strchr(buf, 'e');
@@ -497,7 +570,7 @@ namespace numconv_check
         if (fw - fw != 0)
             return true;
         const long double fm = (static_cast<long double>(fv) + static_cast<long double>(fw)) / 2;
-        snprintf(buf, sizeof buf, "%.*Le", 200, fm);
+        os_snprintf(buf, sizeof buf, "%.*Le", 200, fm);
         return check_parse(buf, msg, msg_size);
     }
 } // namespace numconv_check

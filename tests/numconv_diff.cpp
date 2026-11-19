@@ -44,8 +44,13 @@ int main(int argc, char **argv)
         return float_all(argc > 2 ? strtoull(argv[2], nullptr, 10) : 1, argc > 3 ? strtoull(argv[3], nullptr, 10) : 0);
     const long n = argc > 1 ? atol(argv[1]) : 1000000;
     Rng r(argc > 2 ? strtoull(argv[2], nullptr, 10) : 1);
-    if (argc > 3 && !setlocale(LC_ALL, argv[3]))
-        printf("locale %s nao existe: fica o \"C\"\n", argv[3]);
+    if (argc > 3)
+    {
+        if (!setlocale(LC_ALL, argv[3]))
+            printf("locale %s nao existe: fica o \"C\"\n", argv[3]);
+        else
+            c_locale() = newlocale(LC_ALL_MASK, "C", nullptr);
+    }
     char msg[512];
     // potencias de 2 e de 10 e as vizinhas
     for (int e = -1074; e <= 1023; ++e)
@@ -66,8 +71,8 @@ int main(int argc, char **argv)
     for (int e = -323; e <= 308; ++e)
     {
         char b[32];
-        snprintf(b, sizeof b, "1e%d", e);
-        const double u = strtod(b, nullptr);
+        os_snprintf(b, sizeof b, "1e%d", e);
+        const double u = os_strtod(b, nullptr);
         for (int d = -2; d <= 2; ++d)
         {
             double w = u;
@@ -78,7 +83,7 @@ int main(int argc, char **argv)
             for (int p = 1; p <= 17; ++p)
                 if (!check_general(w, p, msg, sizeof msg))
                     report(msg);
-            snprintf(b, sizeof b, "%.17g", w);
+            os_snprintf(b, sizeof b, "%.17g", w);
             if (!check_parse(b, msg, sizeof msg))
                 report(msg);
         }

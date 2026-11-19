@@ -246,24 +246,30 @@ namespace
 
     // O que o utilizador via nao muda de tamanho: a entrada e o mapa (x86-64 LP64; os numeros sao os de antes da correccao)
 #if defined(__LP64__)
+// o CT_DEBUG_ITERATORS=1 junta a versao da tabela aos mapas e conjuntos (ver abi_shared.hpp): o tamanho do contentor so se fixa sem ele
+#if defined(CT_DEBUG_ITERATORS)
+#define CT_SIZE_NODBG(S, A, ...)
+#else
+#define CT_SIZE_NODBG(S, A, ...) CT_SIZE(S, A, __VA_ARGS__)
+#endif
 #define CT_SIZE(S, A, ...) \
     static_assert(sizeof(__VA_ARGS__) == (S) && alignof(__VA_ARGS__) == (A), "o tamanho ou o alinhamento de " #__VA_ARGS__ " mudou")
-    CT_SIZE(32, 8, ct::HashMap<int, int>);
+    CT_SIZE_NODBG(32, 8, ct::HashMap<int, int>);
     CT_SIZE(8, 4, ct::HashMap<int, int>::Entry);
-    CT_SIZE(32, 8, ct::HashMap<ct::String, int>);
+    CT_SIZE_NODBG(32, 8, ct::HashMap<ct::String, int>);
     CT_SIZE(32, 8, ct::HashMap<ct::String, int>::Entry);
-    CT_SIZE(80, 8, ct::HashMap<int, Big>);
+    CT_SIZE_NODBG(80, 8, ct::HashMap<int, Big>);
     CT_SIZE(16, 8, ct::HashMap<int, Big>::Entry);
-    CT_SIZE(80, 8, ct::HashMap<ct::String, Big>);
+    CT_SIZE_NODBG(80, 8, ct::HashMap<ct::String, Big>);
     CT_SIZE(32, 8, ct::HashMap<ct::String, Big>::Entry);
-    CT_SIZE(80, 8, ct::HashMap<Key64, Big>);
+    CT_SIZE_NODBG(80, 8, ct::HashMap<Key64, Big>);
     CT_SIZE(320, 4, ct::HashMap<Key64, Big>::Entry);
-    CT_SIZE(32, 8, ct::HashSet<int>);
-    CT_SIZE(32, 8, ct::HashSet<ct::String>);
-    CT_SIZE(80, 8, ct::BTreeMap<int, int>);
+    CT_SIZE_NODBG(32, 8, ct::HashSet<int>);
+    CT_SIZE_NODBG(32, 8, ct::HashSet<ct::String>);
+    CT_SIZE_NODBG(80, 8, ct::BTreeMap<int, int>);
     CT_SIZE(8, 4, ct::BTreeMap<int, int>::Entry);
     CT_SIZE(280, 8, ct::BTreeMap<ct::String, Big>::Entry);
-    CT_SIZE(80, 8, ct::BTreeSet<int>);
+    CT_SIZE_NODBG(80, 8, ct::BTreeSet<int>);
     CT_SIZE(112, 8, ct::TreeMap<int, int>);
     CT_SIZE(40, 8, ct::TreeMap<int, int>::Entry);
     CT_SIZE(312, 8, ct::TreeMap<ct::String, Big>::Entry);
@@ -271,6 +277,7 @@ namespace
     CT_SIZE(8, 4, ct::FlatMap<int, int>::Entry);
     CT_SIZE(280, 8, ct::FlatMap<ct::String, Big>::Entry);
 #undef CT_SIZE
+#undef CT_SIZE_NODBG
 #endif
 
     // ---- uma passagem real por cada disposicao: o que se le por const e o que se escreveu, e o que se escreve por um

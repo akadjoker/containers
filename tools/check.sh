@@ -14,6 +14,7 @@
 #   release  testes em Release
 #   abi      uma unidade com NDEBUG e outra com -UNDEBUG usam os mesmos tipos (sizeof, alinhamento, posicao dos membros) e trocam objectos;
 #            duas unidades que discordam do CT_DEBUG_ITERATORS tem de FALHAR na ligacao (tests/abi_*.cpp)
+#   constfail  escrever por um caminho const num mapa (valor, chave) tem de falhar a compilacao, por causa do const (tests/const_fail.cpp)
 #   asan     testes com ASan + UBSan (UBSan fatal, float-cast-overflow incluido) e o ct_torture
 #   tsan     os testes que usam threads com TSan (precisa de `setarch -R` neste kernel)
 #   parse    fuzz de mutacao dos parsers (Json, Xml, Ini, Soup, Http, Regex, JsRegex, Unicode) com ASan + UBSan
@@ -55,7 +56,7 @@ for arg in "$@"; do
 done
 UPDATE_NOSTD=${UPDATE_NOSTD:-0}
 if [ -z "$STAGES" ]; then
-    if [ "$UPDATE_NOSTD" = 1 ]; then STAGES="nostd"; else STAGES="nostd headers release abi asan tsan parse"; fi
+    if [ "$UPDATE_NOSTD" = 1 ]; then STAGES="nostd"; else STAGES="nostd headers release abi constfail asan tsan parse"; fi
 fi
 
 mkdir -p "$LOGS"
@@ -210,6 +211,33 @@ stage_abi() {
     fi
 }
 
+stage_constfail() {
+    d=$DIR/release
+    t0=$(now)
+    if ! { configure "$d" Release "" "" &&
+        cmake --build "$d" --target ct_const_fail_control -j"$JOBS" &&
+        "$d/ct_const_fail_control"; } >"$LOGS/constfail-build.log" 2>&1; then
+        record constfail FAIL "o controlo (so o que e valido) nao compilou ou nao correu, ver $LOGS/constfail-build.log"
+        return
+    fi
+    n=0
+    bad=""
+    for i in $(sed -n -E 's/^#(el)?if CT_CASE == ([0-9]+).*/\2/p' "$ROOT/tests/const_fail.cpp"); do
+        n=$((n + 1))
+        if LC_ALL=C cmake --build "$d" --target ct_const_fail_"$i" >"$LOGS/constfail-$i.log" 2>&1; then
+            bad="$bad $i(compilou)"
+        elif ! grep -qE "error:.*(const|read-only)|(const|read-only).*error:" "$LOGS/constfail-$i.log" &&
+            ! grep -qE "(discards qualifiers|read-only|const-qualified|drops 'const')" "$LOGS/constfail-$i.log"; then
+            bad="$bad $i(falhou, mas nao por causa do const)"
+        fi
+    done
+    if [ -n "$bad" ]; then
+        record constfail FAIL "casos de escrita const que nao falham como devem:$bad (logs em $LOGS/constfail-*.log)"
+    else
+        record constfail PASS "$n escritas por um caminho const ou numa chave recusadas pelo compilador ($(($(now) - t0))s)"
+    fi
+}
+
 sanitizer_filter() {
     if [ "$QUICK" = 1 ]; then
         make_filter '*' "$(network_exclusion)" 'JsRegex*' 'Unicode*'
@@ -290,6 +318,7 @@ for s in $STAGES; do
     headers) stage_headers ;;
     release) stage_release ;;
     abi) stage_abi ;;
+    constfail) stage_constfail ;;
     asan) stage_asan ;;
     tsan) stage_tsan ;;
     parse) stage_parse ;;

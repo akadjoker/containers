@@ -141,6 +141,7 @@ add_executable(ct_tests
   tests/test_pq_hole.cpp
   tests/test_hash_iter.cpp
   tests/test_hash_layout.cpp
+  tests/test_const_access.cpp
   tests/test_btree.cpp
   tests/test_sort_blocks.cpp
   tests/test_parser_numbers.cpp)
@@ -168,6 +169,22 @@ if(NOT MSVC)
              COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ct_abi_mixed_link_fail)
     set_tests_properties(ct_abi_mixed_debug_iterators_fails_to_link PROPERTIES WILL_FAIL TRUE)
   endif()
+
+  # Escrever por um caminho const num mapa (ou alterar uma chave por um iterador) tem de FALHAR a compilacao: cada caso de
+  # tests/const_fail.cpp e um executavel que nao compila (WILL_FAIL); o controlo (CT_CASE=0, so o que e valido) compila e corre,
+  # por isso uma falha de um caso e da escrita. Os numeros dos casos sao os do cabecalho do ficheiro.
+  add_executable(ct_const_fail_control tests/const_fail.cpp)
+  target_link_libraries(ct_const_fail_control PRIVATE ct)
+  target_compile_definitions(ct_const_fail_control PRIVATE CT_CASE=0)
+  add_test(NAME ct_const_fail_control COMMAND ct_const_fail_control)
+  foreach(n RANGE 1 11)
+    add_executable(ct_const_fail_${n} EXCLUDE_FROM_ALL tests/const_fail.cpp)
+    target_link_libraries(ct_const_fail_${n} PRIVATE ct)
+    target_compile_definitions(ct_const_fail_${n} PRIVATE CT_CASE=${n})
+    add_test(NAME ct_const_fail_${n}_does_not_compile
+             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ct_const_fail_${n})
+    set_tests_properties(ct_const_fail_${n}_does_not_compile PROPERTIES WILL_FAIL TRUE RESOURCE_LOCK ct_const_fail_build)
+  endforeach()
 endif()
 
 set(CT_PUBLIC_HEADERS

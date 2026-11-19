@@ -3,6 +3,7 @@
 #pragma once
 
 #include <chrono>
+#include <ctime>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -136,8 +137,17 @@ namespace cmp
         std::uint64_t check;
     };
 
+    // Com CMP_CPUTIME=1 o tempo e o de CPU do processo (CLOCK_PROCESS_CPUTIME_ID) em vez do relogio: numa maquina partilhada e
+    // carregada o relogio mede quem mais estava a correr, o tempo de CPU so o que o processo gastou.
     inline double now_ns()
     {
+        static const bool cpu = std::getenv("CMP_CPUTIME") != nullptr;
+        if (cpu)
+        {
+            timespec ts;
+            clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &ts);
+            return static_cast<double>(ts.tv_sec) * 1e9 + static_cast<double>(ts.tv_nsec);
+        }
         return std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 

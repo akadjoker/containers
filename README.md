@@ -57,7 +57,7 @@ itself (GoogleTest is fetched only to build the test suite).
 
 | Header | Type(s) | What it is |
 |---|---|---|
-| [vector.hpp](include/ct/vector.hpp) | `Vector` | Dynamic array, `std::vector` replacement |
+| [vector.hpp](include/ct/vector.hpp) | `Vector` | Dynamic array, `std::vector` replacement. `resize_for_overwrite(n)` and `append_uninitialized(n)` grow without filling trivial elements |
 | [deque.hpp](include/ct/deque.hpp) | `Deque` | Power-of-two ring-buffer double-ended queue |
 | [stack.hpp](include/ct/stack.hpp) | `Stack` | LIFO adaptor over `Vector` |
 | [queue.hpp](include/ct/queue.hpp) | `Queue` | FIFO adaptor over `Deque` |
@@ -65,13 +65,14 @@ itself (GoogleTest is fetched only to build the test suite).
 | [string.hpp](include/ct/string.hpp) | `String` | Small-string-optimized string, `std::string` replacement |
 | [span.hpp](include/ct/span.hpp) | `Span`, `StringView` | Non-owning views over contiguous data |
 | [array.hpp](include/ct/array.hpp) | `Array` | Fixed-size array, `std::array` replacement |
+| [numconv.hpp](include/ct/numconv.hpp) | `write_shortest`, `parse_double`, `parse_float` | Shortest round-trip text of `double`/`float` (Schubfach) and correctly rounded text to number (Eisel-Lemire with an exact slow path, hex and inf/nan included); no locale, no `<charconv>`. `String::number_shortest`, `String::to_double`, `String::to_int(int &)` (checked) build on it; `String::to_int()` saturates at `INT_MIN`/`INT_MAX` |
 | [arena.hpp](include/ct/arena.hpp) | `BasicArena` | Bump allocator for fixed-lifetime allocations |
 | [pool.hpp](include/ct/pool.hpp) | `Pool` | Fixed-size slot allocator with a free list |
 | [slotmap.hpp](include/ct/slotmap.hpp) | `SlotMap` | Stable-index container with generation-checked handles |
 | [slotmap32.hpp](include/ct/slotmap32.hpp) | `SlotMap32` | Same as `SlotMap` with a 4-byte handle: 20-bit index (about one million slots), 12-bit generation (a stale handle can alias after 2048 reuses of one slot) |
 | [flatmap.hpp](include/ct/flatmap.hpp) | `FlatMap` | Sorted-vector associative container |
-| [hashmap.hpp](include/ct/hashmap.hpp) | `HashMap` | Open-addressing hash map |
-| [hashset.hpp](include/ct/hashset.hpp) | `HashSet` | Open-addressing hash set |
+| [hashmap.hpp](include/ct/hashmap.hpp) | `HashMap` | Open-addressing hash map. Erasing or inserting while iterating is invalid: use `erase_if(pred)`; a debug build (`CT_DEBUG_ITERATORS`, on when `NDEBUG` is not defined) aborts if an iterator is used after the table changed. Entries over 128 bytes live outside the table |
+| [hashset.hpp](include/ct/hashset.hpp) | `HashSet` | Open-addressing hash set (same iteration rule and `erase_if`) |
 | [treemap.hpp](include/ct/treemap.hpp) | `TreeMap` | Ordered associative container |
 | [function.hpp](include/ct/function.hpp) | `Function` | Type-erased callable, `std::function` replacement |
 | [variant.hpp](include/ct/variant.hpp) | `Variant` | Tagged union, `std::variant` replacement (no exceptions) |

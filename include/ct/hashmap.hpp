@@ -217,8 +217,7 @@ namespace ct
         {
             if (!size_)
                 return nullptr;
-            std::uint8_t tag;
-            size_type i = probe(k, tag);
+            size_type i = probe(k);
             return meta_[i] ? &slots_[i].value : nullptr;
         }
         const V *find(const K &k) const noexcept
@@ -268,15 +267,14 @@ namespace ct
         {
             if (CT_UNLIKELY(need_grow()))
                 return put_slow(detail::forward<KK>(k), detail::forward<VV>(v));
-            std::uint8_t tag;
-            size_type i = probe(k, tag);
+            size_type i = probe(k);
             if (meta_[i])
                 slots_[i].value = detail::forward<VV>(v);
             else
             {
                 ::new (static_cast<void *>(&slots_[i]))
                     Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
-                meta_[i] = tag;
+                meta_[i] = 1;
                 ++size_;
             }
             return slots_[i].value;
@@ -286,12 +284,11 @@ namespace ct
         {
             if (CT_UNLIKELY(need_grow()))
                 return index_slow(k);
-            std::uint8_t tag;
-            size_type i = probe(k, tag);
+            size_type i = probe(k);
             if (!meta_[i])
             {
                 ::new (static_cast<void *>(&slots_[i])) Entry{k, V()};
-                meta_[i] = tag;
+                meta_[i] = 1;
                 ++size_;
             }
             return slots_[i].value;
@@ -303,8 +300,7 @@ namespace ct
         {
             if (!size_)
                 return false;
-            std::uint8_t tag;
-            size_type i = probe(k, tag);
+            size_type i = probe(k);
             if (!meta_[i])
                 return false;
             out = detail::move(slots_[i].value);
@@ -316,8 +312,7 @@ namespace ct
         {
             if (!size_)
                 return false;
-            std::uint8_t tag;
-            size_type i = probe(k, tag);
+            size_type i = probe(k);
             if (!meta_[i])
                 return false;
             erase_at(i);
@@ -340,7 +335,6 @@ namespace ct
                 {
                     ::new (static_cast<void *>(&slots_[i]))
                         Entry{detail::move(slots_[j].key), detail::move(slots_[j].value)};
-                    meta_[i] = meta_[j];
                     slots_[j].~Entry();
                     i = j;
                 }
@@ -425,10 +419,9 @@ namespace ct
         template <typename KK, typename VV>
         CT_NOINLINE V &put_slow(KK &&k, VV &&v)
         {
-            std::uint8_t tag;
             if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
-                size_type i = probe(k, tag);
+                size_type i = probe(k);
                 if (meta_[i])
                 {
                     slots_[i].value = detail::forward<VV>(v);
@@ -438,28 +431,27 @@ namespace ct
             K stable_key(detail::forward<KK>(k));
             V stable_value(detail::forward<VV>(v));
             grow();
-            size_type i = probe(stable_key, tag);
+            size_type i = probe(stable_key);
             ::new (static_cast<void *>(&slots_[i]))
                 Entry{detail::move(stable_key), detail::move(stable_value)};
-            meta_[i] = tag;
+            meta_[i] = 1;
             ++size_;
             return slots_[i].value;
         }
 
         CT_NOINLINE V &index_slow(const K &k)
         {
-            std::uint8_t tag;
             if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
-                size_type i = probe(k, tag);
+                size_type i = probe(k);
                 if (meta_[i])
                     return slots_[i].value;
             }
             K stable_key(k);
             grow();
-            size_type i = probe(stable_key, tag);
+            size_type i = probe(stable_key);
             ::new (static_cast<void *>(&slots_[i])) Entry{detail::move(stable_key), V()};
-            meta_[i] = tag;
+            meta_[i] = 1;
             ++size_;
             return slots_[i].value;
         }
@@ -488,27 +480,22 @@ namespace ct
         size_type probe_as(const Q &k) const
         {
             const H &hasher = *static_cast<const H *>(this);
-            const std::uint64_t h = hasher(k);
-            const std::uint8_t tag = detail::meta_tag(h);
-            size_type i = static_cast<size_type>(h) & mask_;
-            while (const std::uint8_t m = meta_[i])
+            size_type i = static_cast<size_type>(hasher(k)) & mask_;
+            while (meta_[i])
             {
-                if (m == tag && hasher.equal(slots_[i].key, k))
+                if (hasher.equal(slots_[i].key, k))
                     return i;
                 i = (i + 1) & mask_;
             }
             return i;
         }
 
-        // O indice do slot da chave, ou do primeiro livre da sua cadeia; tag fica com a etiqueta a gravar na meta.
-        size_type probe(const K &k, std::uint8_t &tag) const
+        size_type probe(const K &k) const
         {
-            const std::uint64_t h = hash_of(k);
-            tag = detail::meta_tag(h);
-            size_type i = static_cast<size_type>(h) & mask_;
-            while (const std::uint8_t m = meta_[i])
+            size_type i = static_cast<size_type>(hash_of(k)) & mask_;
+            while (meta_[i])
             {
-                if (m == tag && slots_[i].key == k)
+                if (slots_[i].key == k)
                     return i;
                 i = (i + 1) & mask_;
             }
@@ -545,14 +532,13 @@ namespace ct
             for (size_type i = 0; i < old_cap; ++i)
                 if (old_meta[i])
                 {
-                    const std::uint64_t h = hash_of(old_slots[i].key);
-                    size_type j = static_cast<size_type>(h) & mask_;
+                    size_type j = static_cast<size_type>(hash_of(old_slots[i].key)) & mask_;
                     while (meta_[j])
                         j = (j + 1) & mask_;
                     ::new (static_cast<void *>(&slots_[j]))
                         Entry{detail::move(old_slots[i].key),
                               detail::move(old_slots[i].value)};
-                    meta_[j] = detail::meta_tag(h);
+                    meta_[j] = 1;
                     old_slots[i].~Entry();
                 }
             if (old_slots)

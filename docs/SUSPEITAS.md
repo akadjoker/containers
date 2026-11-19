@@ -12,28 +12,16 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
 - `Json(NAN) == Json(NAN)` da falso e o `dump()` escreve `null`. Um documento com NaN nao e igual a si mesmo. E o que o
   IEEE manda para `double`; nao se mexeu.
 
+### HashMap com valores grandes: o `value` de uma entrada const nao e const
+
+- `include/ct/hashmap.hpp`, `detail::HashEntry<K, V, true>`. Quando a entrada tem mais de 128 bytes (e a chave e pequena) o slot guarda a
+  chave e uma **referencia** ao valor (`V &value`), que vive num bloco do slab do mapa. Uma referencia como membro nao propaga o `const`:
+  `for (const auto &e : constmap) e.value.x = 1;` compila e escreve no mapa. So acontece com valores grandes e so por este caminho
+  (`find` e `get` de um mapa const dao `const V *` e `const V &`). Nao se resolveu porque a alternativa seria um iterador que devolve um
+  proxy por valor, e `for (auto &e : m)` deixava de compilar. Esta dito no cabecalho. Decisao do dono: aceitar, ou trocar o iterador por
+  um proxy (e partir o `auto &`).
+
 ## Nao provadas
-
-### Json: o caminho lento de json_append_double nao e exercitado
-
-- `include/ct/json.hpp`, `json_append_double`, tudo o que vem depois de `#if defined(CT_JSON_FAST_DTOA)`
-  (snprintf com %.15g, %.16g, %.17g e a leitura de volta).
-- Neste Linux o caminho rapido (long double de 64 bits de mantissa) serve todos os valores, por isso a cobertura nunca
-  entra no caminho lento, que e o que corre no MSVC e no Apple arm64 (long double igual a double). Compilando uma copia
-  de `json.hpp` com `CT_JSON_FAST_DTOA` desligado e escrevendo e lendo de volta 1000000 de doubles aleatorios (padroes
-  de bits com expoente aleatorio, denormais incluidos) nao houve nenhuma diferenca de bits. Nao ha teste no repo
-  porque duas definicoes diferentes da mesma funcao inline no mesmo executavel sao uma violacao da ODR: precisava de um
-  executavel a parte compilado com uma macro que nao existe.
-- Tambem nunca corre `json_strtod_locale` com um numero de mais de 63 caracteres nos testes de antes; um diferencial
-  contra `strtod` com 1000000 de numeros de ate 120 digitos, com expoente e sinal, nao deu nenhuma diferenca.
-
-### Json, Ini, Xml e TextReader leem e escrevem double por conta propria
-
-- `include/ct/json.hpp` (`json_append_double`, `json_to_double`), `ini.hpp`, `xml.hpp` e `text.hpp` usam `strtod` e `snprintf` e tratam o
-  locale a mao, cada um a sua maneira. Desde a ronda 2 existe `ct/numconv.hpp` (leitura correcta e texto mais curto, sem locale e
-  sem a biblioteca standard) e qualquer um podia usa-lo, mas o texto que o `Json::dump` escreve mudaria (escolhe 15, 16 ou 17
-  algarismos e o limite do expoente depende deles; o mais curto escreve `5e-324` onde o Json escreve `4.9406564584124654e-324`),
-  por isso nao se mexeu. Se se fizer, o caminho lento de `json_append_double` acima deixa de existir e esta suspeita com ele.
 
 ### O strtod e o strtof da glibc arredondam mal alguns hexadecimais subnormais
 

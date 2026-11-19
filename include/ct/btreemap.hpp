@@ -6,8 +6,8 @@ namespace ct
 {
 
     // Mapa ordenado por uma B+ arvore (nos de NodeBytes bytes, 512 por omissao): a alternativa ao TreeMap quando o que
-    // importa e a velocidade e a memoria com muitos elementos (menos saltos de ponteiro, 8 a 12 bytes por elemento de
-    // `int` contra 41 do TreeMap).
+    // importa e a velocidade e a memoria com muitos elementos (menos saltos de ponteiro, cerca de 10 bytes por elemento de
+    // `int`->`int` contra 41 do TreeMap).
     //
     // A API e a do TreeMap (put, find, get, contains, operator[], erase, clear, begin/end, lower_bound_it, validate) mais
     // lower_bound, upper_bound, first/last, erase_range, erase_from, erase(first, last) e assign_sorted.

@@ -71,9 +71,10 @@ itself (GoogleTest is fetched only to build the test suite).
 | [slotmap.hpp](include/ct/slotmap.hpp) | `SlotMap` | Stable-index container with generation-checked handles |
 | [slotmap32.hpp](include/ct/slotmap32.hpp) | `SlotMap32` | Same as `SlotMap` with a 4-byte handle: 20-bit index (about one million slots), 12-bit generation (a stale handle can alias after 2048 reuses of one slot) |
 | [flatmap.hpp](include/ct/flatmap.hpp) | `FlatMap` | Sorted-vector associative container |
-| [hashmap.hpp](include/ct/hashmap.hpp) | `HashMap` | Open-addressing hash map. Erasing or inserting while iterating is invalid: use `erase_if(pred)`; a debug build (`CT_DEBUG_ITERATORS`, on when `NDEBUG` is not defined) aborts if an iterator is used after the table changed. Entries over 128 bytes live outside the table |
+| [hashmap.hpp](include/ct/hashmap.hpp) | `HashMap` | Open-addressing hash map. Erasing or inserting while iterating is invalid: use `erase_if(pred)`; a debug build (`CT_DEBUG_ITERATORS`, on when `NDEBUG` is not defined) aborts if an iterator is used after the table changed. Entries over 128 bytes keep the key in the table and the value in a block of a per-map slab (`CT_HASH_INLINE_MAX` changes the limit): a reference to such a value survives rehash and insertions |
 | [hashset.hpp](include/ct/hashset.hpp) | `HashSet` | Open-addressing hash set (same iteration rule and `erase_if`) |
-| [treemap.hpp](include/ct/treemap.hpp) | `TreeMap` | Ordered associative container |
+| [treemap.hpp](include/ct/treemap.hpp) | `TreeMap` | Ordered associative container (red-black tree): iterators and pointers to entries stay valid across insert and erase |
+| [btreemap.hpp](include/ct/btreemap.hpp), [btreeset.hpp](include/ct/btreeset.hpp) | `BTreeMap`, `BTreeSet` | Ordered map and set on a B+ tree with 512-byte nodes taken from a slab (see "Choosing an ordered container"): about 10 bytes per `int` element, `lower_bound`/`upper_bound`, `erase_range`, `assign_sorted`; insert and erase invalidate every iterator, pointer and reference |
 | [function.hpp](include/ct/function.hpp) | `Function` | Type-erased callable, `std::function` replacement |
 | [variant.hpp](include/ct/variant.hpp) | `Variant` | Tagged union, `std::variant` replacement (no exceptions) |
 | [ptr.hpp](include/ct/ptr.hpp) | `Rc`, `Unique`, `Weak` | Smart pointers for the cases that need them |
@@ -99,6 +100,21 @@ itself (GoogleTest is fetched only to build the test suite).
 | [http_client.hpp](include/ct/http_client.hpp) | `HttpClient` | Blocking HTTP/HTTPS client (`https://` URLs or port 443 use `TlsSocket`; `request_tls` takes the host name and an optional `TlsConfig`). No redirect following |
 | [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
 | [ini.hpp](include/ct/ini.hpp) | `Ini` | INI settings parser/serializer with typed getters and file IO. Values are plain text with no escapes and no inline comments; a value that starts with `"` and ends with the matching `"` is unquoted (`""` is a literal quote, line breaks are allowed inside), anything else is kept verbatim, and `dump()` quotes only what would not survive a round trip |
+
+## Choosing an ordered container
+
+| | `TreeMap` | `BTreeMap` / `BTreeSet` | `HashMap` |
+|---|---|---|---|
+| order | by key | by key | none |
+| pointers and iterators after insert/erase | stay valid | **all invalid** (debug builds abort on a stale iterator) | invalid (references to big values survive rehash) |
+| memory per `int`->`int` element | 41 bytes | about 10 | 18 to 24 |
+| lookup, 1e6 `int` keys | slowest | within 1.1x to 1.2x of abseil's `btree_map`, 2.6x to 3.9x faster than `TreeMap` | fastest |
+| iterating in order | pointer chase | contiguous, 12x to 40x faster than `TreeMap` | slot order, no key order |
+
+Take `HashMap` when you do not need the order. Take `BTreeMap` when you need the order (iteration, `lower_bound`, ranges) and you
+do not hold pointers or iterators across a mutation, or when memory or iteration speed matter; build it from sorted data with
+`assign_sorted` for the densest layout. Keep `TreeMap` when entries must keep their address (intrusive links, pointers handed to
+other code) or when you erase while iterating.
 
 ## Hashing
 

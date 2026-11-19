@@ -161,6 +161,8 @@ namespace ct
         constexpr std::size_t kHashInlineMax = CT_HASH_INLINE_MAX;
         constexpr std::size_t kHashSmallKey = 32;
 
+        // O que os slots guardam e a tabela move (deslocar, rehash): a chave e o valor, ou a chave e uma referencia ao bloco do
+        // valor. So o interior do HashMap o ve.
         template <typename K, typename V, bool ValueRef>
         struct HashEntry
         {
@@ -175,6 +177,48 @@ namespace ct
             V &value;
         };
 
+        // O que os iteradores mostram (HashMap::Entry): a mesma memoria que o HashEntry (mesmo tamanho, alinhamento e posicao
+        // dos membros: o HashMap verifica-o com static_assert), mas com a chave const, porque uma chave alterada por um
+        // iterador deixa o elemento fora do sitio a que o hash o leva e corrompe a tabela. Com a disposicao 2 (o slot e um
+        // ponteiro para a entrada inteira) este e mesmo o tipo do bloco: a entrada nunca se move, por isso a chave const nao custa nada.
+        template <typename K, typename V, int Mode>
+        struct HashView
+        {
+            const K key;
+            V value;
+        };
+        template <typename K, typename V>
+        struct HashView<K, V, 1>
+        {
+            const K key;
+            V &value;
+        };
+        // O que um iterador const mostra: nas disposicoes 0 e 2 `const HashView` ja da um value const (e um membro directo);
+        // na 1 o value e uma referencia, e uma referencia nao propaga o const, por isso a vista const tem `const V &value`
+        // (a mesma memoria, o mesmo tamanho: uma referencia a const V e um ponteiro como uma a V).
+        template <typename K, typename V>
+        struct HashConstView
+        {
+            const K key;
+            const V &value;
+        };
+        template <typename K, typename V>
+        struct const_view_of<HashView<K, V, 1>>
+        {
+            using type = const HashConstView<K, V>;
+        };
+        // O tipo que os slots guardam: o HashEntry, menos na disposicao 2, onde o slot e um ponteiro para o proprio HashView.
+        template <typename K, typename V, int Mode>
+        struct HashStoredFor
+        {
+            using type = HashEntry<K, V, Mode == 1>;
+        };
+        template <typename K, typename V>
+        struct HashStoredFor<K, V, 2>
+        {
+            using type = HashView<K, V, 2>;
+        };
+
     } // namespace detail
 
     // Mapa de hash de enderecamento aberto com sondagem linear e remocao por deslocamento (sem marcadores).
@@ -184,8 +228,10 @@ namespace ct
     //   por omissao): ai o VALOR vive num bloco que nunca se move, e uma referencia ao valor sobrevive ao rehash e a insercoes
     //   (nao ao erase desse elemento, nem ao clear); a chave e a entrada (iteradores, Entry &) continuam a mover-se. Os
     //   blocos dos valores apagados ficam no mapa para os proximos put (como a tabela, que tambem fica com a capacidade); so o
-    //   clear e o destrutor os devolvem ao alocador. Nota: num `const Entry &` a referencia `value` nao e const (o valor
-    //   esta noutro bloco); o que se le por um iterador de const HashMap pode ser alterado por esse caminho: nao o faca.
+    //   clear e o destrutor os devolvem ao alocador.
+    // - O acesso por um iterador (it->key, it->value, for (auto &e : mapa)): a chave e SEMPRE const (alterar-la deixa o
+    //   elemento fora do sitio a que o hash o leva), e o value e const num mapa const em todas as disposicoes (iteradores const
+    //   mostram um ConstEntry; Entry e o que os iteradores nao const mostram).
     // - A meta (um byte por slot) diz se o slot esta ocupado; para chaves que nao sao inteiros, enumeracoes nem ponteiros
     //   (strings, chaves compostas, entradas grandes) guarda tambem a distancia do elemento ao seu slot de origem (0x81 + dist, e
     //   0xFF para 126 ou mais), de modo que a sondagem so compara chaves onde a distancia bate (uma falha quase nunca
@@ -225,13 +271,17 @@ namespace ct
     CT_ABI_HASHINL_BEGIN
     template <typename K, typename V, typename H = Hash<K>, typename Alloc = HeapAlloc>
     class HashMap : private H, private Alloc,
-                    private detail::HashSlabFor<typename detail::hash_pick<detail::HashMode<K, V>::value == 1, V, detail::HashEntry<K, V, false>>::type,
+                    private detail::HashSlabFor<typename detail::hash_pick<detail::HashMode<K, V>::value == 1, V,
+                                                                           typename detail::HashStoredFor<K, V, detail::HashMode<K, V>::value>::type>::type,
                                                 detail::HashMode<K, V>::value>::type
     {
         static constexpr int kMode = detail::HashMode<K, V>::value;
 
     public:
-        using Entry = detail::HashEntry<K, V, kMode == 1>;
+        // O que os iteradores mostram: a chave const e o value; ConstEntry e o que mostram os iteradores de um mapa const
+        // (nunca deixa alterar o value). Tem o tamanho, o alinhamento e a memoria do que a tabela guarda (Stored).
+        using Entry = detail::HashView<K, V, kMode>;
+        using ConstEntry = typename detail::const_view_of<Entry>::type;
 
         using size_type = std::size_t;
 
@@ -239,10 +289,16 @@ namespace ct
         static constexpr bool kIndirect = kMode == 2;
         static constexpr bool kOut = kMode != 0;
         static constexpr bool kDist = kIndirect || !detail::is_bytewise_comparable<K>::value;
-        using Slot = typename detail::hash_pick<kIndirect, Entry *, Entry>::type;
-        using Block = typename detail::hash_pick<kMode == 1, V, Entry>::type;
+        // O que a tabela guarda e move; os iteradores olham para a mesma memoria como Entry (ver show)
+        using Stored = typename detail::HashStoredFor<K, V, kMode>::type;
+        using Slot = typename detail::hash_pick<kIndirect, Stored *, Stored>::type;
+        using Block = typename detail::hash_pick<kMode == 1, V, Stored>::type;
         using Slab = typename detail::HashSlabFor<Block, kMode>::type;
         using Mode = detail::integral_constant<int, kMode>;
+
+        static_assert(sizeof(Entry) == sizeof(Stored) && alignof(Entry) == alignof(Stored) &&
+                          sizeof(ConstEntry) == sizeof(Stored) && alignof(ConstEntry) == alignof(Stored),
+                      "ct::HashMap: a vista dos iteradores tem de ter o layout do que a tabela guarda");
 
     public:
         HashMap() noexcept
@@ -513,31 +569,31 @@ namespace ct
         using iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::CheckedSlotIter<Entry *, kDist>, Entry>,
                                                     detail::CheckedSlotIter<Entry, kDist>>::type;
         using const_iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::CheckedSlotIter<Entry *const, kDist>, const Entry>,
-                                                          detail::CheckedSlotIter<const Entry, kDist>>::type;
+                                                          detail::CheckedSlotIter<ConstEntry, kDist>>::type;
 #else
         using iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::SlotIter<Entry *, kDist>, Entry>,
                                                     detail::SlotIter<Entry, kDist>>::type;
         using const_iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::SlotIter<Entry *const, kDist>, const Entry>,
-                                                          detail::SlotIter<const Entry, kDist>>::type;
+                                                          detail::SlotIter<ConstEntry, kDist>>::type;
 #endif
 
         iterator begin() noexcept
         {
-            return iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
+            return iterator(show(slots_, IndirectTag()), meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
         }
         iterator end() noexcept
         {
             std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
-            return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me CT_HASH_ITER_ARGS);
+            return iterator(show(slots_ ? slots_ + mask_ + 1 : nullptr, IndirectTag()), me, me CT_HASH_ITER_ARGS);
         }
         const_iterator begin() const noexcept
         {
-            return const_iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
+            return const_iterator(show_const(slots_, IndirectTag()), meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
         }
         const_iterator end() const noexcept
         {
             const std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
-            return const_iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me CT_HASH_ITER_ARGS);
+            return const_iterator(show_const(slots_ ? slots_ + mask_ + 1 : nullptr, IndirectTag()), me, me CT_HASH_ITER_ARGS);
         }
         const_iterator cbegin() const noexcept { return begin(); }
         const_iterator cend() const noexcept { return end(); }
@@ -585,6 +641,15 @@ namespace ct
 
         Slab &slab() noexcept { return static_cast<Slab &>(*this); }
 
+        // Os iteradores olham para a memoria dos slots como Entry (a chave const) ou ConstEntry (o value const), nao como Stored:
+        // os tres tem o mesmo layout (verificado acima) e a conversao nao gera instrucoes. Com a disposicao 2 os slots sao
+        // ponteiros para blocos que ja sao Entry e nao ha nada a converter.
+        typedef detail::integral_constant<bool, kIndirect> IndirectTag;
+        static Entry *show(Slot *s, detail::false_type) noexcept { return reinterpret_cast<Entry *>(s); }
+        static Slot *show(Slot *s, detail::true_type) noexcept { return s; }
+        static const ConstEntry *show_const(const Slot *s, detail::false_type) noexcept { return reinterpret_cast<const ConstEntry *>(s); }
+        static const Slot *show_const(const Slot *s, detail::true_type) noexcept { return s; }
+
         // Com o valor fora da tabela o endereco do valor e uma referencia lida do slot: o compilador nao sabe que nao e
         // nula e deixava um teste a mais em cada hit.
         V *value_ptr(size_type i) const noexcept { return value_ptr_impl(i, Mode()); }
@@ -600,9 +665,9 @@ namespace ct
             return p;
         }
 
-        Entry &entry(size_type i) const noexcept { return entry_ref(slots_[i], detail::integral_constant<bool, kIndirect>()); }
-        static Entry &entry_ref(Entry &e, detail::false_type) noexcept { return e; }
-        static Entry &entry_ref(Entry *e, detail::true_type) noexcept { return *e; }
+        Stored &entry(size_type i) const noexcept { return entry_ref(slots_[i], detail::integral_constant<bool, kIndirect>()); }
+        static Stored &entry_ref(Stored &e, detail::false_type) noexcept { return e; }
+        static Stored &entry_ref(Stored *e, detail::true_type) noexcept { return *e; }
 
         template <typename KK, typename VV>
         void construct_at(size_type i, KK &&k, VV &&v)
@@ -612,36 +677,36 @@ namespace ct
         template <typename KK, typename VV>
         void construct_slot(size_type i, detail::integral_constant<int, 0>, KK &&k, VV &&v)
         {
-            ::new (static_cast<void *>(&slots_[i])) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
+            ::new (static_cast<void *>(&slots_[i])) Stored{detail::forward<KK>(k), detail::forward<VV>(v)};
         }
         template <typename KK, typename VV>
         void construct_slot(size_type i, detail::integral_constant<int, 1>, KK &&k, VV &&v)
         {
             V *block = slab().take(allocator());
             ::new (static_cast<void *>(block)) V(detail::forward<VV>(v));
-            ::new (static_cast<void *>(&slots_[i])) Entry{detail::forward<KK>(k), *block};
+            ::new (static_cast<void *>(&slots_[i])) Stored{detail::forward<KK>(k), *block};
         }
         template <typename KK, typename VV>
         void construct_slot(size_type i, detail::integral_constant<int, 2>, KK &&k, VV &&v)
         {
-            Entry *block = slab().take(allocator());
-            ::new (static_cast<void *>(block)) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
+            Stored *block = slab().take(allocator());
+            ::new (static_cast<void *>(block)) Stored{detail::forward<KK>(k), detail::forward<VV>(v)};
             slots_[i] = block;
         }
 
         void destroy_at(size_type i) { destroy_slot(i, Mode()); }
-        void destroy_slot(size_type i, detail::integral_constant<int, 0>) { slots_[i].~Entry(); }
+        void destroy_slot(size_type i, detail::integral_constant<int, 0>) { slots_[i].~Stored(); }
         void destroy_slot(size_type i, detail::integral_constant<int, 1>)
         {
             V *block = &slots_[i].value;
             block->~V();
             slab().give(allocator(), block);
-            slots_[i].~Entry();
+            slots_[i].~Stored();
         }
         void destroy_slot(size_type i, detail::integral_constant<int, 2>)
         {
-            Entry *block = slots_[i];
-            block->~Entry();
+            Stored *block = slots_[i];
+            block->~Stored();
             slab().give(allocator(), block);
         }
 
@@ -649,13 +714,13 @@ namespace ct
         void move_slot(size_type to, size_type from) { move_slot_impl(to, from, Mode()); }
         void move_slot_impl(size_type to, size_type from, detail::integral_constant<int, 0>)
         {
-            ::new (static_cast<void *>(&slots_[to])) Entry{detail::move(slots_[from].key), detail::move(slots_[from].value)};
-            slots_[from].~Entry();
+            ::new (static_cast<void *>(&slots_[to])) Stored{detail::move(slots_[from].key), detail::move(slots_[from].value)};
+            slots_[from].~Stored();
         }
         void move_slot_impl(size_type to, size_type from, detail::integral_constant<int, 1>)
         {
-            ::new (static_cast<void *>(&slots_[to])) Entry{detail::move(slots_[from].key), slots_[from].value};
-            slots_[from].~Entry();
+            ::new (static_cast<void *>(&slots_[to])) Stored{detail::move(slots_[from].key), slots_[from].value};
+            slots_[from].~Stored();
         }
         void move_slot_impl(size_type to, size_type from, detail::integral_constant<int, 2>) { slots_[to] = slots_[from]; }
 
@@ -688,17 +753,17 @@ namespace ct
                 if (o.meta_[i])
                     put(o.entry(i).key, o.entry(i).value);
         }
-        static void copy_slot(Slot *dst, size_type i, const Entry &e, detail::integral_constant<int, 0>) { ::new (static_cast<void *>(&dst[i])) Entry(e); }
-        void copy_slot(Slot *dst, size_type i, const Entry &e, detail::integral_constant<int, 1>)
+        static void copy_slot(Slot *dst, size_type i, const Stored &e, detail::integral_constant<int, 0>) { ::new (static_cast<void *>(&dst[i])) Stored(e); }
+        void copy_slot(Slot *dst, size_type i, const Stored &e, detail::integral_constant<int, 1>)
         {
             V *block = slab().take(allocator());
             ::new (static_cast<void *>(block)) V(e.value);
-            ::new (static_cast<void *>(&dst[i])) Entry{e.key, *block};
+            ::new (static_cast<void *>(&dst[i])) Stored{e.key, *block};
         }
-        void copy_slot(Slot *dst, size_type i, const Entry &e, detail::integral_constant<int, 2>)
+        void copy_slot(Slot *dst, size_type i, const Stored &e, detail::integral_constant<int, 2>)
         {
-            Entry *block = slab().take(allocator());
-            ::new (static_cast<void *>(block)) Entry(e);
+            Stored *block = slab().take(allocator());
+            ::new (static_cast<void *>(block)) Stored(e);
             dst[i] = block;
         }
 
@@ -866,7 +931,7 @@ namespace ct
             for (size_type i = 0; i < old_cap; ++i)
                 if (old_meta[i])
                 {
-                    Entry &e = entry_ref(old_slots[i], detail::integral_constant<bool, kIndirect>());
+                    Stored &e = entry_ref(old_slots[i], detail::integral_constant<bool, kIndirect>());
                     size_type j = static_cast<size_type>(hash_of(e.key)) & mask_;
                     size_type d = 0;
                     while (meta_[j])
@@ -888,17 +953,17 @@ namespace ct
             }
         }
         // move o elemento de um slot da tabela antiga para o slot j da nova
-        void relocate_into(size_type j, Entry &from, detail::integral_constant<int, 0>)
+        void relocate_into(size_type j, Stored &from, detail::integral_constant<int, 0>)
         {
-            ::new (static_cast<void *>(&slots_[j])) Entry{detail::move(from.key), detail::move(from.value)};
-            from.~Entry();
+            ::new (static_cast<void *>(&slots_[j])) Stored{detail::move(from.key), detail::move(from.value)};
+            from.~Stored();
         }
-        void relocate_into(size_type j, Entry &from, detail::integral_constant<int, 1>)
+        void relocate_into(size_type j, Stored &from, detail::integral_constant<int, 1>)
         {
-            ::new (static_cast<void *>(&slots_[j])) Entry{detail::move(from.key), from.value};
-            from.~Entry();
+            ::new (static_cast<void *>(&slots_[j])) Stored{detail::move(from.key), from.value};
+            from.~Stored();
         }
-        void relocate_into(size_type j, Entry *from, detail::integral_constant<int, 2>) { slots_[j] = from; }
+        void relocate_into(size_type j, Stored *from, detail::integral_constant<int, 2>) { slots_[j] = from; }
 
         // Destroi os elementos e devolve os blocos dos valores ao alocador (o slab fica vazio)
         void destroy_all()
@@ -921,13 +986,13 @@ namespace ct
             slab().release_all(allocator());
         }
         // como destroy_at mas sem devolver o bloco a lista (o slab vai ser todo libertado a seguir)
-        void destroy_in_place(size_type i, detail::integral_constant<int, 0>) { slots_[i].~Entry(); }
+        void destroy_in_place(size_type i, detail::integral_constant<int, 0>) { slots_[i].~Stored(); }
         void destroy_in_place(size_type i, detail::integral_constant<int, 1>)
         {
             slots_[i].value.~V();
-            slots_[i].~Entry();
+            slots_[i].~Stored();
         }
-        void destroy_in_place(size_type i, detail::integral_constant<int, 2>) { slots_[i]->~Entry(); }
+        void destroy_in_place(size_type i, detail::integral_constant<int, 2>) { slots_[i]->~Stored(); }
 
         Alloc &allocator() { return static_cast<Alloc &>(*this); }
 

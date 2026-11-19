@@ -593,6 +593,14 @@ namespace ct
         // Iterador das tabelas de hash: le a meta 8 slots de cada vez e visita os ocupados pelos bits acesos da palavra,
         // por isso o custo por elemento nao depende de quantos buracos ha pelo meio (a 38 % de carga eram quatro
         // quintos dos ciclos). E o ocupado atual e o bit mais baixo que resta.
+        // Para que o iterador const seja construivel a partir do nao const: o tipo const de U. Por omissao `const U`; o HashMap
+        // especializa-o para a vista da disposicao com o valor fora da tabela, cujo value e uma referencia (ver HashConstView).
+        template <typename U>
+        struct const_view_of
+        {
+            using type = const U;
+        };
+
         template <typename E, bool Tagged = false>
         class SlotIter
         {
@@ -609,8 +617,8 @@ namespace ct
             {
                 load();
             }
-            template <typename U, typename = typename enable_if<is_same<const U, E>::value && !is_same<U, E>::value>::type>
-            SlotIter(const SlotIter<U, Tagged> &o) noexcept : eg_(o.eg_), mg_(o.mg_), mend_(o.mend_), bits_(o.bits_)
+            template <typename U, typename = typename enable_if<is_same<typename const_view_of<U>::type, E>::value && !is_same<U, E>::value>::type>
+            SlotIter(const SlotIter<U, Tagged> &o) noexcept : eg_(reinterpret_cast<E *>(o.eg_)), mg_(o.mg_), mend_(o.mend_), bits_(o.bits_)
             {
             }
             E &operator*() const noexcept { return eg_[ctz64(bits_) >> 3]; }
@@ -677,7 +685,7 @@ namespace ct
                 : it_(e, m, mend), version_(version), seen_(*version)
             {
             }
-            template <typename U, typename = typename enable_if<is_same<const U, E>::value && !is_same<U, E>::value>::type>
+            template <typename U, typename = typename enable_if<is_same<typename const_view_of<U>::type, E>::value && !is_same<U, E>::value>::type>
             CheckedSlotIter(const CheckedSlotIter<U, Tagged> &o) noexcept : it_(o.it_), version_(o.version_), seen_(o.seen_)
             {
             }
@@ -717,7 +725,8 @@ namespace ct
             IndirectIter(P *e, const unsigned char *m, const unsigned char *mend, R... r) noexcept : it_(e, m, mend, r...)
             {
             }
-            template <typename I2, typename E2, typename = typename enable_if<!is_same<I2, Inner>::value>::type>
+            template <typename I2, typename E2, typename = typename enable_if<!is_same<I2, Inner>::value>::type,
+                      typename = decltype(Inner(declval<const I2 &>()))>
             IndirectIter(const IndirectIter<I2, E2> &o) noexcept : it_(o.it_)
             {
             }

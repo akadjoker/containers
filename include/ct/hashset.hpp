@@ -7,9 +7,13 @@
 namespace ct
 {
 
+    // Como o HashMap: a meta de uma chave que nao e inteiro, enumeracao nem ponteiro (strings, chaves compostas) guarda a
+    // distancia do elemento ao seu slot de origem (0x81 + dist, e 0xFF para 126 ou mais), e a sondagem so compara onde bate.
     template <typename K, typename H = Hash<K>, typename Alloc = HeapAlloc>
     class HashSet : private H, private Alloc
     {
+        static constexpr bool kDist = !detail::is_bytewise_comparable<K>::value;
+
     public:
         using size_type = std::size_t;
 
@@ -75,6 +79,7 @@ namespace ct
                 meta_ = o.meta_;
                 mask_ = o.mask_;
                 size_ = o.size_;
+                CT_HASH_TOUCH();
                 o.slots_ = nullptr;
                 o.meta_ = nullptr;
                 o.mask_ = 0;
@@ -104,6 +109,20 @@ namespace ct
                 return false;
             const H &hasher = *static_cast<const H *>(this);
             size_type i = static_cast<size_type>(hasher(k)) & mask_;
+            if (kDist)
+            {
+                size_type d = 0x81;
+                for (;;)
+                {
+                    const std::uint8_t m = meta_[i];
+                    if (!m)
+                        return false;
+                    if ((m == d || m == 255) && hasher.equal(slots_[i], k))
+                        return true;
+                    i = (i + 1) & mask_;
+                    ++d;
+                }
+            }
             while (meta_[i])
             {
                 if (hasher.equal(slots_[i], k))
@@ -118,12 +137,14 @@ namespace ct
         {
             if (CT_UNLIKELY(need_grow()))
                 return insert_slow(detail::forward<KK>(k));
-            size_type i = probe(k);
+            size_type dist;
+            size_type i = probe(k, dist);
             if (meta_[i])
                 return false;
             ::new (static_cast<void *>(&slots_[i])) K(detail::forward<KK>(k));
-            meta_[i] = 1;
+            meta_[i] = meta_for(dist);
             ++size_;
+            CT_HASH_TOUCH();
             return true;
         }
 
@@ -136,21 +157,47 @@ namespace ct
                 return false;
             slots_[i].~K();
             size_type j = i;
-            for (;;)
+            if (kDist)
             {
-                j = (j + 1) & mask_;
-                if (!meta_[j])
-                    break;
-                size_type ideal = static_cast<size_type>(hash_of(slots_[j])) & mask_;
-                if (((j - ideal) & mask_) >= ((j - i) & mask_))
+                // a distancia de cada seguinte esta na meta (0xFF = 126 ou mais, e calcula-se pelo hash)
+                for (;;)
                 {
-                    ::new (static_cast<void *>(&slots_[i])) K(detail::move(slots_[j]));
-                    slots_[j].~K();
-                    i = j;
+                    j = (j + 1) & mask_;
+                    const std::uint8_t m = meta_[j];
+                    if (!m)
+                        break;
+                    const size_type gap = (j - i) & mask_;
+                    const size_type follower_dist = m != 255
+                                                        ? static_cast<size_type>(m) - 0x81
+                                                        : (j - (static_cast<size_type>(hash_of(slots_[j])) & mask_)) & mask_;
+                    if (follower_dist >= gap)
+                    {
+                        ::new (static_cast<void *>(&slots_[i])) K(detail::move(slots_[j]));
+                        slots_[j].~K();
+                        meta_[i] = meta_for(follower_dist - gap);
+                        i = j;
+                    }
+                }
+            }
+            else
+            {
+                for (;;)
+                {
+                    j = (j + 1) & mask_;
+                    if (!meta_[j])
+                        break;
+                    size_type ideal = static_cast<size_type>(hash_of(slots_[j])) & mask_;
+                    if (((j - ideal) & mask_) >= ((j - i) & mask_))
+                    {
+                        ::new (static_cast<void *>(&slots_[i])) K(detail::move(slots_[j]));
+                        slots_[j].~K();
+                        i = j;
+                    }
                 }
             }
             meta_[i] = 0;
             --size_;
+            CT_HASH_TOUCH();
             return true;
         }
 
@@ -161,6 +208,7 @@ namespace ct
                 destroy_all();
                 std::memset(meta_, 0, mask_ + 1);
                 size_ = 0;
+                CT_HASH_TOUCH();
             }
         }
 
@@ -177,16 +225,47 @@ namespace ct
                 rehash(want);
         }
 
-        using iterator = detail::SlotIter<const K>;
+        // Percorrer: ver HashMap. Apagar ou inserir durante o ciclo e INVALIDO (a remocao desloca os elementos para tras
+        // e a insercao pode fazer rehash); para apagar varios use erase_if(pred). Em compilacoes de depuracao
+        // (CT_DEBUG_ITERATORS) usar um iterador depois de a tabela mudar aborta.
+#if defined(CT_DEBUG_ITERATORS)
+        using iterator = detail::CheckedSlotIter<const K, kDist>;
+#else
+        using iterator = detail::SlotIter<const K, kDist>;
+#endif
 
         iterator begin() const noexcept
         {
-            return iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr);
+            return iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
         }
         iterator end() const noexcept
         {
             const std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
-            return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
+            return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me CT_HASH_ITER_ARGS);
+        }
+
+        // Apaga todos os elementos para que pred(chave) da true e devolve quantos foram; visita cada um uma vez (ver
+        // HashMap::erase_if). pred nao pode mexer na tabela.
+        template <typename Pred>
+        size_type erase_if(Pred pred)
+        {
+            if (!size_)
+                return 0;
+            size_type removed = 0;
+            for (size_type i = 0; i <= mask_; ++i)
+                if (meta_[i] && pred(static_cast<const K &>(slots_[i])))
+                {
+                    slots_[i].~K();
+                    meta_[i] = 0;
+                    ++removed;
+                }
+            if (removed)
+            {
+                size_ -= removed;
+                CT_HASH_TOUCH();
+                rehash(mask_ + 1);
+            }
+            return removed;
         }
 
     private:
@@ -201,6 +280,7 @@ namespace ct
                         ::new (static_cast<void *>(&slots_[i])) K(o.slots_[i]);
                 detail::copy_bytes(meta_, o.meta_, mask_ + 1);
                 size_ = o.size_;
+                CT_HASH_TOUCH();
                 return;
             }
             for (size_type i = 0; i <= o.mask_; ++i)
@@ -212,22 +292,27 @@ namespace ct
         std::uint8_t *meta_; 
         size_type mask_;
         size_type size_;
+#if defined(CT_DEBUG_ITERATORS)
+        size_type version_ = 0;
+#endif
 
         template <typename KK>
         CT_NOINLINE bool insert_slow(KK &&k)
         {
+            size_type dist;
             if (slots_)
             {
-                size_type i = probe(k);
+                size_type i = probe(k, dist);
                 if (meta_[i])
                     return false;
             }
             K stable_key(detail::forward<KK>(k));
             grow();
-            size_type i = probe(stable_key);
+            size_type i = probe(stable_key, dist);
             ::new (static_cast<void *>(&slots_[i])) K(detail::move(stable_key));
-            meta_[i] = 1;
+            meta_[i] = meta_for(dist);
             ++size_;
+            CT_HASH_TOUCH();
             return true;
         }
 
@@ -249,8 +334,23 @@ namespace ct
                    size_ + 1 > capacity - capacity / 4;
         }
 
+        // A meta de um elemento a distancia dist do seu slot de origem: ocupado (1), ou, para as chaves com distancia,
+        // 0x81 + dist (0xFF quando dist >= 126: o bit alto e o de ocupado).
+        static std::uint8_t meta_for(size_type dist) noexcept
+        {
+            return kDist ? static_cast<std::uint8_t>(dist >= 126 ? 255 : 0x81 + dist) : static_cast<std::uint8_t>(1);
+        }
+
+        // O slot da chave, ou o primeiro livre da sondagem. As chaves sem distancia (inteiros, enumeracoes, ponteiros)
+        // sondam como sempre, sem contador; probe(k, dist) devolve tambem a distancia desse slot ao de origem, que so
+        // as chaves com distancia calculam (para a guardar na meta de quem se insere).
         size_type probe(const K &k) const
         {
+            if (kDist)
+            {
+                size_type d;
+                return probe_dist(k, d);
+            }
             size_type i = static_cast<size_type>(hash_of(k)) & mask_;
             while (meta_[i])
             {
@@ -258,6 +358,30 @@ namespace ct
                     return i;
                 i = (i + 1) & mask_;
             }
+            return i;
+        }
+
+        size_type probe(const K &k, size_type &dist) const
+        {
+            if (kDist)
+                return probe_dist(k, dist);
+            dist = 0;
+            return probe(k);
+        }
+
+        size_type probe_dist(const K &k, size_type &dist) const
+        {
+            size_type i = static_cast<size_type>(hash_of(k)) & mask_;
+            size_type d = 0x81;
+            for (;;)
+            {
+                const std::uint8_t m = meta_[i];
+                if (!m || ((m == d || m == 255) && slots_[i] == k))
+                    break;
+                i = (i + 1) & mask_;
+                ++d;
+            }
+            dist = d - 0x81;
             return i;
         }
 
@@ -271,6 +395,7 @@ namespace ct
 
         void rehash(size_type new_cap)
         {
+            CT_HASH_TOUCH();
             if (new_cap < 2 || !detail::is_power_of_two(new_cap))
                 detail::fatal("ct::HashSet: capacidade invalida");
             K *old_slots = slots_;
@@ -292,10 +417,14 @@ namespace ct
                 if (old_meta[i])
                 {
                     size_type j = static_cast<size_type>(hash_of(old_slots[i])) & mask_;
+                    size_type d = 0;
                     while (meta_[j])
+                    {
                         j = (j + 1) & mask_;
+                        ++d;
+                    }
                     ::new (static_cast<void *>(&slots_[j])) K(detail::move(old_slots[i]));
-                    meta_[j] = 1;
+                    meta_[j] = meta_for(d);
                     old_slots[i].~K();
                 }
             if (old_slots)

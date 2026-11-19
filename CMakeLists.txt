@@ -132,7 +132,9 @@ add_executable(ct_tests
   tests/test_numconv.cpp
   tests/test_vector_overwrite.cpp
   tests/test_string_ops.cpp
-  tests/test_pq_hole.cpp)
+  tests/test_pq_hole.cpp
+  tests/test_hash_iter.cpp
+  tests/test_hash_layout.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)
@@ -224,7 +226,7 @@ if(CT_BUILD_COMPARE)
   add_library(ct_compare_alloc STATIC bench/compare/alloc_count.cpp)
   target_link_libraries(ct_compare_alloc PUBLIC ct)
   target_include_directories(ct_compare_alloc PRIVATE ${CT_COMPARE_INCLUDES})
-  foreach(cmp_name vector map string sort misc)
+  foreach(cmp_name vector map string sort misc extra)
     add_executable(cmp_${cmp_name} bench/compare/cmp_${cmp_name}.cpp)
     target_link_libraries(cmp_${cmp_name} PRIVATE ct ct_compare_alloc ${CT_COMPARE_LIBS})
     target_include_directories(cmp_${cmp_name} PRIVATE ${CT_COMPARE_INCLUDES})

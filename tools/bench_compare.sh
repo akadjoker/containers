@@ -166,6 +166,15 @@ matrix() {
             done
         done
         for n in 1000 100000; do for i in ct std; do echo "cmp_misc pq $i pushpop int $n"; for s in construct_small construct_big call copy; do echo "cmp_misc function $i $s x $n"; done; done; done ;;
+    extra)
+        for n in 100000 1000000; do
+            for i in ct std; do
+                for s in construct visit copy_assign; do echo "cmp_extra variant $i $s $n"; done
+                for s in alloc64 create_nodes; do echo "cmp_extra arena $i $s $n"; done
+                echo "cmp_extra pool $i cycle $n"; echo "cmp_extra ring $i fifo $n"
+            done
+            for i in ct raw; do for s in sum sub; do echo "cmp_extra span $i $s $n"; done; done
+        done ;;
     esac
 }
 
@@ -189,7 +198,7 @@ run_family() { # familia ficheiro
 
 stage_time() {
     : >"$OUT/time.tsv"
-    for f in vector map string sort misc; do
+    for f in vector map string sort misc extra; do
         [ -n "${CT_COMPARE_ONLY:-}" ] && [ "$CT_COMPARE_ONLY" != "$f" ] && continue
         echo "tempo: $f" >&2
         run_family "$f" "$OUT/time.tsv"
@@ -230,6 +239,12 @@ ir_matrix() {
         for t in int p16; do for i in ct std boost; do for s in push_back push_front iterate drain fifo; do echo "cmp_misc deque $i $s $t $n"; done; done; done
         for i in ctree cflat stdmap btree bflat; do for s in build hit erase; do echo "cmp_misc ordered $i $s int 10000"; done; done
         for i in ct std; do echo "cmp_misc pq $i pushpop int $n"; for s in construct_small construct_big call copy; do echo "cmp_misc function $i $s x $n"; done; done
+        for i in ct std; do
+            for s in construct visit copy_assign; do echo "cmp_extra variant $i $s $n"; done
+            for s in alloc64 create_nodes; do echo "cmp_extra arena $i $s $n"; done
+            echo "cmp_extra pool $i cycle $n"; echo "cmp_extra ring $i fifo $n"
+        done
+        for i in ct raw; do for s in sum sub; do echo "cmp_extra span $i $s $n"; done; done
     done
 }
 

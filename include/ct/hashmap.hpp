@@ -127,6 +127,34 @@ namespace ct
         }
     };
 
+    namespace detail
+    {
+        template <bool B, typename A, typename C>
+        struct hash_pick
+        {
+            using type = A;
+        };
+        template <typename A, typename C>
+        struct hash_pick<false, A, C>
+        {
+            using type = C;
+        };
+
+        // Entradas com mais de 128 bytes ficam fora da tabela, cada uma no seu bloco (a tabela guarda ponteiros): a
+        // tabela fica com 9 bytes por slot em vez de sizeof(entrada) + 1, por isso nao desperdica 25 a 60 % de memoria
+        // em slots vazios, cresce sem mover as entradas e uma referencia a um valor sobrevive ao rehash.
+        constexpr std::size_t kHashInlineMax = 128;
+    } // namespace detail
+
+    // Mapa de hash de enderecamento aberto com sondagem linear e remocao por deslocamento (sem marcadores).
+    //
+    // - Referencias, ponteiros e iteradores para elementos NAO sobrevivem a put, operator[] nem a erase (o rehash e o
+    //   deslocamento movem elementos), excepto quando a entrada tem mais de 128 bytes (ficam fora da tabela, ver
+    //   detail::kHashInlineMax): ai uma referencia a um valor sobrevive ao rehash e a insercoes, mas nao ao erase desse elemento.
+    // - A meta (um byte por slot) diz se o slot esta ocupado; para chaves que nao sao inteiros, enumeracoes nem ponteiros
+    //   (strings, chaves compostas, entradas grandes) guarda tambem a distancia do elemento ao seu slot de origem (0x81 + dist, e
+    //   0xFF para 126 ou mais), de modo que a sondagem so compara chaves onde a distancia bate (uma falha quase nunca
+    //   compara strings) e a remocao desloca os seguintes sem recalcular o hash.
     template <typename K, typename V, typename H = Hash<K>, typename Alloc = HeapAlloc>
     class HashMap : private H, private Alloc
     {
@@ -139,6 +167,12 @@ namespace ct
 
         using size_type = std::size_t;
 
+    private:
+        static constexpr bool kIndirect = sizeof(Entry) > detail::kHashInlineMax;
+        static constexpr bool kDist = kIndirect || !detail::is_bytewise_comparable<K>::value;
+        using Slot = typename detail::hash_pick<kIndirect, Entry *, Entry>::type;
+
+    public:
         HashMap() noexcept
             : H(), Alloc(), slots_(nullptr), meta_(nullptr), mask_(0), size_(0)
         {
@@ -201,6 +235,7 @@ namespace ct
                 meta_ = o.meta_;
                 mask_ = o.mask_;
                 size_ = o.size_;
+                CT_HASH_TOUCH();
                 o.slots_ = nullptr;
                 o.meta_ = nullptr;
                 o.mask_ = 0;
@@ -218,7 +253,7 @@ namespace ct
             if (!size_)
                 return nullptr;
             size_type i = probe(k);
-            return meta_[i] ? &slots_[i].value : nullptr;
+            return meta_[i] ? &entry(i).value : nullptr;
         }
         const V *find(const K &k) const noexcept
         {
@@ -234,7 +269,7 @@ namespace ct
             if (!size_)
                 return nullptr;
             size_type i = probe_as(k);
-            return meta_[i] ? &slots_[i].value : nullptr;
+            return meta_[i] ? &entry(i).value : nullptr;
         }
         template <typename Q, typename HH = H, typename = typename HH::is_transparent,
                   typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
@@ -267,31 +302,34 @@ namespace ct
         {
             if (CT_UNLIKELY(need_grow()))
                 return put_slow(detail::forward<KK>(k), detail::forward<VV>(v));
-            size_type i = probe(k);
+            size_type dist;
+            size_type i = probe(k, dist);
             if (meta_[i])
-                slots_[i].value = detail::forward<VV>(v);
+                entry(i).value = detail::forward<VV>(v);
             else
             {
-                ::new (static_cast<void *>(&slots_[i]))
-                    Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
-                meta_[i] = 1;
+                construct_at(i, detail::forward<KK>(k), detail::forward<VV>(v));
+                meta_[i] = meta_for(dist);
                 ++size_;
+                CT_HASH_TOUCH();
             }
-            return slots_[i].value;
+            return entry(i).value;
         }
 
         V &operator[](const K &k)
         {
             if (CT_UNLIKELY(need_grow()))
                 return index_slow(k);
-            size_type i = probe(k);
+            size_type dist;
+            size_type i = probe(k, dist);
             if (!meta_[i])
             {
-                ::new (static_cast<void *>(&slots_[i])) Entry{k, V()};
-                meta_[i] = 1;
+                construct_at(i, k, V());
+                meta_[i] = meta_for(dist);
                 ++size_;
+                CT_HASH_TOUCH();
             }
-            return slots_[i].value;
+            return entry(i).value;
         }
 
         /* Removes k and, when it was present, moves its value into out. Saves
@@ -303,7 +341,7 @@ namespace ct
             size_type i = probe(k);
             if (!meta_[i])
                 return false;
-            out = detail::move(slots_[i].value);
+            out = detail::move(entry(i).value);
             erase_at(i);
             return true;
         }
@@ -321,26 +359,49 @@ namespace ct
 
         void erase_at(size_type i)
         {
-            slots_[i].~Entry();
+            destroy_at(i);
 
             size_type j = i;
-            for (;;)
+            if (kDist)
             {
-                j = (j + 1) & mask_;
-                if (!meta_[j])
-                    break;
-                size_type ideal = static_cast<size_type>(hash_of(slots_[j].key)) & mask_;
-
-                if (((j - ideal) & mask_) >= ((j - i) & mask_))
+                // a distancia de cada seguinte esta na meta (0xFF = 126 ou mais, e calcula-se pelo hash)
+                for (;;)
                 {
-                    ::new (static_cast<void *>(&slots_[i]))
-                        Entry{detail::move(slots_[j].key), detail::move(slots_[j].value)};
-                    slots_[j].~Entry();
-                    i = j;
+                    j = (j + 1) & mask_;
+                    const std::uint8_t m = meta_[j];
+                    if (!m)
+                        break;
+                    const size_type gap = (j - i) & mask_;
+                    const size_type follower_dist = m != 255
+                                                        ? static_cast<size_type>(m) - 0x81
+                                                        : (j - (static_cast<size_type>(hash_of(entry(j).key)) & mask_)) & mask_;
+                    if (follower_dist >= gap)
+                    {
+                        move_slot(i, j);
+                        meta_[i] = meta_for(follower_dist - gap);
+                        i = j;
+                    }
+                }
+            }
+            else
+            {
+                for (;;)
+                {
+                    j = (j + 1) & mask_;
+                    if (!meta_[j])
+                        break;
+                    size_type ideal = static_cast<size_type>(hash_of(entry(j).key)) & mask_;
+
+                    if (((j - ideal) & mask_) >= ((j - i) & mask_))
+                    {
+                        move_slot(i, j);
+                        i = j;
+                    }
                 }
             }
             meta_[i] = 0;
             --size_;
+            CT_HASH_TOUCH();
         }
 
         void clear()
@@ -350,6 +411,7 @@ namespace ct
                 destroy_all();
                 std::memset(meta_, 0, mask_ + 1);
                 size_ = 0;
+                CT_HASH_TOUCH();
             }
         }
 
@@ -366,35 +428,124 @@ namespace ct
                 rehash(want);
         }
 
-        using iterator = detail::SlotIter<Entry>;
-        using const_iterator = detail::SlotIter<const Entry>;
+        // Percorrer: a ordem e a dos slots (sem significado). Apagar ou inserir durante o ciclo e INVALIDO: a remocao
+        // desloca os elementos seguintes para tras (o ciclo salta ou repete elementos) e a insercao pode fazer rehash
+        // (invalida todos os iteradores e referencias). Para apagar varios use erase_if(pred), que visita cada elemento
+        // uma vez; ou junte as chaves e apague depois. Em compilacoes de depuracao (CT_DEBUG_ITERATORS, por omissao
+        // quando NDEBUG nao esta definido) usar um iterador depois de a tabela mudar aborta com uma mensagem; em
+        // Release nao ha verificacao e o iterador e o SlotIter simples.
+#if defined(CT_DEBUG_ITERATORS)
+        using iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::CheckedSlotIter<Entry *, kDist>, Entry>,
+                                                    detail::CheckedSlotIter<Entry, kDist>>::type;
+        using const_iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::CheckedSlotIter<Entry *const, kDist>, const Entry>,
+                                                          detail::CheckedSlotIter<const Entry, kDist>>::type;
+#else
+        using iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::SlotIter<Entry *, kDist>, Entry>,
+                                                    detail::SlotIter<Entry, kDist>>::type;
+        using const_iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::SlotIter<Entry *const, kDist>, const Entry>,
+                                                          detail::SlotIter<const Entry, kDist>>::type;
+#endif
 
         iterator begin() noexcept
         {
-            return iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr);
+            return iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
         }
         iterator end() noexcept
         {
             std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
-            return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
+            return iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me CT_HASH_ITER_ARGS);
         }
         const_iterator begin() const noexcept
         {
-            return const_iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr);
+            return const_iterator(slots_, meta_, meta_ ? meta_ + mask_ + 1 : nullptr CT_HASH_ITER_ARGS);
         }
         const_iterator end() const noexcept
         {
             const std::uint8_t *me = meta_ ? meta_ + mask_ + 1 : nullptr;
-            return const_iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me);
+            return const_iterator(slots_ ? slots_ + mask_ + 1 : nullptr, me, me CT_HASH_ITER_ARGS);
         }
         const_iterator cbegin() const noexcept { return begin(); }
         const_iterator cend() const noexcept { return end(); }
 
+        // Apaga todos os elementos para que pred(chave, valor) da true e devolve quantos foram. Cada elemento e
+        // visitado exactamente uma vez (percorre os slots sem os deslocar e refaz a tabela no fim, em vez de apagar um
+        // a um com o deslocamento), por isso e o ciclo certo para apagar enquanto se percorre. pred nao pode mexer na tabela.
+        template <typename Pred>
+        size_type erase_if(Pred pred)
+        {
+            if (!size_)
+                return 0;
+            size_type removed = 0;
+            for (size_type i = 0; i <= mask_; ++i)
+                if (meta_[i] && pred(static_cast<const K &>(entry(i).key), entry(i).value))
+                {
+                    destroy_at(i);
+                    meta_[i] = 0;
+                    ++removed;
+                }
+            if (removed)
+            {
+                size_ -= removed;
+                CT_HASH_TOUCH();
+                rehash(mask_ + 1);
+            }
+            return removed;
+        }
+
     private:
-        Entry *slots_;
-        std::uint8_t *meta_; 
-        size_type mask_;     
+        Slot *slots_;
+        std::uint8_t *meta_;
+        size_type mask_;
         size_type size_;
+#if defined(CT_DEBUG_ITERATORS)
+        size_type version_ = 0;
+#endif
+
+        // A meta de um elemento a distancia dist do seu slot de origem: ocupado (1), ou, para as chaves com distancia,
+        // 0x81 + dist (0xFF quando dist >= 126: o bit alto e o de ocupado).
+        static std::uint8_t meta_for(size_type dist) noexcept
+        {
+            return kDist ? static_cast<std::uint8_t>(dist >= 126 ? 255 : 0x81 + dist) : static_cast<std::uint8_t>(1);
+        }
+
+        Entry &entry(size_type i) const noexcept { return entry_ref(slots_[i], detail::integral_constant<bool, kIndirect>()); }
+        static Entry &entry_ref(Entry &e, detail::false_type) noexcept { return e; }
+        static Entry &entry_ref(Entry *e, detail::true_type) noexcept { return *e; }
+
+        template <typename KK, typename VV>
+        void construct_at(size_type i, KK &&k, VV &&v)
+        {
+            construct_slot(i, detail::integral_constant<bool, kIndirect>(), detail::forward<KK>(k), detail::forward<VV>(v));
+        }
+        template <typename KK, typename VV>
+        void construct_slot(size_type i, detail::false_type, KK &&k, VV &&v)
+        {
+            ::new (static_cast<void *>(&slots_[i])) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
+        }
+        template <typename KK, typename VV>
+        void construct_slot(size_type i, detail::true_type, KK &&k, VV &&v)
+        {
+            void *block = allocator().allocate(sizeof(Entry), alignof(Entry));
+            ::new (block) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
+            slots_[i] = static_cast<Entry *>(block);
+        }
+
+        void destroy_at(size_type i) { destroy_slot(i, detail::integral_constant<bool, kIndirect>()); }
+        void destroy_slot(size_type i, detail::false_type) { slots_[i].~Entry(); }
+        void destroy_slot(size_type i, detail::true_type)
+        {
+            slots_[i]->~Entry();
+            allocator().deallocate(slots_[i], sizeof(Entry));
+        }
+
+        // Move o elemento do slot from para o slot to (que esta por construir) e deixa from por construir
+        void move_slot(size_type to, size_type from) { move_slot_impl(to, from, detail::integral_constant<bool, kIndirect>()); }
+        void move_slot_impl(size_type to, size_type from, detail::false_type)
+        {
+            ::new (static_cast<void *>(&slots_[to])) Entry{detail::move(slots_[from].key), detail::move(slots_[from].value)};
+            slots_[from].~Entry();
+        }
+        void move_slot_impl(size_type to, size_type from, detail::true_type) { slots_[to] = slots_[from]; }
 
         // Pre-condicao: esta tabela esta vazia e o.size_ > 0. Quando o hasher e o da origem (a copia construida) e a
         // capacidade que fica e a dela (o caso de uma tabela que cresceu por dobragem), cada entrada volta ao mesmo
@@ -404,56 +555,76 @@ namespace ct
             reserve(o.size_);
             if (same_hasher && mask_ == o.mask_)
             {
-                for (size_type i = 0; i <= mask_; ++i)
-                    if (o.meta_[i])
-                        ::new (static_cast<void *>(&slots_[i])) Entry(o.slots_[i]);
+                const std::uint8_t *const src_meta = o.meta_;
+                Slot *const src = o.slots_;
+                Slot *const dst = slots_;
+                const size_type last = mask_;
+                for (size_type i = 0; i <= last; ++i)
+                    if (src_meta[i])
+                        copy_slot(dst, i, entry_ref(src[i], detail::integral_constant<bool, kIndirect>()),
+                                  detail::integral_constant<bool, kIndirect>());
                 std::memcpy(meta_, o.meta_, mask_ + 1);
                 size_ = o.size_;
+                CT_HASH_TOUCH();
                 return;
             }
+            copy_by_put(o);
+        }
+        CT_NOINLINE void copy_by_put(const HashMap &o)
+        {
             for (size_type i = 0; i <= o.mask_; ++i)
                 if (o.meta_[i])
-                    put(o.slots_[i].key, o.slots_[i].value);
+                    put(o.entry(i).key, o.entry(i).value);
+        }
+        static void copy_slot(Slot *dst, size_type i, const Entry &e, detail::false_type) { ::new (static_cast<void *>(&dst[i])) Entry(e); }
+        void copy_slot(Slot *dst, size_type i, const Entry &e, detail::true_type)
+        {
+            void *block = allocator().allocate(sizeof(Entry), alignof(Entry));
+            ::new (block) Entry(e);
+            dst[i] = static_cast<Entry *>(block);
         }
 
         template <typename KK, typename VV>
         CT_NOINLINE V &put_slow(KK &&k, VV &&v)
         {
+            size_type dist;
             if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
-                size_type i = probe(k);
+                size_type i = probe(k, dist);
                 if (meta_[i])
                 {
-                    slots_[i].value = detail::forward<VV>(v);
-                    return slots_[i].value;
+                    entry(i).value = detail::forward<VV>(v);
+                    return entry(i).value;
                 }
             }
             K stable_key(detail::forward<KK>(k));
             V stable_value(detail::forward<VV>(v));
             grow();
-            size_type i = probe(stable_key);
-            ::new (static_cast<void *>(&slots_[i]))
-                Entry{detail::move(stable_key), detail::move(stable_value)};
-            meta_[i] = 1;
+            size_type i = probe(stable_key, dist);
+            construct_at(i, detail::move(stable_key), detail::move(stable_value));
+            meta_[i] = meta_for(dist);
             ++size_;
-            return slots_[i].value;
+            CT_HASH_TOUCH();
+            return entry(i).value;
         }
 
         CT_NOINLINE V &index_slow(const K &k)
         {
+            size_type dist;
             if (slots_ && size_ < mask_ + 1) /* at least one empty slot: probe terminates */
             {
-                size_type i = probe(k);
+                size_type i = probe(k, dist);
                 if (meta_[i])
-                    return slots_[i].value;
+                    return entry(i).value;
             }
             K stable_key(k);
             grow();
-            size_type i = probe(stable_key);
-            ::new (static_cast<void *>(&slots_[i])) Entry{detail::move(stable_key), V()};
-            meta_[i] = 1;
+            size_type i = probe(stable_key, dist);
+            construct_at(i, detail::move(stable_key), V());
+            meta_[i] = meta_for(dist);
             ++size_;
-            return slots_[i].value;
+            CT_HASH_TOUCH();
+            return entry(i).value;
         }
 
         std::uint64_t hash_of(const K &k) const
@@ -481,24 +652,68 @@ namespace ct
         {
             const H &hasher = *static_cast<const H *>(this);
             size_type i = static_cast<size_type>(hasher(k)) & mask_;
+            if (kDist)
+            {
+                size_type d = 0x81;
+                for (;;)
+                {
+                    const std::uint8_t m = meta_[i];
+                    if (!m || ((m == d || m == 255) && hasher.equal(entry(i).key, k)))
+                        return i;
+                    i = (i + 1) & mask_;
+                    ++d;
+                }
+            }
             while (meta_[i])
             {
-                if (hasher.equal(slots_[i].key, k))
+                if (hasher.equal(entry(i).key, k))
                     return i;
                 i = (i + 1) & mask_;
             }
             return i;
         }
 
+        // O slot da chave, ou o primeiro livre da sondagem. As chaves sem distancia (inteiros, enumeracoes, ponteiros)
+        // sondam como sempre, sem contador; probe(k, dist) devolve tambem a distancia desse slot ao de origem, que so
+        // as chaves com distancia calculam (para a guardar na meta de quem se insere).
         size_type probe(const K &k) const
         {
+            if (kDist)
+            {
+                size_type d;
+                return probe_dist(k, d);
+            }
             size_type i = static_cast<size_type>(hash_of(k)) & mask_;
             while (meta_[i])
             {
-                if (slots_[i].key == k)
+                if (entry(i).key == k)
                     return i;
                 i = (i + 1) & mask_;
             }
+            return i;
+        }
+
+        size_type probe(const K &k, size_type &dist) const
+        {
+            if (kDist)
+                return probe_dist(k, dist);
+            dist = 0;
+            return probe(k);
+        }
+
+        size_type probe_dist(const K &k, size_type &dist) const
+        {
+            size_type i = static_cast<size_type>(hash_of(k)) & mask_;
+            size_type d = 0x81;
+            for (;;)
+            {
+                const std::uint8_t m = meta_[i];
+                if (!m || ((m == d || m == 255) && entry(i).key == k))
+                    break;
+                i = (i + 1) & mask_;
+                ++d;
+            }
+            dist = d - 0x81;
             return i;
         }
 
@@ -512,19 +727,20 @@ namespace ct
 
         void rehash(size_type new_cap)
         {
+            CT_HASH_TOUCH();
             if (new_cap < 2 || !detail::is_power_of_two(new_cap))
                 detail::fatal("ct::HashMap: capacidade invalida");
-            Entry *old_slots = slots_;
+            Slot *old_slots = slots_;
             std::uint8_t *old_meta = meta_;
             size_type old_cap = slots_ ? mask_ + 1 : 0;
 
             size_type entries_bytes = 0;
             size_type bytes = 0;
-            if (!detail::checked_mul(new_cap, sizeof(Entry), entries_bytes) ||
+            if (!detail::checked_mul(new_cap, sizeof(Slot), entries_bytes) ||
                 !detail::checked_add(entries_bytes, new_cap, bytes))
                 detail::fatal("ct::HashMap: tamanho invalido");
-            void *blk = allocator().allocate(bytes, alignof(Entry));
-            slots_ = static_cast<Entry *>(blk);
+            void *blk = allocator().allocate(bytes, alignof(Slot));
+            slots_ = static_cast<Slot *>(blk);
             meta_ = reinterpret_cast<std::uint8_t *>(slots_ + new_cap);
             std::memset(meta_, 0, new_cap);
             mask_ = new_cap - 1;
@@ -532,32 +748,41 @@ namespace ct
             for (size_type i = 0; i < old_cap; ++i)
                 if (old_meta[i])
                 {
-                    size_type j = static_cast<size_type>(hash_of(old_slots[i].key)) & mask_;
+                    Entry &e = entry_ref(old_slots[i], detail::integral_constant<bool, kIndirect>());
+                    size_type j = static_cast<size_type>(hash_of(e.key)) & mask_;
+                    size_type d = 0;
                     while (meta_[j])
+                    {
                         j = (j + 1) & mask_;
-                    ::new (static_cast<void *>(&slots_[j]))
-                        Entry{detail::move(old_slots[i].key),
-                              detail::move(old_slots[i].value)};
-                    meta_[j] = 1;
-                    old_slots[i].~Entry();
+                        ++d;
+                    }
+                    relocate_into(j, old_slots[i], detail::integral_constant<bool, kIndirect>());
+                    meta_[j] = meta_for(d);
                 }
             if (old_slots)
             {
                 size_type old_entries_bytes = 0;
                 size_type old_bytes = 0;
-                if (!detail::checked_mul(old_cap, sizeof(Entry), old_entries_bytes) ||
+                if (!detail::checked_mul(old_cap, sizeof(Slot), old_entries_bytes) ||
                     !detail::checked_add(old_entries_bytes, old_cap, old_bytes))
                     detail::fatal("ct::HashMap: tamanho invalido");
                 allocator().deallocate(old_slots, old_bytes);
             }
         }
+        // move o elemento de um slot da tabela antiga para o slot j da nova
+        void relocate_into(size_type j, Entry &from, detail::false_type)
+        {
+            ::new (static_cast<void *>(&slots_[j])) Entry{detail::move(from.key), detail::move(from.value)};
+            from.~Entry();
+        }
+        void relocate_into(size_type j, Entry *from, detail::true_type) { slots_[j] = from; }
 
         void destroy_all()
         {
             if (slots_ && size_)
                 for (size_type i = 0; i <= mask_; ++i)
                     if (meta_[i])
-                        slots_[i].~Entry();
+                        destroy_at(i);
         }
 
         Alloc &allocator() { return static_cast<Alloc &>(*this); }
@@ -568,7 +793,7 @@ namespace ct
                 return;
             size_type entries_bytes = 0;
             size_type bytes = 0;
-            if (!detail::checked_mul(mask_ + 1, sizeof(Entry), entries_bytes) ||
+            if (!detail::checked_mul(mask_ + 1, sizeof(Slot), entries_bytes) ||
                 !detail::checked_add(entries_bytes, mask_ + 1, bytes))
                 detail::fatal("ct::HashMap: tamanho invalido");
             allocator().deallocate(slots_, bytes);

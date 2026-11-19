@@ -12,6 +12,17 @@
 #include <new> 
 #include <type_traits>
 
+#if !defined(CT_DEBUG_ITERATORS) && !defined(NDEBUG)
+#define CT_DEBUG_ITERATORS 1
+#endif
+#if defined(CT_DEBUG_ITERATORS)
+#define CT_HASH_TOUCH() (++version_)
+#define CT_HASH_ITER_ARGS , &version_
+#else
+#define CT_HASH_TOUCH() ((void)0)
+#define CT_HASH_ITER_ARGS
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define CT_LIKELY(x) __builtin_expect(!!(x), 1)
 #define CT_UNLIKELY(x) __builtin_expect(!!(x), 0)
@@ -524,11 +535,16 @@ namespace ct
 
         // Os n bytes (1 a 8) de meta a partir de m (cada um 0 = livre ou 1 = ocupado) como uma palavra em que o bit 8k
         // esta aceso quando o slot k esta ocupado.
+        // Com Tagged a meta de um ocupado tem o bit alto aceso (0x80 mais a distancia do elemento ao seu slot de origem), e a
+        // palavra devolvida tem o bit 8k + 7 aceso nos ocupados.
+        template <bool Tagged = false>
         inline std::uint64_t meta_group(const unsigned char *m, std::size_t n) noexcept
         {
             std::uint64_t w = 0;
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
             std::memcpy(&w, m, n);
+            if (Tagged)
+                w &= 0x8080808080808080ull;
 #else
             for (std::size_t k = 0; k < n; ++k)
                 if (m[k])
@@ -540,7 +556,7 @@ namespace ct
         // Iterador das tabelas de hash: le a meta 8 slots de cada vez e visita os ocupados pelos bits acesos da palavra,
         // por isso o custo por elemento nao depende de quantos buracos ha pelo meio (a 38 % de carga eram quatro
         // quintos dos ciclos). E o ocupado atual e o bit mais baixo que resta.
-        template <typename E>
+        template <typename E, bool Tagged = false>
         class SlotIter
         {
             E *eg_;
@@ -548,7 +564,7 @@ namespace ct
             const unsigned char *mend_;
             std::uint64_t bits_;
 
-            template <typename U>
+            template <typename U, bool T>
             friend class SlotIter;
 
         public:
@@ -557,7 +573,7 @@ namespace ct
                 load();
             }
             template <typename U, typename = typename enable_if<is_same<const U, E>::value && !is_same<U, E>::value>::type>
-            SlotIter(const SlotIter<U> &o) noexcept : eg_(o.eg_), mg_(o.mg_), mend_(o.mend_), bits_(o.bits_)
+            SlotIter(const SlotIter<U, Tagged> &o) noexcept : eg_(o.eg_), mg_(o.mg_), mend_(o.mend_), bits_(o.bits_)
             {
             }
             E &operator*() const noexcept { return eg_[ctz64(bits_) >> 3]; }
@@ -588,13 +604,95 @@ namespace ct
                 while (mg_ != mend_)
                 {
                     const std::size_t n = group_size();
-                    bits_ = meta_group(mg_, n);
+                    bits_ = meta_group<Tagged>(mg_, n);
                     if (bits_)
                         return;
                     mg_ += n;
                     eg_ += n;
                 }
             }
+        };
+
+#if defined(CT_DEBUG_ITERATORS)
+        // So em compilacoes de depuracao (CT_DEBUG_ITERATORS, que por omissao existe quando NDEBUG nao existe e tem de
+        // ser igual em todas as unidades): o iterador de HashMap e HashSet guarda a versao da tabela quando nasce e
+        // aborta se for usado (*, ->, ++) depois de a tabela ter mudado, que e o que apagar ou inserir durante um
+        // ciclo for faz. Em Release o iterador e o SlotIter de sempre, sem custo nenhum.
+        template <typename E, bool Tagged = false>
+        class CheckedSlotIter
+        {
+            SlotIter<E, Tagged> it_;
+            const std::size_t *version_;
+            std::size_t seen_;
+
+            template <typename U, bool T>
+            friend class CheckedSlotIter;
+
+            void check() const
+            {
+                if (CT_UNLIKELY(*version_ != seen_))
+                    fatal("ct::HashMap/HashSet: iterador usado depois de a tabela mudar (apagar ou inserir durante o ciclo "
+                          "invalida os iteradores; para apagar varios elementos use erase_if)");
+            }
+
+        public:
+            CheckedSlotIter(E *e, const unsigned char *m, const unsigned char *mend, const std::size_t *version) noexcept
+                : it_(e, m, mend), version_(version), seen_(*version)
+            {
+            }
+            template <typename U, typename = typename enable_if<is_same<const U, E>::value && !is_same<U, E>::value>::type>
+            CheckedSlotIter(const CheckedSlotIter<U, Tagged> &o) noexcept : it_(o.it_), version_(o.version_), seen_(o.seen_)
+            {
+            }
+            E &operator*() const
+            {
+                check();
+                return *it_;
+            }
+            E *operator->() const
+            {
+                check();
+                return it_.operator->();
+            }
+            CheckedSlotIter &operator++()
+            {
+                check();
+                ++it_;
+                return *this;
+            }
+            bool operator==(const CheckedSlotIter &o) const noexcept { return it_ == o.it_; }
+            bool operator!=(const CheckedSlotIter &o) const noexcept { return !(it_ == o.it_); }
+        };
+#endif
+
+        // Iterador de tabelas cujos slots guardam ponteiros para as entradas (HashMap com entradas grandes): o mesmo
+        // iterador por baixo, e o * e o -> vao ao bloco da entrada.
+        template <typename Inner, typename E>
+        class IndirectIter
+        {
+            Inner it_;
+
+            template <typename I2, typename E2>
+            friend class IndirectIter;
+
+        public:
+            template <typename P, typename... R>
+            IndirectIter(P *e, const unsigned char *m, const unsigned char *mend, R... r) noexcept : it_(e, m, mend, r...)
+            {
+            }
+            template <typename I2, typename E2, typename = typename enable_if<!is_same<I2, Inner>::value>::type>
+            IndirectIter(const IndirectIter<I2, E2> &o) noexcept : it_(o.it_)
+            {
+            }
+            E &operator*() const { return **it_; }
+            E *operator->() const { return *it_; }
+            IndirectIter &operator++()
+            {
+                ++it_;
+                return *this;
+            }
+            bool operator==(const IndirectIter &o) const noexcept { return it_ == o.it_; }
+            bool operator!=(const IndirectIter &o) const noexcept { return !(it_ == o.it_); }
         };
 
         inline std::uint64_t hash_mix(std::uint64_t x) noexcept

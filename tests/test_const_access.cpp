@@ -17,6 +17,8 @@
 #include <ct/flatmap.hpp>
 #include <ct/hashmap.hpp>
 #include <ct/hashset.hpp>
+#include <ct/slotmap.hpp>
+#include <ct/slotmap32.hpp>
 #include <ct/span.hpp>
 #include <ct/string.hpp>
 #include <ct/treemap.hpp>
@@ -201,6 +203,20 @@ namespace
         static_assert(is_same<decltype(declval<C &>()[0]), T &>::value, "operator[] nao const");
         static_assert(!CT_BINDS_MUTABLE(T, declval<const C &>()[0]), "operator[] const liga a T &");
     };
+
+    // ---- SlotMap e SlotMap32 (associativos por handle) ----
+    template <typename S, typename T>
+    struct HandleChecks
+    {
+        typedef typename S::handle_type H;
+        static_assert(is_same<decltype(declval<const S &>().get(declval<H>())), const T *>::value, "get const");
+        static_assert(is_same<decltype(declval<S &>().get(declval<H>())), T *>::value, "get");
+        static_assert(is_same<decltype(declval<const S &>()[declval<H>()]), const T &>::value, "operator[] const");
+        static_assert(is_same<decltype(*declval<const S &>().begin()), const T &>::value, "begin() const");
+        static_assert(is_same<decltype(*declval<S &>().begin()), T &>::value, "begin()");
+    };
+    template struct HandleChecks<ct::SlotMap<Small>, Small>;
+    template struct HandleChecks<ct::SlotMap32<Small>, Small>;
 
     // Um Span e uma vista (como o span da biblioteca standard): o const do proprio Span nao passa aos elementos; o que protege e o Span<const T>.
     static_assert(is_same<decltype(declval<const ct::Span<const int> &>()[0]), const int &>::value, "Span<const T>::operator[]");
@@ -396,6 +412,37 @@ namespace
         ASSERT_NE(ct_.find(5), nullptr);
         EXPECT_EQ(ct_.find(5)->x, 6);
     }
+
+#if __cplusplus >= 201703L
+    // Os bindings estruturados (C++17: o ct_tests compila-se em C++14, isto so entra numa unidade compilada com -std=c++17)
+    template <typename M, typename K, typename V>
+    void structured_bindings(M &m, const K &key)
+    {
+        m.put(key, V());
+        const M &cm = m;
+        const auto &[ck, cv] = *cm.begin();
+        EXPECT_TRUE(ct::detail::is_const<typename ct::detail::remove_ref<decltype(cv)>::type>::value);
+        EXPECT_TRUE(ct::detail::is_const<typename ct::detail::remove_ref<decltype(ck)>::type>::value);
+        auto &[mk, mv] = *m.begin();
+        EXPECT_FALSE(ct::detail::is_const<typename ct::detail::remove_ref<decltype(mv)>::type>::value);
+        EXPECT_TRUE(ct::detail::is_const<typename ct::detail::remove_ref<decltype(mk)>::type>::value);
+        mv.x = 5;
+        EXPECT_EQ(cm.find(key)->x, 5);
+    }
+    TEST(ConstAccess, StructuredBindings)
+    {
+        ct::HashMap<int, Small> a;
+        ct::HashMap<int, Big> b;
+        ct::HashMap<Key64, Big> c;
+        ct::BTreeMap<int, Big> d;
+        ct::FlatMap<int, Big> e;
+        structured_bindings<ct::HashMap<int, Small>, int, Small>(a, 1);
+        structured_bindings<ct::HashMap<int, Big>, int, Big>(b, 1);
+        structured_bindings<ct::HashMap<Key64, Big>, Key64, Big>(c, key64(1));
+        structured_bindings<ct::BTreeMap<int, Big>, int, Big>(d, 1);
+        structured_bindings<ct::FlatMap<int, Big>, int, Big>(e, 1);
+    }
+#endif
 
     TEST(ConstAccess, Sets)
     {

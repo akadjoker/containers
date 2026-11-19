@@ -127,7 +127,8 @@ add_executable(ct_tests
   tests/test_fuzz.cpp
   tests/test_fuzz2.cpp
   tests/test_coverage.cpp
-  tests/test_hardening.cpp)
+  tests/test_hardening.cpp
+  tests/test_edge.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)

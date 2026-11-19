@@ -61,14 +61,31 @@ namespace ct
             }
         }
 
+        // Poe em *result a mediana de *a, *b e *c.
         template <typename T, typename C>
-        inline T *median3(T *a, T *b, T *c, C cmp)
+        inline void move_median_to_first(T *result, T *a, T *b, T *c, C cmp)
         {
             if (cmp(*a, *b))
-                return cmp(*b, *c) ? b : (cmp(*a, *c) ? c : a);
-            return cmp(*a, *c) ? a : (cmp(*b, *c) ? c : b);
+            {
+                if (cmp(*b, *c))
+                    swap_vals(*result, *b);
+                else if (cmp(*a, *c))
+                    swap_vals(*result, *c);
+                else
+                    swap_vals(*result, *a);
+            }
+            else if (cmp(*a, *c))
+                swap_vals(*result, *a);
+            else if (cmp(*b, *c))
+                swap_vals(*result, *c);
+            else
+                swap_vals(*result, *b);
         }
 
+        // Particao de Hoare com o pivo (a mediana de tres) em *lo: as duas pontas param nos iguais ao pivo, por isso
+        // uma entrada com muitos repetidos parte-se ao meio em vez de ficar toda de um lado (o que gastava a profundidade
+        // e caia no heapsort), e uma entrada ordenada ao contrario nao troca quase nada. As guardas lo e hi custam um
+        // teste e mantem a leitura dentro do intervalo mesmo com um comparador que nao e uma ordem fraca estrita (<=).
         template <typename T, typename C>
         inline void intro_rec(T *lo, T *hi, int depth, C cmp)
         {
@@ -79,29 +96,23 @@ namespace ct
                     heap_sort(lo, hi, cmp);
                     return;
                 }
-                T *mid = lo + (hi - lo) / 2;
-                T *pv = median3(lo, mid, hi - 1, cmp);
-                swap_vals(*pv, *(hi - 1)); 
-                T &pivot = *(hi - 1);
-                T *i = lo;
-                for (T *j = lo; j < hi - 1; ++j)
-                    if (cmp(*j, pivot))
-                    {
-                        swap_vals(*i, *j);
-                        ++i;
-                    }
-                swap_vals(*i, *(hi - 1));
-
-                if (i - lo < hi - (i + 1))
+                move_median_to_first(lo, lo + 1, lo + (hi - lo) / 2, hi - 1, cmp);
+                T *left = lo + 1;
+                T *right = hi;
+                for (;;)
                 {
-                    intro_rec(lo, i, depth, cmp);
-                    lo = i + 1;
+                    while (left < hi && cmp(*left, *lo))
+                        ++left;
+                    --right;
+                    while (right > lo && cmp(*lo, *right))
+                        --right;
+                    if (!(left < right))
+                        break;
+                    swap_vals(*left, *right);
+                    ++left;
                 }
-                else
-                {
-                    intro_rec(i + 1, hi, depth, cmp);
-                    hi = i;
-                }
+                intro_rec(left, hi, depth, cmp);
+                hi = left;
             }
             insertion_sort(lo, hi, cmp);
         }

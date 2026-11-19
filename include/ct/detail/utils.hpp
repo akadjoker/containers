@@ -598,11 +598,63 @@ namespace ct
 
     struct HeapAlloc
     {
+#if defined(_WIN32)
         struct Header
         {
             void *raw;
         };
+#endif
 
+        // O malloc do sistema ja entrega 2 * sizeof(void *) bytes de alinhamento: ate ai o bloco e o do malloc, sem
+        // cabecalho (o que custava 8 bytes por alocacao, e uma cadeia de 24 a 40 caracteres passava de 32 para 48
+        // bytes no malloc). Mais alinhado que isso pede posix_memalign, que free() tambem solta, por isso
+        // deallocate nao precisa de saber o alinhamento. No Windows free() nao solta memoria de _aligned_malloc, e
+        // fica o cabecalho de sempre.
+#if !defined(_WIN32)
+        static constexpr std::size_t kMallocAlign = 2 * sizeof(void *);
+
+        void *allocate(std::size_t bytes, std::size_t align)
+        {
+            if (!detail::is_power_of_two(align))
+                detail::fatal("ct::HeapAlloc: alinhamento invalido");
+            if (bytes == 0)
+                bytes = 1;
+            void *p = nullptr;
+            if (align <= kMallocAlign)
+                p = std::malloc(bytes);
+            else if (::posix_memalign(&p, align, bytes) != 0)
+                p = nullptr;
+            if (CT_UNLIKELY(!p))
+                detail::fatal("ct::HeapAlloc: sem memoria");
+            return p;
+        }
+
+        void deallocate(void *p, std::size_t)
+        {
+            std::free(p);
+        }
+
+        void *reallocate(void *p, std::size_t old_bytes, std::size_t new_bytes, std::size_t align)
+        {
+            if (!p)
+                return allocate(new_bytes, align);
+            if (new_bytes == 0)
+                new_bytes = 1;
+            if (align <= kMallocAlign)
+            {
+                void *q = std::realloc(p, new_bytes);
+                if (CT_UNLIKELY(!q))
+                    detail::fatal("ct::HeapAlloc: sem memoria");
+                return q;
+            }
+            void *q = allocate(new_bytes, align);
+            const std::size_t copied = old_bytes < new_bytes ? old_bytes : new_bytes;
+            if (copied)
+                std::memcpy(q, p, copied);
+            deallocate(p, old_bytes);
+            return q;
+        }
+#else
         void *allocate(std::size_t bytes, std::size_t align)
         {
             if (!detail::is_power_of_two(align))
@@ -683,6 +735,7 @@ namespace ct
             deallocate(p, old_bytes);
             return q;
         }
+#endif
     };
 
     // Para quem usa a ct de fora, sem a biblioteca standard: ct::move e ct::forward fazem o que std::move e

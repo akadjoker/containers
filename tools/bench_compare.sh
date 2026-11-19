@@ -1,7 +1,7 @@
 #!/bin/bash
 # Compara a ct com a biblioteca standard e com outras (abseil, boost, ankerl, fmt), ver docs/COMPARACAO.md.
 #
-#   tools/bench_compare.sh fetch      descarrega as bibliotecas que faltam para $CT_COMPARE_THIRD (nada e instalado no sistema)
+#   tools/bench_compare.sh fetch      descarrega as bibliotecas que faltam para $CT_COMPARE_THIRD (nada e instalado no sistema; a EASTL e a EABase vem do git)
 #   tools/bench_compare.sh build      compila bench/compare (opcao CMake CT_BUILD_COMPARE, desligada por omissao)
 #   tools/bench_compare.sh time       tempo por operacao, alocacoes, bytes e RSS (uma linha por celula, ficheiro $OUT/time.tsv)
 #   tools/bench_compare.sh ir         instrucoes por operacao com callgrind (so se houver valgrind; ficheiro $OUT/ir.tsv)
@@ -53,12 +53,15 @@ stage_fetch() {
         curl -sSfL -o "$THIRD/ankerl/ankerl/unordered_dense.h" \
             https://raw.githubusercontent.com/martinus/unordered_dense/v4.5.0/include/ankerl/unordered_dense.h
     fi
+    for r in EASTL EABase; do
+        [ -d "$THIRD/$r" ] || git clone -q --depth 1 "https://github.com/electronicarts/$r.git" "$THIRD/$r" || echo "falhou $r" >&2
+    done
     echo "bibliotecas em $THIRD"
 }
 
 compare_includes() {
     inc=""
-    for d in "$THIRD"/root-*/usr/include "$THIRD"/ankerl; do [ -d "$d" ] && inc="$inc;$d"; done
+    for d in "$THIRD"/root-*/usr/include "$THIRD"/ankerl "$THIRD"/EASTL/include "$THIRD"/EABase/include/Common; do [ -d "$d" ] && inc="$inc;$d"; done
     echo "${inc#;}"
 }
 
@@ -76,9 +79,11 @@ compare_libs() {
 }
 
 stage_build() {
+    esrc=""
+    for f in "$THIRD"/EASTL/source/*.cpp; do [ -f "$f" ] && esrc="$esrc;$f"; done
     cmake -S "$ROOT" -B "$BUILD" -DCT_BUILD_COMPARE=ON -DCT_BUILD_TESTS=OFF -DCT_BUILD_BENCH=OFF \
         -DCMAKE_BUILD_TYPE=None -DCMAKE_CXX_FLAGS="$OPT -DNDEBUG" \
-        "-DCT_COMPARE_INCLUDES=$(compare_includes)" "-DCT_COMPARE_LIBS=$(compare_libs)" >"$OUT/cmake.log" 2>&1 || {
+        "-DCT_COMPARE_INCLUDES=$(compare_includes)" "-DCT_COMPARE_LIBS=$(compare_libs)" "-DCT_COMPARE_SOURCES=${esrc#;}" >"$OUT/cmake.log" 2>&1 || {
         echo "cmake falhou, ver $OUT/cmake.log" >&2
         return 1
     }
@@ -90,6 +95,12 @@ stage_build() {
 # Cada linha de matriz: familia|impls|cenarios|tipos|Ns   (Ns vazio = a lista por omissao)
 VEC_IMPLS="ct std boost"
 MAP_IMPLS="ct std absl boost ankerl"
+SORT_EXTRA=""
+if [ -d "$THIRD/EASTL/include" ]; then
+    VEC_IMPLS="$VEC_IMPLS eastl"
+    MAP_IMPLS="$MAP_IMPLS eastl"
+    SORT_EXTRA="eastl"
+fi
 
 matrix() {
     local fam=$1
@@ -141,10 +152,10 @@ matrix() {
     sort)
         for p in random sorted reversed dups; do
             for n in $NS; do
-                for i in "ct sort" "ct sort_nocmp" "std sort" "boost sort" "boost spread" "ct stable" "std stable"; do echo "cmp_sort $i int.$p $n"; done
+                for i in "ct sort" "ct sort_nocmp" "std sort" "boost sort" "boost spread" "ct stable" "std stable" ${SORT_EXTRA:+"eastl sort" "eastl stable"}; do echo "cmp_sort $i int.$p $n"; done
             done
             for n in $(echo $NS | sed 's/10000000/10000000/'); do
-                for i in "ct sort" "std sort" "boost sort" "ct stable" "std stable"; do echo "cmp_sort $i p16.$p $n"; done
+                for i in "ct sort" "std sort" "boost sort" "ct stable" "std stable" ${SORT_EXTRA:+"eastl sort" "eastl stable"}; do echo "cmp_sort $i p16.$p $n"; done
             done
             for n in 1000 100000; do
                 for i in "ct sort" "std sort" "boost sort" "ct stable" "std stable"; do echo "cmp_sort $i b256.$p $n"; echo "cmp_sort $i str.$p $n"; done
@@ -236,8 +247,8 @@ ir_matrix() {
         for i in ct charconv libc fmt; do for t in d wide; do echo "cmp_string $i d2short $t $n"; done; done
         for i in ct std charconv libc; do for t in f long wide; do echo "cmp_string $i s2f64 $t $n"; done; done
         for p in random sorted reversed dups; do
-            for i in "ct sort" "ct sort_nocmp" "std sort" "boost sort" "boost spread" "ct stable" "std stable"; do echo "cmp_sort $i int.$p $n"; done
-            for i in "ct sort" "std sort" "boost sort" "ct stable" "std stable"; do echo "cmp_sort $i p16.$p $n"; done
+            for i in "ct sort" "ct sort_nocmp" "std sort" "boost sort" "boost spread" "ct stable" "std stable" ${SORT_EXTRA:+"eastl sort" "eastl stable"}; do echo "cmp_sort $i int.$p $n"; done
+            for i in "ct sort" "std sort" "boost sort" "ct stable" "std stable" ${SORT_EXTRA:+"eastl sort" "eastl stable"}; do echo "cmp_sort $i p16.$p $n"; done
         done
         for t in int p16; do for i in ct std boost; do for s in push_back push_front iterate drain fifo; do echo "cmp_misc deque $i $s $t $n"; done; done; done
         for i in ctree cflat stdmap btree bflat; do for s in build hit erase; do echo "cmp_misc ordered $i $s int 10000"; done; done

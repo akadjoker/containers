@@ -1,6 +1,6 @@
 // Ordenacao: ct::sort / ct::stable_sort contra std::sort, std::stable_sort e boost::sort (pdqsort, spreadsort).
 // uso: cmp_sort <impl> <algoritmo> <tipo.padrao> <N>
-//   impl: ct std boost    algoritmo: sort stable    tipo: int p16 b256 str    padrao: random sorted reversed dups
+//   impl: ct std boost eastl    algoritmo: sort stable    tipo: int p16 b256 str    padrao: random sorted reversed dups
 #include "harness.hpp"
 
 #include <ct/sort.hpp>
@@ -12,6 +12,11 @@
 #include <type_traits>
 #include <vector>
 
+#if __has_include(<EASTL/sort.h>)
+#include <EASTL/sort.h>
+#include <EASTL/bonus/sort_extra.h>
+#define CMP_EASTL 1
+#endif
 #if __has_include(<boost/sort/pdqsort/pdqsort.hpp>)
 #include <boost/sort/pdqsort/pdqsort.hpp>
 #include <boost/sort/spreadsort/spreadsort.hpp>
@@ -75,7 +80,7 @@ template <> struct Gen<std::string> : GenStr<std::string> {};
 
 struct Algo
 {
-    enum Kind { CtSort, CtStable, StdSort, StdStable, BoostPdq, BoostSpread } k;
+    enum Kind { CtSort, CtStable, StdSort, StdStable, BoostPdq, BoostSpread, EastlSort, EastlStable } k;
 };
 
 template <class V, class T> static void do_sort(Algo a, V &v)
@@ -87,6 +92,10 @@ template <class V, class T> static void do_sort(Algo a, V &v)
     case Algo::CtStable: ct::stable_sort(v.begin(), v.end(), cmp); break;
     case Algo::StdSort: std::sort(v.begin(), v.end(), cmp); break;
     case Algo::StdStable: std::stable_sort(v.begin(), v.end(), cmp); break;
+#ifdef CMP_EASTL
+    case Algo::EastlSort: eastl::sort(v.begin(), v.end(), cmp); break;
+    case Algo::EastlStable: eastl::merge_sort(v.begin(), v.end(), *eastl::get_default_allocator((eastl::allocator *)nullptr), cmp); break;
+#endif
 #ifdef CMP_BOOST
     case Algo::BoostPdq: boost::sort::pdqsort(v.begin(), v.end(), cmp); break;
     default: break;
@@ -139,6 +148,9 @@ template <class T, class V> static int run_t(const char *impl, const char *algo,
     bool nocmp = false;
     if (!std::strcmp(impl, "ct")) { a.k = !std::strcmp(algo, "stable") ? Algo::CtStable : Algo::CtSort; nocmp = !std::strcmp(algo, "sort_nocmp"); }
     else if (!std::strcmp(impl, "std")) a.k = !std::strcmp(algo, "stable") ? Algo::StdStable : Algo::StdSort;
+#ifdef CMP_EASTL
+    else if (!std::strcmp(impl, "eastl")) a.k = !std::strcmp(algo, "stable") ? Algo::EastlStable : Algo::EastlSort;
+#endif
 #ifdef CMP_BOOST
     else if (!std::strcmp(impl, "boost")) { a.k = !std::strcmp(algo, "spread") ? Algo::BoostSpread : Algo::BoostPdq; nocmp = !std::strcmp(algo, "spread"); }
 #endif

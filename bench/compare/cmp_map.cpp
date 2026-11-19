@@ -1,6 +1,6 @@
 // Mapas de hash: ct::HashMap contra std::unordered_map, absl::flat_hash_map, boost::unordered_flat_map e
-// ankerl::unordered_dense::map, cada um com o seu hasher por omissao.
-// uso: cmp_map <impl> <cenario> <chave-valor> <N>   impl: ct std absl boost ankerl   tipo: int-int int-p16 int-b256 int-mo s8-int s20-int s40-int (e int-b32 a int-b1024 para varrer o tamanho do valor)
+// ankerl::unordered_dense::map e eastl::hash_map, cada um com o seu hasher por omissao.
+// uso: cmp_map <impl> <cenario> <chave-valor> <N>   impl: ct std absl boost ankerl eastl   tipo: int-int int-p16 int-b256 int-mo s8-int s20-int s40-int (e int-b32 a int-b1024 para varrer o tamanho do valor)
 #include "harness.hpp"
 
 #include <ct/hashmap.hpp>
@@ -18,6 +18,11 @@
 #if __has_include(<boost/unordered/unordered_flat_map.hpp>)
 #include <boost/unordered/unordered_flat_map.hpp>
 #define CMP_BOOST 1
+#endif
+#if __has_include(<EASTL/hash_map.h>)
+#include <EASTL/hash_map.h>
+#include <EASTL/string.h>
+#define CMP_EASTL 1
 #endif
 #if __has_include(<ankerl/unordered_dense.h>)
 #include <ankerl/unordered_dense.h>
@@ -81,6 +86,9 @@ struct StdTag { static constexpr const char *name = "std"; using Str = std::stri
 struct AbslTag { static constexpr const char *name = "absl"; using Str = std::string; };
 struct BoostTag { static constexpr const char *name = "boost"; using Str = std::string; };
 struct AnkerlTag { static constexpr const char *name = "ankerl"; using Str = std::string; };
+#ifdef CMP_EASTL
+struct EastlTag { static constexpr const char *name = "eastl"; using Str = eastl::string; };
+#endif
 
 template <class Tag, class K, class V> struct Adapter;
 
@@ -114,6 +122,9 @@ CMP_STD_LIKE(BoostTag, boost::unordered_flat_map<K, V>)
 #endif
 #ifdef CMP_ANKERL
 CMP_STD_LIKE(AnkerlTag, ankerl::unordered_dense::map<K, V>)
+#endif
+#ifdef CMP_EASTL
+CMP_STD_LIKE(EastlTag, eastl::hash_map<K, V>)
 #endif
 
 template <class Tag, Kind KD, class V> struct Ctx
@@ -382,6 +393,9 @@ int main(int argc, char **argv)
 #endif
 #ifdef CMP_ANKERL
     if (!std::strcmp(impl, "ankerl")) return by_type<AnkerlTag>(argv[2], argv[3], R);
+#endif
+#ifdef CMP_EASTL
+    if (!std::strcmp(impl, "eastl")) return by_type<EastlTag>(argv[2], argv[3], R);
 #endif
     std::fprintf(stderr, "impl desconhecida %s\n", impl);
     return 2;

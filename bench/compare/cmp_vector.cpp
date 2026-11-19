@@ -1,5 +1,5 @@
-// Vector: ct::Vector contra std::vector e boost::container::vector.
-// uso: cmp_vector <impl> <cenario> <tipo> <N>     impl: ct std boost    tipo: int p16 b256 mo
+// Vector: ct::Vector contra std::vector, boost::container::vector e eastl::vector.
+// uso: cmp_vector <impl> <cenario> <tipo> <N>     impl: ct std boost eastl    tipo: int p16 b256 mo
 #include "harness.hpp"
 
 #include <ct/vector.hpp>
@@ -8,6 +8,10 @@
 #include <utility>
 #include <vector>
 
+#if __has_include(<EASTL/vector.h>)
+#include <EASTL/vector.h>
+#define CMP_EASTL 1
+#endif
 #if __has_include(<boost/container/vector.hpp>)
 #include <boost/container/vector.hpp>
 #define CMP_BOOST 1
@@ -311,6 +315,13 @@ template <class T> static int by_impl(const char *impl, const char *scen, const 
     {
         if (g) { growth<boost::container::vector<T>, T>(impl, type, R.n); return 0; }
         return run_c<boost::container::vector<T>, T>(impl, scen, type, R);
+    }
+#endif
+#ifdef CMP_EASTL
+    if (!std::strcmp(impl, "eastl"))
+    {
+        if (g) { growth<eastl::vector<T>, T>(impl, type, R.n); return 0; }
+        return run_c<eastl::vector<T>, T>(impl, scen, type, R);
     }
 #endif
     std::fprintf(stderr, "impl desconhecida %s\n", impl);

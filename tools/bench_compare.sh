@@ -155,8 +155,10 @@ matrix() {
         for t in int s20; do
             for n in 1000 100000 1000000; do
                 [ "$n" = 1000000 ] && [ "$t" = s20 ] && continue
+                # inserir e apagar a meio de um vetor ordenado de Strings e O(N^2) moves: 1e5 leva minutos
                 for i in ctree cflat stdmap btree bflat; do
                     [ "$n" = 1000000 ] && { [ "$i" = cflat ] || [ "$i" = bflat ]; } && continue
+                    [ "$n" = 100000 ] && [ "$t" = s20 ] && { [ "$i" = cflat ] || [ "$i" = bflat ]; } && continue
                     for s in build hit miss erase iterate; do echo "cmp_misc ordered $i $s $t $n"; done
                 done
             done

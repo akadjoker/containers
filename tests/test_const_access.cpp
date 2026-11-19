@@ -202,7 +202,7 @@ namespace
         static_assert(!CT_BINDS_MUTABLE(T, declval<const C &>()[0]), "operator[] const liga a T &");
     };
 
-    // Um Span e uma vista (como o std::span): o const do proprio Span nao passa aos elementos; o que protege e o Span<const T>.
+    // Um Span e uma vista (como o span da biblioteca standard): o const do proprio Span nao passa aos elementos; o que protege e o Span<const T>.
     static_assert(is_same<decltype(declval<const ct::Span<const int> &>()[0]), const int &>::value, "Span<const T>::operator[]");
     static_assert(is_same<decltype(*declval<const ct::Span<const int> &>().begin()), const int &>::value, "Span<const T>::begin");
     static_assert(is_same<decltype(declval<const ct::Span<const int> &>().front()), const int &>::value, "Span<const T>::front");

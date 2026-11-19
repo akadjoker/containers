@@ -528,3 +528,635 @@ TEST(EdgeHashMap, MovedFromMapsAreEmptyAndReusable)
     EXPECT_TRUE(s.contains(2));
     EXPECT_TRUE(t.contains(1));
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Vida dos elementos: cada construcao tem de ter a sua destruicao, exatamente uma vez
+// ---------------------------------------------------------------------------------------------------------------------
+#include <ct/deque.hpp>
+#include <ct/flatmap.hpp>
+#include <ct/string.hpp>
+#include <ct/treemap.hpp>
+
+namespace
+{
+    int g_live = 0;
+
+    struct Counted
+    {
+        int v;
+        Counted() : v(0) { ++g_live; }
+        explicit Counted(int x) : v(x) { ++g_live; }
+        Counted(const Counted &o) : v(o.v) { ++g_live; }
+        Counted(Counted &&o) noexcept : v(o.v)
+        {
+            o.v = -1;
+            ++g_live;
+        }
+        Counted &operator=(const Counted &o)
+        {
+            v = o.v;
+            return *this;
+        }
+        Counted &operator=(Counted &&o) noexcept
+        {
+            v = o.v;
+            o.v = -1;
+            return *this;
+        }
+        ~Counted() { --g_live; }
+        bool operator==(const Counted &o) const { return v == o.v; }
+        bool operator<(const Counted &o) const { return v < o.v; }
+    };
+
+    struct MoveOnly
+    {
+        int v;
+        explicit MoveOnly(int x = 0) : v(x) { ++g_live; }
+        MoveOnly(MoveOnly &&o) noexcept : v(o.v)
+        {
+            o.v = -1;
+            ++g_live;
+        }
+        MoveOnly &operator=(MoveOnly &&o) noexcept
+        {
+            v = o.v;
+            o.v = -1;
+            return *this;
+        }
+        MoveOnly(const MoveOnly &) = delete;
+        MoveOnly &operator=(const MoveOnly &) = delete;
+        ~MoveOnly() { --g_live; }
+    };
+
+    struct alignas(64) Aligned64
+    {
+        int v;
+        Aligned64() : v(0) {}
+        explicit Aligned64(int x) : v(x) {}
+        bool operator==(const Aligned64 &o) const { return v == o.v; }
+    };
+
+    struct alignas(32) Aligned32
+    {
+        long long v[2];
+        Aligned32() { v[0] = v[1] = 0; }
+        bool operator==(const Aligned32 &o) const { return v[0] == o.v[0]; }
+    };
+
+    struct Huge
+    {
+        char bytes[4096];
+        Huge() { memset(bytes, 0, sizeof(bytes)); }
+        explicit Huge(char c) { memset(bytes, c, sizeof(bytes)); }
+    };
+}
+
+TEST(EdgeLifetime, VectorEveryOperationBalancesConstructionsAndDestructions)
+{
+    g_live = 0;
+    {
+        ct::Vector<Counted> v;
+        for (int i = 0; i < 100; ++i)
+        {
+            v.push_back(Counted(i));
+            ASSERT_EQ(g_live, static_cast<int>(v.size()));
+        }
+        v.emplace_back(5);
+        v.insert(v.begin() + 3, Counted(77));
+        v.erase(v.begin() + 10);
+        v.erase(v.begin() + 5, v.begin() + 20);
+        ASSERT_EQ(g_live, static_cast<int>(v.size()));
+        v.resize(10);
+        ASSERT_EQ(g_live, 10);
+        v.resize(500, Counted(9));
+        ASSERT_EQ(g_live, 500);
+        ct::Vector<Counted> c(v);
+        ASSERT_EQ(g_live, 1000);
+        c.assign(7, Counted(3));
+        ASSERT_EQ(g_live, 507);
+        ct::Vector<Counted> m(static_cast<ct::Vector<Counted> &&>(v));
+        ASSERT_EQ(g_live, 507);
+        ASSERT_EQ(v.size(), 0u);
+        v = c;
+        ASSERT_EQ(g_live, 514);
+        v.shrink_to_fit();
+        v.pop_back();
+        v.clear();
+        ASSERT_EQ(g_live, 507);
+        c.swap(m);
+        c = static_cast<ct::Vector<Counted> &&>(m);
+        m.push_back(Counted(1));
+        ASSERT_EQ(g_live, static_cast<int>(c.size() + m.size() + v.size()));
+        c.reserve(5000);
+        ASSERT_EQ(g_live, static_cast<int>(c.size() + m.size()));
+    }
+    EXPECT_EQ(g_live, 0);
+}
+
+TEST(EdgeLifetime, MoveOnlyElementsInEveryContainer)
+{
+    g_live = 0;
+    {
+        ct::Vector<MoveOnly> v;
+        for (int i = 0; i < 200; ++i)
+            v.push_back(MoveOnly(i));
+        v.insert(v.begin(), MoveOnly(-5));
+        v.erase(v.begin() + 100);
+        ASSERT_EQ(g_live, static_cast<int>(v.size()));
+        ct::Deque<MoveOnly> d;
+        for (int i = 0; i < 200; ++i)
+        {
+            d.push_back(MoveOnly(i));
+            d.push_front(MoveOnly(-i));
+        }
+        d.pop_front();
+        d.pop_back();
+        ASSERT_EQ(g_live, static_cast<int>(v.size() + d.size()));
+        ct::HashMap<int, MoveOnly> h;
+        for (int i = 0; i < 200; ++i)
+            h.put(i, MoveOnly(i));
+        for (int i = 0; i < 200; i += 3)
+            h.erase(i);
+        h.put(1, MoveOnly(1000));
+        ASSERT_EQ(g_live, static_cast<int>(v.size() + d.size() + h.size()));
+        ct::TreeMap<int, MoveOnly> t;
+        for (int i = 0; i < 200; ++i)
+            t.put(i, MoveOnly(i));
+        for (int i = 0; i < 200; i += 2)
+            t.erase(i);
+        ASSERT_TRUE(t.validate());
+        ASSERT_EQ(g_live, static_cast<int>(v.size() + d.size() + h.size() + t.size()));
+        ct::HashMap<int, MoveOnly> h2(static_cast<ct::HashMap<int, MoveOnly> &&>(h));
+        ASSERT_EQ(g_live, static_cast<int>(v.size() + d.size() + h2.size() + t.size()));
+    }
+    EXPECT_EQ(g_live, 0);
+}
+
+TEST(EdgeLifetime, DequeHashMapTreeMapFlatMapBalance)
+{
+    g_live = 0;
+    {
+        ct::Deque<Counted> d;
+        for (int i = 0; i < 300; ++i)
+        {
+            if (i % 3)
+                d.push_back(Counted(i));
+            else
+                d.push_front(Counted(i));
+            ASSERT_EQ(g_live, static_cast<int>(d.size()));
+        }
+        ct::Deque<Counted> dc(d);
+        d.resize(50);
+        d.resize(400, Counted(1));
+        while (d.size() > 10)
+            d.pop_front();
+        ASSERT_EQ(g_live, static_cast<int>(d.size() + dc.size()));
+        ct::HashMap<int, Counted> h;
+        for (int i = 0; i < 1000; ++i)
+            h.put(i % 300, Counted(i));
+        for (int i = 0; i < 300; i += 2)
+            h.erase(i);
+        ct::HashMap<int, Counted> hc(h);
+        h.clear();
+        ASSERT_EQ(g_live, static_cast<int>(d.size() + dc.size() + hc.size()));
+        ct::TreeMap<int, Counted> t;
+        ct::FlatMap<int, Counted> f;
+        for (int i = 0; i < 500; ++i)
+        {
+            t.put((i * 7) % 211, Counted(i));
+            f.put((i * 7) % 211, Counted(i));
+        }
+        ASSERT_TRUE(t.validate());
+        for (int i = 0; i < 211; i += 3)
+        {
+            t.erase(i);
+            f.erase(i);
+        }
+        ASSERT_TRUE(t.validate());
+        ct::TreeMap<int, Counted> tc(t);
+        ct::FlatMap<int, Counted> fc(f);
+        ASSERT_EQ(g_live, static_cast<int>(d.size() + dc.size() + hc.size() + t.size() * 2 + f.size() * 2));
+        t.clear();
+        ASSERT_EQ(g_live, static_cast<int>(d.size() + dc.size() + hc.size() + tc.size() + f.size() * 2));
+    }
+    EXPECT_EQ(g_live, 0);
+}
+
+// push_back/insert/emplace/assign/resize de um elemento do proprio vetor, em cada capacidade (a realocacao nao pode
+// deixar a referencia a apontar para memoria solta).
+TEST(EdgeSelfReference, VectorSelfInsertionAtEveryCapacityBoundary)
+{
+    for (int n = 1; n <= 70; ++n)
+    {
+        for (int mode = 0; mode < 6; ++mode)
+        {
+            ct::Vector<ct::String> v;
+            ct::Vector<int> w;
+            v.reserve(static_cast<size_t>(n));
+            for (int i = 0; i < n; ++i)
+            {
+                ct::String s;
+                s.append("element-number-with-a-long-enough-text-");
+                s.append_number(i);
+                v.push_back(s);
+                w.push_back(i);
+            }
+            const int src = n / 2;
+            ct::String want = v[static_cast<size_t>(src)];
+            switch (mode)
+            {
+            case 0: v.push_back(v[static_cast<size_t>(src)]); w.push_back(w[static_cast<size_t>(src)]); break;
+            case 1: v.insert(v.begin(), v[static_cast<size_t>(src)]); w.insert(w.begin(), w[static_cast<size_t>(src)]); break;
+            case 2: v.emplace_back(v[static_cast<size_t>(src)]); w.emplace_back(w[static_cast<size_t>(src)]); break;
+            case 3: v.insert(v.begin() + src, v.back()); want = v[static_cast<size_t>(src)]; w.insert(w.begin() + src, w.back()); break;
+            case 4: v.resize(static_cast<size_t>(n) * 2 + 1, v[static_cast<size_t>(src)]); w.resize(static_cast<size_t>(n) * 2 + 1, w[static_cast<size_t>(src)]); break;
+            default: v.assign(3, v[static_cast<size_t>(src)]); w.assign(3, w[static_cast<size_t>(src)]); break;
+            }
+            ASSERT_EQ(v.size(), w.size()) << "n=" << n << " mode=" << mode;
+            for (size_t i = 0; i < w.size(); ++i)
+            {
+                ct::String expect;
+                expect.append("element-number-with-a-long-enough-text-");
+                expect.append_number(w[i]);
+                ASSERT_TRUE(v[i] == expect) << "n=" << n << " mode=" << mode << " i=" << i;
+            }
+        }
+    }
+}
+
+TEST(EdgeSelfReference, StringAppendInsertAssignOfItself)
+{
+    for (size_t n = 0; n <= 80; ++n)
+    {
+        ct::String base;
+        for (size_t i = 0; i < n; ++i)
+            base.push_back(static_cast<char>('a' + i % 26));
+        {
+            ct::String s(base);
+            s.append(s);
+            ASSERT_EQ(s.size(), 2 * n);
+            for (size_t i = 0; i < 2 * n; ++i)
+                ASSERT_EQ(s[i], base[i % (n ? n : 1)]);
+        }
+        {
+            ct::String s(base);
+            s += s;
+            ASSERT_EQ(s.size(), 2 * n);
+        }
+        {
+            ct::String s(base);
+            s.insert(0, s);
+            ASSERT_EQ(s.size(), 2 * n);
+            for (size_t i = 0; i < 2 * n; ++i)
+                ASSERT_EQ(s[i], base[i % (n ? n : 1)]);
+        }
+        if (n >= 3)
+        {
+            ct::String s(base);
+            s.insert(n / 2, s.c_str() + 1, n - 2);
+            ASSERT_EQ(s.size(), 2 * n - 2);
+            ct::String t(base);
+            t.append(t.c_str() + 1, n - 2);
+            ASSERT_EQ(t.size(), 2 * n - 2);
+            ct::String u(base);
+            u.assign(u.c_str() + 1, n - 1);
+            ASSERT_EQ(u.size(), n - 1);
+            for (size_t i = 0; i + 1 < n; ++i)
+                ASSERT_EQ(u[i], base[i + 1]);
+            ct::String w(base);
+            w = w;
+            ASSERT_TRUE(w == base);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Alinhamento, elementos enormes, limites de tamanho
+// ---------------------------------------------------------------------------------------------------------------------
+#include <ct/arena.hpp>
+#include <ct/pool.hpp>
+
+namespace
+{
+    template <typename T>
+    bool aligned(const T *p, size_t a)
+    {
+        return reinterpret_cast<uintptr_t>(p) % a == 0;
+    }
+}
+
+TEST(EdgeAlignment, OverAlignedElementsStayAlignedThroughGrowth)
+{
+    ct::Vector<Aligned64> v;
+    ct::Deque<Aligned64> d;
+    ct::HashMap<int, Aligned64> h;
+    ct::TreeMap<int, Aligned64> t;
+    ct::Vector<Aligned32> v32;
+    for (int i = 0; i < 700; ++i)
+    {
+        v.push_back(Aligned64(i));
+        d.push_back(Aligned64(i));
+        d.push_front(Aligned64(-i));
+        h.put(i, Aligned64(i));
+        t.put(i, Aligned64(i));
+        Aligned32 a;
+        a.v[0] = i;
+        v32.push_back(a);
+        if (i % 50 == 0 || i < 40)
+        {
+            for (size_t k = 0; k < v.size(); ++k)
+                ASSERT_TRUE(aligned(&v[k], 64));
+            for (size_t k = 0; k < d.size(); ++k)
+                ASSERT_TRUE(aligned(&d[k], 64));
+            for (auto &e : h)
+                ASSERT_TRUE(aligned(&e.value, 64));
+            for (auto &e : t)
+                ASSERT_TRUE(aligned(&e.value, 64));
+            for (size_t k = 0; k < v32.size(); ++k)
+                ASSERT_TRUE(aligned(&v32[k], 32));
+        }
+    }
+    for (int i = 0; i < 700; ++i)
+    {
+        ASSERT_EQ(v[static_cast<size_t>(i)].v, i);
+        ASSERT_EQ(h.find(i)->v, i);
+        ASSERT_EQ(t.find(i)->v, i);
+        ASSERT_EQ(v32[static_cast<size_t>(i)].v[0], i);
+    }
+    ct::Arena arena;
+    for (int i = 0; i < 100; ++i)
+    {
+        Aligned64 *p = arena.allocate_array<Aligned64>(3);
+        ASSERT_TRUE(aligned(p, 64));
+    }
+    ct::Pool<Aligned64> pool(16);
+    for (int i = 0; i < 100; ++i)
+        ASSERT_TRUE(aligned(pool.allocate(), 64));
+}
+
+TEST(EdgeAlignment, HugeElements)
+{
+    ct::Vector<Huge> v;
+    ct::Deque<Huge> d;
+    for (int i = 0; i < 300; ++i)
+    {
+        v.push_back(Huge(static_cast<char>(i)));
+        d.push_back(Huge(static_cast<char>(i)));
+        d.push_front(Huge(static_cast<char>(i + 1)));
+    }
+    for (int i = 0; i < 300; ++i)
+    {
+        ASSERT_EQ(v[static_cast<size_t>(i)].bytes[0], static_cast<char>(i));
+        ASSERT_EQ(v[static_cast<size_t>(i)].bytes[4095], static_cast<char>(i));
+        ASSERT_EQ(d[static_cast<size_t>(300 + i)].bytes[4095], static_cast<char>(i));
+    }
+    v.erase(v.begin(), v.begin() + 100);
+    ASSERT_EQ(v.size(), 200u);
+    ASSERT_EQ(v[0].bytes[17], static_cast<char>(100));
+}
+
+using IntMap = ct::HashMap<int, int>;
+
+TEST(EdgeLimits, SizesNearTheMaximumFailCleanlyInsteadOfWrapping)
+{
+    EXPECT_DEATH({ ct::Vector<int> v; v.reserve(v.max_size()); }, "");
+    EXPECT_DEATH({ ct::Vector<int> v; v.resize(v.max_size()); }, "");
+    EXPECT_DEATH({ ct::Vector<Huge> v; v.reserve(v.max_size()); }, "");
+    EXPECT_DEATH({ ct::String s; s.reserve(s.max_size()); }, "");
+    EXPECT_DEATH({ ct::String s("abc"); s.append(s.max_size(), 'x'); }, "");
+    EXPECT_DEATH({ ct::String s; s.resize(s.max_size()); }, "");
+    EXPECT_DEATH({ ct::Deque<int> d; d.reserve(d.max_size()); }, "");
+    EXPECT_DEATH({ IntMap m; m.reserve(static_cast<size_t>(-1) / 2 + 1); }, "");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Strings: NUL no meio, bytes que nao sao UTF-8, o limite do SSO
+// ---------------------------------------------------------------------------------------------------------------------
+TEST(EdgeString, EmbeddedNulAndInvalidUtf8AreJustBytes)
+{
+    const char raw[] = {'a', '\0', 'b', '\xff', '\xc0', '\x80', '\xed', '\xa0', '\x80', '\0', '\0', 'z'};
+    ct::String s(raw, sizeof(raw));
+    ASSERT_EQ(s.size(), sizeof(raw));
+    ASSERT_EQ(memcmp(s.data(), raw, sizeof(raw)), 0);
+    EXPECT_EQ(s.find('b'), 2u);
+    EXPECT_EQ(s.find('\0'), 1u);
+    EXPECT_EQ(s.find(ct::String("\xff\xc0\x80", 3)), 3u);
+    EXPECT_EQ(s.rfind('\0'), 10u);
+    ct::String t(s);
+    EXPECT_TRUE(s == t);
+    t.push_back('\0');
+    EXPECT_FALSE(s == t);
+    EXPECT_TRUE(s < t);
+    EXPECT_EQ(s.hash(), ct::String(raw, sizeof(raw)).hash());
+    EXPECT_NE(s.hash(), t.hash());
+    ct::String u("a\0b", 3);
+    EXPECT_EQ(u.size(), 3u);
+    EXPECT_FALSE(u == ct::String("a"));
+    EXPECT_TRUE(ct::String("a\0b", 3).compare(ct::String("a\0c", 3)) < 0);
+    ct::String sub = s.substr(1, 4);
+    EXPECT_EQ(sub.size(), 4u);
+    EXPECT_EQ(sub[0], '\0');
+    ct::Vector<ct::String> parts = ct::String("x\0y\0\0z", 6).split('\0', true);
+    EXPECT_EQ(parts.size(), 4u);
+    EXPECT_EQ(ct::String("12\0003", 4).to_int(), 12);
+    ct::String all;
+    for (int i = 0; i < 256; ++i)
+        all.push_back(static_cast<char>(i));
+    EXPECT_EQ(all.size(), 256u);
+    for (int i = 0; i < 256; ++i)
+        ASSERT_EQ(static_cast<unsigned char>(all[static_cast<size_t>(i)]), static_cast<unsigned>(i));
+    ct::String copy(all);
+    EXPECT_TRUE(copy == all);
+}
+
+TEST(EdgeString, LengthsAroundTheSmallBufferLimit)
+{
+    for (size_t n = 0; n <= 70; ++n)
+    {
+        ct::String s;
+        for (size_t i = 0; i < n; ++i)
+        {
+            s.push_back(static_cast<char>('A' + i % 26));
+            ASSERT_EQ(s.size(), i + 1);
+            ASSERT_GE(s.capacity(), s.size());
+            ASSERT_EQ(s.is_small(), s.size() <= 23u) << "i=" << i;
+            ASSERT_EQ(s.c_str()[s.size()], '\0');
+        }
+        ct::String c(s);
+        ASSERT_TRUE(c == s);
+        ASSERT_EQ(c.c_str()[c.size()], '\0');
+        ct::String m(static_cast<ct::String &&>(c));
+        ASSERT_TRUE(m == s);
+        ASSERT_EQ(c.size(), 0u);
+        c.push_back('x');
+        ASSERT_EQ(c.size(), 1u);
+        ct::String r(s.c_str(), n);
+        ASSERT_TRUE(r == s);
+        ct::String fill(n, 'q');
+        ASSERT_EQ(fill.size(), n);
+        if (n)
+        {
+            s.resize(n / 2);
+            ASSERT_EQ(s.size(), n / 2);
+            ASSERT_EQ(s.c_str()[s.size()], '\0');
+            s.resize(n + 5, 'z');
+            ASSERT_EQ(s[n + 4], 'z');
+        }
+        ct::String big;
+        big.reserve(n);
+        ASSERT_GE(big.capacity(), n);
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Numeros nos limites, contra valores conhecidos
+// ---------------------------------------------------------------------------------------------------------------------
+#include <float.h>
+#include <limits.h>
+#include <ct/ini.hpp>
+#include <ct/json.hpp>
+
+namespace
+{
+    uint32_t bits_of(float f)
+    {
+        uint32_t b;
+        memcpy(&b, &f, 4);
+        return b;
+    }
+    uint64_t bits_of(double d)
+    {
+        uint64_t b;
+        memcpy(&b, &d, 8);
+        return b;
+    }
+    float to_f(const char *s) { return ct::String(s).to_float(); }
+    int to_i(const char *s) { return ct::String(s).to_int(); }
+}
+
+TEST(EdgeNumbers, StringToIntKnownValues)
+{
+    EXPECT_EQ(to_i("0"), 0);
+    EXPECT_EQ(to_i("-0"), 0);
+    EXPECT_EQ(to_i("42"), 42);
+    EXPECT_EQ(to_i("  -17"), -17);
+    EXPECT_EQ(to_i("+9"), 9);
+    EXPECT_EQ(to_i("2147483647"), INT_MAX);
+    EXPECT_EQ(to_i("-2147483648"), INT_MIN);
+    EXPECT_EQ(to_i("12abc"), 12);
+    EXPECT_EQ(to_i("abc"), 0);
+    EXPECT_EQ(to_i(""), 0);
+    EXPECT_EQ(to_i("   "), 0);
+    EXPECT_EQ(to_i("0x10"), 0);
+    EXPECT_EQ(to_i("1e3"), 1);
+    EXPECT_EQ(to_i("- 5"), 0);
+    EXPECT_EQ(to_i("007"), 7);
+}
+
+TEST(EdgeNumbers, StringToFloatKnownValues)
+{
+    EXPECT_EQ(bits_of(to_f("0")), 0u);
+    EXPECT_EQ(bits_of(to_f("-0")), 0x80000000u);
+    EXPECT_EQ(bits_of(to_f("1.5")), bits_of(1.5f));
+    EXPECT_EQ(bits_of(to_f("  2.5xyz")), bits_of(2.5f));
+    EXPECT_EQ(bits_of(to_f(".5")), bits_of(0.5f));
+    EXPECT_EQ(bits_of(to_f("5.")), bits_of(5.0f));
+    EXPECT_EQ(bits_of(to_f("1e")), bits_of(1.0f));
+    EXPECT_EQ(bits_of(to_f("1e-45")), 1u);
+    EXPECT_EQ(bits_of(to_f("1.17549435e-38")), 0x00800000u);
+    EXPECT_EQ(bits_of(to_f("1e-46")), 0u);
+    EXPECT_EQ(bits_of(to_f("3.4028235e38")), bits_of(FLT_MAX));
+    EXPECT_EQ(bits_of(to_f("1e39")), 0x7f800000u);
+    EXPECT_EQ(bits_of(to_f("-1e39")), 0xff800000u);
+    EXPECT_EQ(bits_of(to_f("inf")), 0x7f800000u);
+    EXPECT_EQ(bits_of(to_f("-Infinity")), 0xff800000u);
+    const float nan = to_f("nan");
+    EXPECT_TRUE(nan != nan);
+    EXPECT_EQ(bits_of(to_f("")), 0u);
+    EXPECT_EQ(bits_of(to_f("abc")), 0u);
+    EXPECT_EQ(bits_of(to_f("0.1")), bits_of(0.1f));
+    EXPECT_EQ(bits_of(to_f("16777217")), bits_of(16777216.0f));
+}
+
+TEST(EdgeNumbers, StringNumberToTextAndBack)
+{
+    const long long values[] = {0, 1, -1, 9, 10, 99, 100, 2147483647LL, -2147483648LL, 4294967295LL,
+                                9223372036854775807LL, (-9223372036854775807LL - 1)};
+    const char *texts[] = {"0", "1", "-1", "9", "10", "99", "100", "2147483647", "-2147483648", "4294967295",
+                           "9223372036854775807", "-9223372036854775808"};
+    for (int i = 0; i < 12; ++i)
+    {
+        ct::String s = ct::String::number(values[i]);
+        EXPECT_TRUE(s == texts[i]) << texts[i] << " vs " << s.c_str();
+    }
+    EXPECT_TRUE(ct::String::number(18446744073709551615ull) == "18446744073709551615");
+    EXPECT_TRUE(ct::String::number(0.5) == "0.5");
+    EXPECT_TRUE(ct::String::number(1e300) == "1e+300");
+    EXPECT_TRUE(ct::String::number(-0.0) == "-0");
+    EXPECT_TRUE(ct::String::number(123456789.0, 9) == "123456789");
+    EXPECT_TRUE(ct::String::number(0.1, 17) == "0.10000000000000001");
+}
+
+TEST(EdgeNumbers, JsonIntegersAndRealsAtTheLimits)
+{
+    ct::Json::Error err;
+    ct::Json j = ct::Json::parse("9223372036854775807", &err);
+    ASSERT_FALSE(static_cast<bool>(err));
+    EXPECT_TRUE(j.is_int());
+    EXPECT_EQ(j.as_int(), INT64_MAX);
+    j = ct::Json::parse("-9223372036854775808", &err);
+    ASSERT_FALSE(static_cast<bool>(err));
+    EXPECT_TRUE(j.is_int());
+    EXPECT_EQ(j.as_int(), INT64_MIN);
+    j = ct::Json::parse("9223372036854775808", &err);
+    ASSERT_FALSE(static_cast<bool>(err));
+    EXPECT_TRUE(j.is_uint());
+    EXPECT_EQ(j.as_uint(), 9223372036854775808ull);
+    j = ct::Json::parse("18446744073709551615", &err);
+    EXPECT_TRUE(j.is_uint());
+    EXPECT_EQ(j.as_uint(), UINT64_MAX);
+    j = ct::Json::parse("18446744073709551616", &err);
+    ASSERT_FALSE(static_cast<bool>(err));
+    EXPECT_TRUE(j.is_real());
+    EXPECT_EQ(bits_of(j.as_double()), bits_of(18446744073709551616.0));
+    j = ct::Json::parse("-9223372036854775809", &err);
+    EXPECT_TRUE(j.is_real());
+    EXPECT_EQ(bits_of(j.as_double()), bits_of(-9223372036854775808.0));
+    j = ct::Json::parse("5e-324", &err);
+    ASSERT_FALSE(static_cast<bool>(err));
+    EXPECT_EQ(bits_of(j.as_double()), 1u);
+    j = ct::Json::parse("2.2250738585072014e-308", &err);
+    EXPECT_EQ(bits_of(j.as_double()), bits_of(DBL_MIN));
+    j = ct::Json::parse("1.7976931348623157e308", &err);
+    EXPECT_EQ(bits_of(j.as_double()), bits_of(DBL_MAX));
+    j = ct::Json::parse("0.1", &err);
+    EXPECT_EQ(bits_of(j.as_double()), bits_of(0.1));
+    j = ct::Json::parse("-0", &err);
+    ASSERT_FALSE(static_cast<bool>(err));
+    EXPECT_EQ(j.as_double(), 0.0);
+    j = ct::Json::parse("1e309", &err);
+    if (!err)
+        EXPECT_TRUE(j.as_double() > DBL_MAX);
+    const char *bad[] = {"01", "+1", ".5", "1.", "1e", "0x10", "NaN", "Infinity", "-Infinity", "nan", "inf", "1 2",
+                         "1,", "[1,]", "--1", "1e+", "-", "", "  "};
+    for (const char *b : bad)
+    {
+        ct::Json::Error e2;
+        ct::Json r = ct::Json::parse(b, &e2);
+        EXPECT_TRUE(static_cast<bool>(e2)) << "aceitou: '" << b << "'";
+    }
+}
+
+TEST(EdgeNumbers, IniIntegersRefuseWhatDoesNotFit)
+{
+    ct::Ini ini = ct::Ini::parse("[s]\na=9223372036854775807\nb=9223372036854775808\nc=-9223372036854775808\nd=12abc\ne=\nf=0x10\ng= 7 \nh=-0\n");
+    EXPECT_EQ(ini.get_int("s", "a", 5), INT64_MAX);
+    EXPECT_EQ(ini.get_int("s", "b", 5), 5);
+    EXPECT_EQ(ini.get_int("s", "c", 5), INT64_MIN);
+    EXPECT_EQ(ini.get_int("s", "d", 5), 5);
+    EXPECT_EQ(ini.get_int("s", "e", 5), 5);
+    EXPECT_EQ(ini.get_int("s", "f", 5), 5);
+    EXPECT_EQ(ini.get_int("s", "g", 5), 7);
+    EXPECT_EQ(ini.get_int("s", "h", 5), 0);
+    EXPECT_EQ(ini.get_int("s", "missing", 5), 5);
+}

@@ -12,7 +12,7 @@
 #
 # Variaveis: CT_COMPARE_THIRD (pasta das bibliotecas, omissao <repo>/build-compare/third), CT_COMPARE_OUT (resultados,
 # omissao <repo>/build-compare/out), CT_COMPARE_QUICK=1 (so N=1e3 e 1e5), CT_COMPARE_OPT (omissao -O2),
-# CT_COMPARE_BUILD (pasta de build, omissao <out>/../build), CT_COMPARE_ONLY (so uma familia na etapa time), CT_COMPARE_VALGRIND (caminho do valgrind; omissao o do sistema, se houver; VALGRIND_LIB tambem se for preciso).
+# CT_COMPARE_BUILD (pasta de build, omissao <out>/../build), CT_COMPARE_ONLY (so uma familia na etapa time), CT_COMPARE_IMPLS (so estas implementacoes, ex. "ct ctree cflat"), CT_COMPARE_VALGRIND (caminho do valgrind; omissao o do sistema, se houver; VALGRIND_LIB tambem se for preciso).
 # Todos os comandos correm num scope do systemd com MemoryMax=4G e a compilacao usa -j3: a maquina e partilhada.
 #
 # Nota: esta pasta (bench/compare) inclui a biblioteca standard e as outras de proposito; e a excecao declarada ao
@@ -175,6 +175,11 @@ run_family() { # familia ficheiro
     local k=0
     matrix "$fam" | while read -r exe args; do
         k=$((k + 1))
+        if [ -n "${CT_COMPARE_IMPLS:-}" ]; then
+            keep=0
+            for w in $CT_COMPARE_IMPLS; do case " $args " in *" $w "*) keep=1 ;; esac; done
+            [ $keep = 1 ] || continue
+        fi
         # cmp_sort: "ct sort int.random N" -> impl algoritmo tipo N (ja assim); cmp_misc: familia impl cenario tipo N
         cap "$BUILD/$exe" $args 2>>"$OUT/errors.log" | sed "s/^/$fam\t/" >>"$file" || echo "FALHOU: $exe $args" >>"$OUT/errors.log"
     done

@@ -7,7 +7,8 @@
 #   tools/check.sh nostd asan   so essas etapas
 #
 # Etapas:
-#   nostd    nenhum std:: nem cabecalho C++ novo em include/, tests/ e bench/ (compara com tools/nostd.baseline;
+#   nostd    nenhum std:: nem cabecalho C++ novo em include/, tests/ e bench/ (menos bench/compare, a excecao declarada;
+#            compara com tools/nostd.baseline;
 #            tools/check.sh --update-nostd reescreve a baseline: so para tirar usos, nunca para juntar)
 #   headers  cada cabecalho compila sozinho com -Wall -Wextra -Wpedantic -Werror (alvo ct_headers)
 #   release  testes em Release
@@ -121,7 +122,9 @@ stage_nostd() {
     base=$ROOT/tools/nostd.baseline
     (
         cd "$ROOT" || exit 1
-        for f in $(find include tests bench -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' \) | sort); do
+        # bench/compare e a excecao declarada: compara a ct com a biblioteca standard e com outras, por isso inclui-as
+        # (so compila com -DCT_BUILD_COMPARE=ON, que vem desligado; ver docs/COMPARACAO.md).
+        for f in $(find include tests bench -type f \( -name '*.hpp' -o -name '*.cpp' -o -name '*.h' \) -not -path 'bench/compare/*' | sort); do
             # cabecalhos que nao sao de C (sem .h) e cada std::nome; um par (ficheiro, simbolo) por linha
             grep -hoE '^[[:space:]]*#[[:space:]]*include[[:space:]]*<[A-Za-z_]+>' "$f" 2>/dev/null |
                 sed -E 's/^[[:space:]]*#[[:space:]]*include[[:space:]]*/include /' | sort -u |

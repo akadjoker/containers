@@ -132,7 +132,9 @@ matrix() {
         for i in ct std charconv libc fmt; do
             for t in full small; do echo "cmp_string $i int2s $t 1000000"; echo "cmp_string $i s2int $t 1000000"; done
             echo "cmp_string $i dbl2s d 1000000"; echo "cmp_string $i s2f32 f 1000000"
-        done ;;
+        done
+        for i in ct charconv libc fmt; do for t in d wide; do echo "cmp_string $i d2short $t 1000000"; done; done
+        for i in ct std charconv libc; do for t in f long wide; do echo "cmp_string $i s2f64 $t 1000000"; done; done ;;
     sort)
         for p in random sorted reversed dups; do
             for n in $NS; do
@@ -219,6 +221,8 @@ ir_matrix() {
             echo "cmp_string $i append_char char $n"; echo "cmp_string $i eq len40 $n"; echo "cmp_string $i concat len30 $n"
         done
         for i in ct std charconv libc fmt; do echo "cmp_string $i int2s full $n"; echo "cmp_string $i s2int full $n"; echo "cmp_string $i dbl2s d $n"; echo "cmp_string $i s2f32 f $n"; done
+        for i in ct charconv libc fmt; do for t in d wide; do echo "cmp_string $i d2short $t $n"; done; done
+        for i in ct std charconv libc; do for t in f long wide; do echo "cmp_string $i s2f64 $t $n"; done; done
         for p in random sorted reversed dups; do
             for i in "ct sort" "ct sort_nocmp" "std sort" "boost sort" "boost spread" "ct stable" "std stable"; do echo "cmp_sort $i int.$p $n"; done
             for i in "ct sort" "std sort" "boost sort" "ct stable" "std stable"; do echo "cmp_sort $i p16.$p $n"; done

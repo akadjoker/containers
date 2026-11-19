@@ -348,6 +348,97 @@ static int run_s2f(const char *impl, const char *type, Runner &R)
     return 0;
 }
 
+
+// Texto mais curto que volta ao mesmo valor: ct::String::number_shortest contra std::to_chars e fmt "{}"; libc usa "%.17g"
+// (nao e o mais curto, e a referencia de quem nao tem to_chars).
+static int run_d2short(const char *impl, const char *type, Runner &R)
+{
+    const std::uint64_t N = R.n;
+    std::vector<double> v = doubles(N);
+    if (!std::strcmp(type, "wide")) // expoente espalhado: 17 algarismos quase sempre
+    {
+        Rng r(7);
+        for (std::uint64_t i = 0; i < N; ++i)
+        {
+            std::uint64_t b = r.next() & 0x800FFFFFFFFFFFFFull;
+            b |= static_cast<std::uint64_t>(900 + r.below(250)) << 52;
+            std::memcpy(&v[i], &b, 8);
+        }
+    }
+    Result r{};
+    std::uint64_t chk = 0;
+    auto go = [&](auto f) {
+        r = R.run(N, R.inner_for(N), [] {}, [&] {
+            std::uint64_t s = 0;
+            for (double d : v)
+                s += f(d);
+            chk = s;
+            touch(s);
+        });
+    };
+    if (!std::strcmp(impl, "ct")) go([](double d) { ct::String s = ct::String::number_shortest(d); keep(s); return s.size() + static_cast<unsigned char>(s[0]); });
+    else if (!std::strcmp(impl, "charconv")) go([](double d) { char b[40]; auto e = std::to_chars(b, b + 40, d); std::string s(b, e.ptr); keep(s); return s.size() + static_cast<unsigned char>(s[0]); });
+    else if (!std::strcmp(impl, "libc")) go([](double d) { char b[40]; int n = std::snprintf(b, 40, "%.17g", d); std::string s(b, static_cast<std::size_t>(n)); keep(s); return s.size() + static_cast<unsigned char>(s[0]); });
+#ifdef CMP_FMT
+    else if (!std::strcmp(impl, "fmt")) go([](double d) { std::string s = fmt::format("{}", d); keep(s); return s.size() + static_cast<unsigned char>(s[0]); });
+#endif
+    else return 0;
+    r.check = chk;
+    report(impl, "d2short", type, N, r, 0);
+    return 0;
+}
+
+// Texto para double: o texto vem de "%.6g" (tipo f, 6 algarismos) ou do mais curto que volta (tipo long, ate 17)
+static int run_s2d(const char *impl, const char *type, Runner &R)
+{
+    const std::uint64_t N = R.n;
+    std::vector<double> v = doubles(N);
+    if (!std::strcmp(type, "wide"))
+    {
+        Rng r(7);
+        for (std::uint64_t i = 0; i < N; ++i)
+        {
+            std::uint64_t b = r.next() & 0x800FFFFFFFFFFFFFull;
+            b |= static_cast<std::uint64_t>(900 + r.below(250)) << 52;
+            std::memcpy(&v[i], &b, 8);
+        }
+    }
+    std::vector<std::string> ss;
+    std::vector<ct::String> cs;
+    for (double d : v)
+    {
+        char b[40];
+        const bool six = !std::strcmp(type, "f");
+        auto e = six ? b + std::snprintf(b, 40, "%.6g", d) : std::to_chars(b, b + 40, d).ptr;
+        ss.push_back(std::string(b, e));
+        cs.push_back(ct::String(b, static_cast<std::size_t>(e - b)));
+    }
+    Result r{};
+    std::uint64_t chk = 0;
+    auto go = [&](auto f) {
+        r = R.run(N, R.inner_for(N), [] {}, [&] {
+            std::uint64_t s = 0;
+            for (std::uint64_t i = 0; i < N; ++i)
+            {
+                double x = f(i);
+                std::uint64_t bits;
+                std::memcpy(&bits, &x, 8);
+                s += bits;
+            }
+            chk = s;
+            touch(s);
+        });
+    };
+    if (!std::strcmp(impl, "ct")) go([&](std::uint64_t i) { return cs[i].to_double(); });
+    else if (!std::strcmp(impl, "std")) go([&](std::uint64_t i) { return std::stod(ss[i]); });
+    else if (!std::strcmp(impl, "charconv")) go([&](std::uint64_t i) { double x = 0; std::from_chars(ss[i].data(), ss[i].data() + ss[i].size(), x); return x; });
+    else if (!std::strcmp(impl, "libc")) go([&](std::uint64_t i) { return std::strtod(ss[i].c_str(), nullptr); });
+    else return 0;
+    r.check = chk;
+    report(impl, "s2f64", type, N, r, 0);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 5)
@@ -363,6 +454,8 @@ int main(int argc, char **argv)
     if (!std::strcmp(scen, "dbl2s")) return run_d2s(impl, type, R);
     if (!std::strcmp(scen, "s2int")) return run_s2int(impl, type, R);
     if (!std::strcmp(scen, "s2f32")) return run_s2f(impl, type, R);
+    if (!std::strcmp(scen, "d2short")) return run_d2short(impl, type, R);
+    if (!std::strcmp(scen, "s2f64")) return run_s2d(impl, type, R);
     if (!std::strcmp(impl, "ct")) return run_text<ct::String>(impl, scen, type, R);
     if (!std::strcmp(impl, "std")) return run_text<std::string>(impl, scen, type, R);
     std::fprintf(stderr, "impl desconhecida\n");

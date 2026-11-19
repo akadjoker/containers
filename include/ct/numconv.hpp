@@ -883,6 +883,41 @@ namespace ct
             return s;
         }
 
+        // oito algarismos decimais seguidos em p (little endian): false se algum nao for algarismo
+        CT_FORCEINLINE bool eight_digits(const char *p, uint64_t &value) noexcept
+        {
+            uint64_t chunk;
+            memcpy(&chunk, p, sizeof(chunk));
+            if ((((chunk & 0xF0F0F0F0F0F0F0F0ull) | (((chunk + 0x0606060606060606ull) & 0xF0F0F0F0F0F0F0F0ull) >> 4))) !=
+                0x3333333333333333ull)
+                return false;
+            chunk = ((chunk & 0x0F0F0F0F0F0F0F0Full) * 2561) >> 8;
+            chunk = ((chunk & 0x00FF00FF00FF00FFull) * 6553601) >> 16;
+            chunk = ((chunk & 0x0000FFFF0000FFFFull) * 42949672960001ull) >> 32;
+            value = chunk;
+            return true;
+        }
+
+        // Acumula em w (sem limite: com mais de 19 algarismos da a volta e o chamador refaz a conta) os algarismos
+        // seguidos de p; devolve o fim.
+        CT_FORCEINLINE const char *accumulate_digits(const char *p, const char *last, uint64_t &w) noexcept
+        {
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
+            uint64_t chunk;
+            while (last - p >= 8 && eight_digits(p, chunk))
+            {
+                w = w * 100000000ull + chunk;
+                p += 8;
+            }
+#endif
+            while (p != last && is_digit_char(*p))
+            {
+                w = w * 10 + static_cast<unsigned>(*p - '0');
+                ++p;
+            }
+            return p;
+        }
+
         // Algarismos decimais de p a end: devolve o fim, ou p se nao houver nenhum. Zeros do principio nao contam;
         // out = valor, ou 2^64 - 1 se tiver mais de 19 algarismos significativos (nunca cabe num int).
         CT_FORCEINLINE const char *scan_uint(const char *p, const char *end, uint64_t &out) noexcept
@@ -893,16 +928,9 @@ namespace ct
             uint64_t v = 0;
             int n = 0;
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
-            while (n <= 8 && end - p >= 8)
+            uint64_t chunk;
+            while (n <= 8 && end - p >= 8 && eight_digits(p, chunk))
             {
-                uint64_t chunk;
-                memcpy(&chunk, p, sizeof(chunk));
-                if ((((chunk & 0xF0F0F0F0F0F0F0F0ull) | (((chunk + 0x0606060606060606ull) & 0xF0F0F0F0F0F0F0F0ull) >> 4))) !=
-                    0x3333333333333333ull)
-                    break;
-                chunk = ((chunk & 0x0F0F0F0F0F0F0F0Full) * 2561) >> 8;
-                chunk = ((chunk & 0x00FF00FF00FF00FFull) * 6553601) >> 16;
-                chunk = ((chunk & 0x0000FFFF0000FFFFull) * 42949672960001ull) >> 32;
                 v = v * 100000000ull + chunk;
                 p += 8;
                 n += 8;
@@ -1068,22 +1096,14 @@ namespace ct
             }
             const char *const mant_begin = p;
             uint64_t w = 0;
-            while (p != last && is_digit_char(*p))
-            {
-                w = w * 10 + static_cast<unsigned>(*p - '0');
-                ++p;
-            }
+            p = accumulate_digits(p, last, w);
             const int n_int = static_cast<int>(p - mant_begin);
             int n_frac = 0;
             if (p != last && *p == '.')
             {
                 ++p;
                 const char *const fs = p;
-                while (p != last && is_digit_char(*p))
-                {
-                    w = w * 10 + static_cast<unsigned>(*p - '0');
-                    ++p;
-                }
+                p = accumulate_digits(p, last, w);
                 n_frac = static_cast<int>(p - fs);
             }
             if (n_int + n_frac == 0)

@@ -24,6 +24,11 @@ benchmarks are off by default, so consumers do not fetch GoogleTest or build
 `-march=native` binaries. Turn them on with `-DCT_BUILD_TESTS=ON` and
 `-DCT_BUILD_BENCH=ON`; both default to on when this is the top-level project.
 
+`-DCT_BUILD_COMPARE=ON` (off by default, also when top-level) adds `bench/compare`: programs that measure `ct`
+against `std` and other libraries (abseil, boost, ankerl, fmt). They include those libraries on purpose, so that
+folder is the one declared exception to the no-std rule. `tools/bench_compare.sh` builds and runs them; the method,
+numbers and conclusions are in [docs/COMPARACAO.md](docs/COMPARACAO.md).
+
 ```cpp
 #include <ct/vector.hpp>
 #include <ct/string.hpp>

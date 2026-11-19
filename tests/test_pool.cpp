@@ -286,3 +286,31 @@ TEST(Pool, FuncionaComAlocadorSoComAllocateEDeallocate)
     }
     EXPECT_EQ(AlocadorSimples::vivos, 0);
 }
+
+// O ultimo pedaco por onde passou um ponteiro fica em cache; criar e apagar alternando entre pedacos distantes (e o duplo
+// destroy depois de a cache apontar para outro pedaco) tem de continuar a acertar no estado de cada slot.
+TEST(Pool, InterleavedChunksKeepTheStateChecksExact)
+{
+    ct::Pool<int> pool(16);
+    int *items[1000];
+    for (int i = 0; i < 1000; ++i)
+        items[i] = pool.create(i);
+    ASSERT_EQ(pool.live(), 1000u);
+    for (int i = 0; i < 500; ++i)
+    {
+        pool.destroy(items[i]);       // do principio
+        pool.destroy(items[999 - i]); // e do fim: a cache salta entre pedacos distantes
+        items[i] = items[999 - i] = nullptr;
+    }
+    ASSERT_EQ(pool.live(), 0u);
+    for (int i = 0; i < 1000; ++i)
+        items[i] = pool.create(i * 3);
+    for (int i = 0; i < 1000; ++i)
+        ASSERT_EQ(*items[i], i * 3);
+    int *first = items[0];
+    int *last = items[999];
+    pool.destroy(last);
+    EXPECT_DEATH(pool.destroy(last), ""); // duplo destroy de um slot de outro pedaco
+    pool.destroy(first);
+    EXPECT_EQ(pool.live(), 998u);
+}

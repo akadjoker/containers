@@ -97,8 +97,8 @@ matrix() {
             [ "$t" = b256 ] && { ns="1000 100000"; [ "$QUICK" = 1 ] || ns="1000 100000 1000000"; }
             for s in build build_reserved emplace iterate index copy move clear resize insert_mid erase_front; do
                 for n in $ns; do
-                    # insert/erase no meio e O(N) por operacao: a 1e7 so mede a largura de banda da memoria
-                    if [ "$n" -ge 10000000 ] && { [ "$s" = insert_mid ] || [ "$s" = erase_front ]; }; then continue; fi
+                    # de 1e6 para cima so os cenarios que contam (insert/erase no meio sao O(N) por operacao e medem a memoria)
+                    if [ "$n" -ge 1000000 ]; then case $s in build | build_reserved | iterate | copy) ;; *) continue ;; esac; fi
                     for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done
                 done
             done
@@ -109,8 +109,8 @@ matrix() {
             case $t in int-b256) ns="1000 100000" ;; s*) ns="1000 100000"; [ "$QUICK" = 1 ] || ns="1000 100000 1000000" ;; esac
             for s in build build_reserved hit miss erase iterate copy move clear churn; do
                 for n in $ns; do
-                    # 1e7 so para os cenarios que importam; o resto fica em 1e5 e 1e3
-                    if [ "$n" = 10000000 ] && [ "$s" != build ] && [ "$s" != hit ] && [ "$s" != erase ] && [ "$s" != build_reserved ]; then continue; fi
+                    # de 1e6 para cima so os cenarios que importam; o resto fica em 1e5 e 1e3
+                    if [ "$n" -ge 1000000 ]; then case $s in build | hit | erase) ;; *) continue ;; esac; fi
                     for i in $MAP_IMPLS; do echo "cmp_map $i $s $t $n"; done
                 done
             done
@@ -170,7 +170,7 @@ run_family() { # familia ficheiro
     matrix "$fam" | while read -r exe args; do
         k=$((k + 1))
         # cmp_sort: "ct sort int.random N" -> impl algoritmo tipo N (ja assim); cmp_misc: familia impl cenario tipo N
-        cap "$BUILD/$exe" $args >>"$file" 2>>"$OUT/errors.log" || echo "FALHOU: $exe $args" >>"$OUT/errors.log"
+        cap "$BUILD/$exe" $args 2>>"$OUT/errors.log" | sed "s/^/$fam\t/" >>"$file" || echo "FALHOU: $exe $args" >>"$OUT/errors.log"
     done
 }
 
@@ -195,7 +195,8 @@ ir_one() { # exe args...
     local tot
     tot=$(grep -m1 '^totals:' "$cgout" | awk '{print $2}')
     [ -z "$tot" ] && return 1
-    printf '%s\t%s\n' "$line" "$tot"
+    [ -z "$line" ] && return 0
+    printf '%s\t%s\t%s\n' "${exe#cmp_}" "$line" "$tot"
 }
 
 ir_matrix() {

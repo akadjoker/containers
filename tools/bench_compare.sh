@@ -97,7 +97,7 @@ matrix() {
             [ "$QUICK" = 1 ] && big=""
             [ "$t" = b256 ] && big="1000000"
             [ "$t" = b256 ] && [ "$QUICK" = 1 ] && big=""
-            for s in build build_reserved iterate index copy move clear insert_mid; do
+            for s in build build_reserved iterate index copy move clear insert_mid resize_fill resize_overwrite; do
                 for n in $ns; do for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done; done
             done
             # de 1e6 para cima so os cenarios que contam (insert no meio e O(N) por operacao e mede a memoria)
@@ -223,8 +223,8 @@ ir_one() { # exe args...
 
 ir_matrix() {
     for n in 100000; do
-        for t in int p16 mo; do for s in build build_reserved iterate copy insert_mid; do for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done; done; done
-        for t in int-int s8-int s40-int; do for s in build hit miss erase iterate copy; do for i in $MAP_IMPLS; do echo "cmp_map $i $s $t $n"; done; done; done
+        for t in int p16 mo; do for s in build build_reserved iterate copy insert_mid resize_fill resize_overwrite; do for i in $VEC_IMPLS; do echo "cmp_vector $i $s $t $n"; done; done; done
+        for t in int-int s8-int s20-int s40-int int-b256; do for s in build hit miss erase iterate copy; do for i in $MAP_IMPLS; do echo "cmp_map $i $s $t $n"; done; done; done
         for i in ct std; do
             for t in len8 len16 len24 len40; do echo "cmp_string $i create $t $n"; done
             echo "cmp_string $i append_char char $n"; echo "cmp_string $i eq len40 $n"; echo "cmp_string $i concat len30 $n"

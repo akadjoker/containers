@@ -717,8 +717,18 @@ namespace ct
         {
             const char *pa, *pb;
             size_type na, nb;
-            raw_parts(pa, na);
-            o.raw_parts(pb, nb);
+            if (both_heap(o)) // as duas na heap (o caso das cadeias longas): sem decodificar o SSO dos dois lados
+            {
+                pa = storage_.heap.data;
+                na = storage_.heap.size;
+                pb = o.storage_.heap.data;
+                nb = o.storage_.heap.size;
+            }
+            else
+            {
+                raw_parts(pa, na);
+                o.raw_parts(pb, nb);
+            }
             const int result = std::memcmp(pa, pb, na < nb ? na : nb);
             if (result)
                 return result;
@@ -843,6 +853,14 @@ namespace ct
         }
 
     private:
+        // As duas na heap: um teste so (o bit alto do ultimo byte de cada uma)
+        bool both_heap(const String &o) const noexcept
+        {
+            return (static_cast<unsigned char>(storage_.small.data[kSSO]) & static_cast<unsigned char>(o.storage_.small.data[kSSO]) & 0x80) != 0;
+        }
+        friend bool operator==(const String &a, const String &b);
+        friend bool operator<(const String &a, const String &b);
+
         Storage storage_;
 
         // Escreve v em decimal, acabando em end, e devolve o primeiro caracter: dois algarismos por passo.
@@ -1094,6 +1112,11 @@ namespace ct
 
     inline bool operator==(const String &a, const String &b)
     {
+        if (a.both_heap(b))
+        {
+            const std::size_t n = a.storage_.heap.size;
+            return n == b.storage_.heap.size && std::memcmp(a.storage_.heap.data, b.storage_.heap.data, n) == 0;
+        }
         const char *pa, *pb;
         std::size_t na, nb;
         a.raw_parts(pa, na);
@@ -1109,7 +1132,26 @@ namespace ct
     inline bool operator!=(const String &a, const String &b) { return !(a == b); }
     inline bool operator!=(const String &a, const char *b) { return !(a == b); }
     inline bool operator!=(const char *a, const String &b) { return !(b == a); }
-    inline bool operator<(const String &a, const String &b) { return a.compare(b) < 0; }
+    // Como compare(b) < 0 mas sem construir o resultado de tres vias (-1, 0, 1): o memcmp decide, e so se der zero conta o tamanho
+    inline bool operator<(const String &a, const String &b)
+    {
+        const char *pa, *pb;
+        std::size_t na, nb;
+        if (a.both_heap(b))
+        {
+            pa = a.storage_.heap.data;
+            na = a.storage_.heap.size;
+            pb = b.storage_.heap.data;
+            nb = b.storage_.heap.size;
+        }
+        else
+        {
+            a.raw_parts(pa, na);
+            b.raw_parts(pb, nb);
+        }
+        const int r = std::memcmp(pa, pb, na < nb ? na : nb);
+        return r != 0 ? r < 0 : na < nb;
+    }
     inline bool operator>(const String &a, const String &b) { return a.compare(b) > 0; }
     inline bool operator<=(const String &a, const String &b) { return a.compare(b) <= 0; }
     inline bool operator>=(const String &a, const String &b) { return a.compare(b) >= 0; }

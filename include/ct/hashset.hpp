@@ -9,6 +9,7 @@ namespace ct
 
     // Como o HashMap: a meta de uma chave que nao e inteiro, enumeracao nem ponteiro (strings, chaves compostas) guarda a
     // distancia do elemento ao seu slot de origem (0x81 + dist, e 0xFF para 126 ou mais), e a sondagem so compara onde bate.
+    CT_ABI_DBGITER_BEGIN
     template <typename K, typename H = Hash<K>, typename Alloc = HeapAlloc>
     class HashSet : private H, private Alloc
     {
@@ -226,8 +227,8 @@ namespace ct
         }
 
         // Percorrer: ver HashMap. Apagar ou inserir durante o ciclo e INVALIDO (a remocao desloca os elementos para tras
-        // e a insercao pode fazer rehash); para apagar varios use erase_if(pred). Em compilacoes de depuracao
-        // (CT_DEBUG_ITERATORS) usar um iterador depois de a tabela mudar aborta.
+        // e a insercao pode fazer rehash); para apagar varios use erase_if(pred). Com CT_DEBUG_ITERATORS=1 (ver
+        // HashMap) usar um iterador depois de a tabela mudar aborta.
 #if defined(CT_DEBUG_ITERATORS)
         using iterator = detail::CheckedSlotIter<const K, kDist>;
 #else
@@ -463,5 +464,6 @@ namespace ct
             mask_ = 0;
         }
     };
+    CT_ABI_DBGITER_END
 
 } 

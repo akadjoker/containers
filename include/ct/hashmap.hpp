@@ -146,6 +146,12 @@ namespace ct
         // (CT_HASH_INLINE_MAX muda o limite; com um valor enorme nenhuma entrada fica fora e a tabela e a de antes.)
 #if !defined(CT_HASH_INLINE_MAX)
 #define CT_HASH_INLINE_MAX 128
+#define CT_ABI_HASHINL_BEGIN
+#define CT_ABI_HASHINL_END
+#else
+        // um valor escolhido pela aplicacao muda o layout: o valor entra no nome do tipo (tem de ser um literal inteiro)
+#define CT_ABI_HASHINL_BEGIN inline namespace CT_ABI_PASTE(abi_hashinline_, CT_HASH_INLINE_MAX) {
+#define CT_ABI_HASHINL_END }
 #endif
         constexpr std::size_t kHashInlineMax = CT_HASH_INLINE_MAX;
     } // namespace detail
@@ -159,6 +165,8 @@ namespace ct
     //   (strings, chaves compostas, entradas grandes) guarda tambem a distancia do elemento ao seu slot de origem (0x81 + dist, e
     //   0xFF para 126 ou mais), de modo que a sondagem so compara chaves onde a distancia bate (uma falha quase nunca
     //   compara strings) e a remocao desloca os seguintes sem recalcular o hash.
+    CT_ABI_DBGITER_BEGIN
+    CT_ABI_HASHINL_BEGIN
     template <typename K, typename V, typename H = Hash<K>, typename Alloc = HeapAlloc>
     class HashMap : private H, private Alloc
     {
@@ -435,9 +443,9 @@ namespace ct
         // Percorrer: a ordem e a dos slots (sem significado). Apagar ou inserir durante o ciclo e INVALIDO: a remocao
         // desloca os elementos seguintes para tras (o ciclo salta ou repete elementos) e a insercao pode fazer rehash
         // (invalida todos os iteradores e referencias). Para apagar varios use erase_if(pred), que visita cada elemento
-        // uma vez; ou junte as chaves e apague depois. Em compilacoes de depuracao (CT_DEBUG_ITERATORS, por omissao
-        // quando NDEBUG nao esta definido) usar um iterador depois de a tabela mudar aborta com uma mensagem; em
-        // Release nao ha verificacao e o iterador e o SlotIter simples.
+        // uma vez; ou junte as chaves e apague depois. Com CT_DEBUG_ITERATORS=1 (explicito: nunca por omissao nem por causa de
+        // NDEBUG, e igual em todas as unidades do programa; o tipo passa a ct::abi_dbgiter::HashMap) usar um iterador depois de a
+        // tabela mudar aborta com uma mensagem; sem ela nao ha verificacao e o iterador e o SlotIter simples.
 #if defined(CT_DEBUG_ITERATORS)
         using iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::CheckedSlotIter<Entry *, kDist>, Entry>,
                                                     detail::CheckedSlotIter<Entry, kDist>>::type;
@@ -806,5 +814,7 @@ namespace ct
             mask_ = 0;
         }
     };
+    CT_ABI_HASHINL_END
+    CT_ABI_DBGITER_END
 
 }

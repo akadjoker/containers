@@ -12,16 +12,37 @@
 #include <new> 
 #include <type_traits>
 
-#if !defined(CT_DEBUG_ITERATORS) && !defined(NDEBUG)
-#define CT_DEBUG_ITERATORS 1
-#endif
+// ---------------------------------------------------------------------------------------------------------------------
+// ABI. Nenhum tipo da ct muda de tamanho, de alinhamento nem de membros com NDEBUG, com assert, com o nivel de optimizacao ou com
+// qualquer macro de depuracao implicita: um programa em que uma unidade se compila com -DNDEBUG e outra com -UNDEBUG (uma biblioteca
+// em Release ligada a uma aplicacao em Debug, um teste com `#undef NDEBUG`) ve os mesmos tipos. As unicas macros que mudam o layout ou o
+// comportamento de funcoes inline sao as de baixo, todas EXPLICITAS (nenhuma vem por omissao nem de NDEBUG) e todas num NAMESPACE
+// INLINE que leva o valor no nome (`ct::abi_dbgiter::HashMap`): um programa com unidades que discordam troca tipos de nomes
+// diferentes, e a ligacao falha (referencia por definir) em vez de corromper memoria em silencio.
+//
+//   CT_DEBUG_ITERATORS=1   HashMap, HashSet: o iterador aborta se for usado depois de a tabela mudar (a tabela ganha um contador)
+//   CT_HASH_INLINE_MAX=N   HashMap: o tamanho acima do qual a entrada fica fora da tabela (N tem de ser um literal inteiro)
+//   CT_TLS_MBEDTLS, CT_TLS_DEFAULT_MBEDTLS   TlsLibrary: o motor mbedTLS compilado e por omissao
+//   CT_RE_CHECK_CAPS       Regex: uma verificacao de depuracao do motor
+// Todas as unidades do programa tem de as definir da mesma maneira (no CMake, pelo alvo `ct`: opcao CT_DEBUG_ITERATORS).
+// As outras `#if` dos cabecalhos so olham para a plataforma e para o compilador (_WIN32, __GNUC__, __BYTE_ORDER__, ...).
 #if defined(CT_DEBUG_ITERATORS)
+// -DCT_DEBUG_ITERATORS=0 e -DCT_DEBUG_ITERATORS (vazio) enganam-se facilmente a ler; so o valor 1 liga a verificacao
+#if (CT_DEBUG_ITERATORS + 0) != 1
+#error "CT_DEBUG_ITERATORS: defina-a com o valor 1 (-DCT_DEBUG_ITERATORS=1) ou nao a defina; nao depende de NDEBUG"
+#endif
 #define CT_HASH_TOUCH() (++version_)
 #define CT_HASH_ITER_ARGS , &version_
+#define CT_ABI_DBGITER_BEGIN inline namespace abi_dbgiter {
+#define CT_ABI_DBGITER_END }
 #else
 #define CT_HASH_TOUCH() ((void)0)
 #define CT_HASH_ITER_ARGS
+#define CT_ABI_DBGITER_BEGIN
+#define CT_ABI_DBGITER_END
 #endif
+#define CT_ABI_PASTE_(a, b) a##b
+#define CT_ABI_PASTE(a, b) CT_ABI_PASTE_(a, b)
 
 #if defined(__GNUC__) || defined(__clang__)
 #define CT_LIKELY(x) __builtin_expect(!!(x), 1)
@@ -614,10 +635,10 @@ namespace ct
         };
 
 #if defined(CT_DEBUG_ITERATORS)
-        // So em compilacoes de depuracao (CT_DEBUG_ITERATORS, que por omissao existe quando NDEBUG nao existe e tem de
-        // ser igual em todas as unidades): o iterador de HashMap e HashSet guarda a versao da tabela quando nasce e
-        // aborta se for usado (*, ->, ++) depois de a tabela ter mudado, que e o que apagar ou inserir durante um
-        // ciclo for faz. Em Release o iterador e o SlotIter de sempre, sem custo nenhum.
+        // So com CT_DEBUG_ITERATORS=1 (explicito, nunca por omissao nem por causa de NDEBUG, e igual em todas as unidades; os
+        // tipos que o usam levam o namespace inline abi_dbgiter): o iterador de HashMap e HashSet guarda a versao da tabela
+        // quando nasce e aborta se for usado (*, ->, ++) depois de a tabela ter mudado, que e o que apagar ou inserir durante
+        // um ciclo for faz. Sem ela o iterador e o SlotIter de sempre, sem custo nenhum.
         template <typename E, bool Tagged = false>
         class CheckedSlotIter
         {

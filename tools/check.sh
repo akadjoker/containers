@@ -12,6 +12,8 @@
 #            tools/check.sh --update-nostd reescreve a baseline: so para tirar usos, nunca para juntar)
 #   headers  cada cabecalho compila sozinho com -Wall -Wextra -Wpedantic -Werror (alvo ct_headers)
 #   release  testes em Release
+#   abi      uma unidade com NDEBUG e outra com -UNDEBUG usam os mesmos tipos (sizeof, alinhamento, posicao dos membros) e trocam objectos;
+#            duas unidades que discordam do CT_DEBUG_ITERATORS tem de FALHAR na ligacao (tests/abi_*.cpp)
 #   asan     testes com ASan + UBSan (UBSan fatal, float-cast-overflow incluido) e o ct_torture
 #   tsan     os testes que usam threads com TSan (precisa de `setarch -R` neste kernel)
 #   parse    fuzz de mutacao dos parsers (Json, Xml, Ini, Soup, Http, Regex, JsRegex, Unicode) com ASan + UBSan
@@ -53,7 +55,7 @@ for arg in "$@"; do
 done
 UPDATE_NOSTD=${UPDATE_NOSTD:-0}
 if [ -z "$STAGES" ]; then
-    if [ "$UPDATE_NOSTD" = 1 ]; then STAGES="nostd"; else STAGES="nostd headers release asan tsan parse"; fi
+    if [ "$UPDATE_NOSTD" = 1 ]; then STAGES="nostd"; else STAGES="nostd headers release abi asan tsan parse"; fi
 fi
 
 mkdir -p "$LOGS"
@@ -186,6 +188,28 @@ stage_release() {
     fi
 }
 
+stage_abi() {
+    d=$DIR/release
+    t0=$(now)
+    if ! { configure "$d" Release "" "" &&
+        cmake --build "$d" --target ct_abi_tests ct_abi_tests_dbgiter -j"$JOBS"; } >"$LOGS/abi-build.log" 2>&1; then
+        record abi FAIL "build falhou, ver $LOGS/abi-build.log"
+        return
+    fi
+    if ! { "$d/ct_abi_tests" && "$d/ct_abi_tests_dbgiter"; } >"$LOGS/abi.log" 2>&1; then
+        record abi FAIL "os tipos discordam entre unidades, ver $LOGS/abi.log"
+        return
+    fi
+    # duas unidades que discordam do CT_DEBUG_ITERATORS: a ligacao tem de falhar com uma referencia por definir
+    if LC_ALL=C cmake --build "$d" --target ct_abi_mixed_link_fail >"$LOGS/abi-mixed.log" 2>&1; then
+        record abi FAIL "o executavel com CT_DEBUG_ITERATORS misturado LIGOU (devia falhar), ver $LOGS/abi-mixed.log"
+    elif grep -q "undefined reference" "$LOGS/abi-mixed.log"; then
+        record abi PASS "tipos iguais com NDEBUG e -UNDEBUG, e CT_DEBUG_ITERATORS misturado falha na ligacao ($(($(now) - t0))s)"
+    else
+        record abi FAIL "o executavel misturado falhou mas nao por referencia por definir, ver $LOGS/abi-mixed.log"
+    fi
+}
+
 sanitizer_filter() {
     if [ "$QUICK" = 1 ]; then
         make_filter '*' "$(network_exclusion)" 'JsRegex*' 'Unicode*'
@@ -197,7 +221,8 @@ sanitizer_filter() {
 stage_asan() {
     d=$DIR/asan
     t0=$(now)
-    san="-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
+    # CT_DEBUG_ITERATORS=1 e explicito (nao vem de NDEBUG): so esta etapa corre os testes que abortam um iterador usado depois de a tabela mudar
+    san="-fsanitize=address,undefined,float-cast-overflow -fno-sanitize-recover=undefined -fno-omit-frame-pointer -DCT_DEBUG_ITERATORS=1"
     if ! { configure "$d" Debug "$san" "-fsanitize=address,undefined" &&
         cmake --build "$d" --target ct_tests ct_torture ct_parsefuzz -j"$JOBS"; } >"$LOGS/asan-build.log" 2>&1; then
         record asan FAIL "build falhou, ver $LOGS/asan-build.log"
@@ -264,6 +289,7 @@ for s in $STAGES; do
     nostd) stage_nostd ;;
     headers) stage_headers ;;
     release) stage_release ;;
+    abi) stage_abi ;;
     asan) stage_asan ;;
     tsan) stage_tsan ;;
     parse) stage_parse ;;

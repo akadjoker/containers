@@ -71,7 +71,7 @@ itself (GoogleTest is fetched only to build the test suite).
 | [slotmap.hpp](include/ct/slotmap.hpp) | `SlotMap` | Stable-index container with generation-checked handles |
 | [slotmap32.hpp](include/ct/slotmap32.hpp) | `SlotMap32` | Same as `SlotMap` with a 4-byte handle: 20-bit index (about one million slots), 12-bit generation (a stale handle can alias after 2048 reuses of one slot) |
 | [flatmap.hpp](include/ct/flatmap.hpp) | `FlatMap` | Sorted-vector associative container |
-| [hashmap.hpp](include/ct/hashmap.hpp) | `HashMap` | Open-addressing hash map. Erasing or inserting while iterating is invalid: use `erase_if(pred)`; a debug build (`CT_DEBUG_ITERATORS`, on when `NDEBUG` is not defined) aborts if an iterator is used after the table changed. Entries over 128 bytes live outside the table |
+| [hashmap.hpp](include/ct/hashmap.hpp) | `HashMap` | Open-addressing hash map. Erasing or inserting while iterating is invalid: use `erase_if(pred)`; with `CT_DEBUG_ITERATORS=1` (explicit, never implied by `NDEBUG`, the whole program must define it the same way; CMake option `CT_DEBUG_ITERATORS`) an iterator used after the table changed aborts. Entries over 128 bytes live outside the table |
 | [hashset.hpp](include/ct/hashset.hpp) | `HashSet` | Open-addressing hash set (same iteration rule and `erase_if`) |
 | [treemap.hpp](include/ct/treemap.hpp) | `TreeMap` | Ordered associative container |
 | [function.hpp](include/ct/function.hpp) | `Function` | Type-erased callable, `std::function` replacement |

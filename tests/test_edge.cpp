@@ -1160,3 +1160,461 @@ TEST(EdgeNumbers, IniIntegersRefuseWhatDoesNotFit)
     EXPECT_EQ(ini.get_int("s", "h", 5), 0);
     EXPECT_EQ(ini.get_int("s", "missing", 5), 5);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Diferenciais contra modelos simples (sementes fixas, 1e6 operacoes cada)
+// ---------------------------------------------------------------------------------------------------------------------
+namespace
+{
+    // Modelo: um vetor de capacidade fixa com copias a mao.
+    struct ModelVec
+    {
+        int a[600];
+        size_t n;
+        ModelVec() : n(0) {}
+        void insert(size_t pos, int x)
+        {
+            for (size_t i = n; i > pos; --i)
+                a[i] = a[i - 1];
+            a[pos] = x;
+            ++n;
+        }
+        void erase(size_t pos, size_t count)
+        {
+            for (size_t i = pos; i + count < n; ++i)
+                a[i] = a[i + count];
+            n -= count;
+        }
+    };
+}
+
+TEST(EdgeDifferential, VectorAgainstFixedArrayModel)
+{
+    Lcg rng(31);
+    ct::Vector<int> v;
+    ct::Vector<ct::String> sv;
+    ModelVec m;
+    for (int op = 0; op < 1000000; ++op)
+    {
+        const uint32_t what = rng.next() % 100;
+        const int x = static_cast<int>(rng.next() % 100000);
+        if (what < 30 && m.n < 500)
+        {
+            v.push_back(x);
+            m.insert(m.n, x);
+        }
+        else if (what < 40 && m.n)
+        {
+            v.pop_back();
+            m.erase(m.n - 1, 1);
+        }
+        else if (what < 55 && m.n < 500)
+        {
+            const size_t pos = rng.next() % (m.n + 1);
+            v.insert(v.begin() + static_cast<ptrdiff_t>(pos), x);
+            m.insert(pos, x);
+        }
+        else if (what < 70 && m.n)
+        {
+            const size_t pos = rng.next() % m.n;
+            const size_t cnt = 1 + rng.next() % (m.n - pos < 5 ? m.n - pos : 5);
+            v.erase(v.begin() + static_cast<ptrdiff_t>(pos), v.begin() + static_cast<ptrdiff_t>(pos + cnt));
+            m.erase(pos, cnt);
+        }
+        else if (what < 75)
+        {
+            const size_t n = rng.next() % 450;
+            v.resize(n, x);
+            for (size_t i = m.n; i < n; ++i)
+                m.a[i] = x;
+            m.n = n;
+        }
+        else if (what < 78 && m.n)
+        {
+            const size_t k = rng.next() % m.n;
+            if (m.n < 500)
+            {
+                v.push_back(v[k]);
+                m.insert(m.n, m.a[k]);
+            }
+        }
+        else if (what < 80)
+        {
+            ct::Vector<int> c(v);
+            ct::Vector<int> mv(static_cast<ct::Vector<int> &&>(c));
+            v = static_cast<ct::Vector<int> &&>(mv);
+        }
+        else if (what < 82)
+        {
+            v.clear();
+            m.n = 0;
+        }
+        else if (what < 84)
+        {
+            const size_t n = rng.next() % 40;
+            v.assign(n, x);
+            for (size_t i = 0; i < n; ++i)
+                m.a[i] = x;
+            m.n = n;
+        }
+        else if (what < 86)
+        {
+            ct::Vector<int> other;
+            other.push_back(1);
+            v.swap(other);
+            v.swap(other);
+        }
+        else if (what < 90 && m.n)
+        {
+            // erase enquanto se percorre: o iterador devolvido continua valido
+            size_t i = 0;
+            for (ct::Vector<int>::iterator it = v.begin(); it != v.end();)
+            {
+                if (*it % 7 == 0)
+                {
+                    it = v.erase(it);
+                    m.erase(i, 1);
+                }
+                else
+                {
+                    ++it;
+                    ++i;
+                }
+            }
+        }
+        if (op % 11 == 0)
+        {
+            ASSERT_EQ(v.size(), m.n) << op;
+            ASSERT_GE(v.capacity(), v.size());
+            for (size_t i = 0; i < m.n; ++i)
+                ASSERT_EQ(v[i], m.a[i]) << op << " i=" << i;
+        }
+        // as strings seguem o mesmo vetor, para exercitar o caminho nao trivial
+        if (op % 97 == 0)
+        {
+            sv.clear();
+            for (size_t i = 0; i < m.n && i < 40; ++i)
+                sv.push_back(ct::String::number(m.a[i]));
+            if (sv.size())
+                sv.push_back(sv[0]);
+            sv.insert(sv.begin(), ct::String("front"));
+            ASSERT_TRUE(sv[0] == "front");
+        }
+    }
+}
+
+TEST(EdgeDifferential, DequeAgainstShiftingModel)
+{
+    Lcg rng(77);
+    ct::Deque<int> d;
+    ModelVec m;
+    for (int op = 0; op < 1000000; ++op)
+    {
+        const uint32_t what = rng.next() % 100;
+        const int x = static_cast<int>(rng.next() % 100000);
+        if (what < 30 && m.n < 500)
+        {
+            d.push_back(x);
+            m.insert(m.n, x);
+        }
+        else if (what < 55 && m.n < 500)
+        {
+            d.push_front(x);
+            m.insert(0, x);
+        }
+        else if (what < 70 && m.n)
+        {
+            d.pop_front();
+            m.erase(0, 1);
+        }
+        else if (what < 85 && m.n)
+        {
+            d.pop_back();
+            m.erase(m.n - 1, 1);
+        }
+        else if (what < 88)
+        {
+            const size_t n = rng.next() % 450;
+            d.resize(n, x);
+            for (size_t i = m.n; i < n; ++i)
+                m.a[i] = x;
+            m.n = n;
+        }
+        else if (what < 90)
+        {
+            ct::Deque<int> c(d);
+            d = static_cast<ct::Deque<int> &&>(c);
+        }
+        else if (what < 91)
+        {
+            d.clear();
+            m.n = 0;
+        }
+        if (op % 7 == 0)
+        {
+            ASSERT_EQ(d.size(), m.n) << op;
+            if (m.n)
+            {
+                ASSERT_EQ(d.front(), m.a[0]);
+                ASSERT_EQ(d.back(), m.a[m.n - 1]);
+            }
+            for (size_t i = 0; i < m.n; i += 1 + m.n / 16)
+                ASSERT_EQ(d[i], m.a[i]) << op;
+        }
+    }
+}
+
+TEST(EdgeDifferential, StringAgainstCharArrayModel)
+{
+    Lcg rng(123);
+    ct::String s;
+    char model[400];
+    size_t n = 0;
+    for (int op = 0; op < 1000000; ++op)
+    {
+        const uint32_t what = rng.next() % 100;
+        const char c = static_cast<char>('a' + rng.next() % 26);
+        if (what < 25 && n < 300)
+        {
+            s.push_back(c);
+            model[n++] = c;
+        }
+        else if (what < 40 && n < 300)
+        {
+            char piece[8];
+            const size_t len = rng.next() % 8;
+            for (size_t i = 0; i < len; ++i)
+                piece[i] = static_cast<char>('A' + rng.next() % 26);
+            s.append(piece, len);
+            memcpy(model + n, piece, len);
+            n += len;
+        }
+        else if (what < 55 && n < 300)
+        {
+            const size_t pos = rng.next() % (n + 1);
+            char piece[6];
+            const size_t len = 1 + rng.next() % 6;
+            for (size_t i = 0; i < len; ++i)
+                piece[i] = static_cast<char>('0' + rng.next() % 10);
+            s.insert(pos, piece, len);
+            memmove(model + pos + len, model + pos, n - pos);
+            memcpy(model + pos, piece, len);
+            n += len;
+        }
+        else if (what < 70 && n)
+        {
+            const size_t pos = rng.next() % n;
+            const size_t len = rng.next() % (n - pos + 1);
+            s.erase(pos, len);
+            memmove(model + pos, model + pos + len, n - pos - len);
+            n -= len;
+        }
+        else if (what < 75 && n)
+        {
+            s.pop_back();
+            --n;
+        }
+        else if (what < 80)
+        {
+            const size_t nn = rng.next() % 200;
+            s.resize(nn, c);
+            for (size_t i = n; i < nn; ++i)
+                model[i] = c;
+            n = nn;
+        }
+        else if (what < 83 && n && n < 150)
+        {
+            s.append(s);
+            memcpy(model + n, model, n);
+            n *= 2;
+        }
+        else if (what < 86)
+        {
+            ct::String t(s);
+            ct::String u(static_cast<ct::String &&>(t));
+            s = static_cast<ct::String &&>(u);
+        }
+        else if (what < 88)
+        {
+            s.clear();
+            n = 0;
+        }
+        else if (what < 92 && n)
+        {
+            const size_t pos = rng.next() % n;
+            const size_t len = rng.next() % (n - pos + 1);
+            ct::String sub = s.substr(pos, len);
+            ASSERT_EQ(sub.size(), len);
+            ASSERT_EQ(memcmp(sub.data(), model + pos, len), 0);
+        }
+        else if (what < 96)
+        {
+            const size_t at = s.find(c);
+            size_t want = ct::String::npos;
+            for (size_t i = 0; i < n; ++i)
+                if (model[i] == c)
+                {
+                    want = i;
+                    break;
+                }
+            ASSERT_EQ(at, want);
+        }
+        if (op % 5 == 0)
+        {
+            ASSERT_EQ(s.size(), n) << op;
+            ASSERT_EQ(memcmp(s.data(), model, n), 0) << op;
+            ASSERT_EQ(s.c_str()[n], '\0') << op;
+        }
+    }
+}
+
+TEST(EdgeDifferential, TreeMapAndFlatMapAgainstDirectArray)
+{
+    const int keys = 2048;
+    ct::Vector<char> has;
+    ct::Vector<int> val;
+    has.resize(keys);
+    val.resize(keys);
+    ct::TreeMap<int, int> t;
+    ct::FlatMap<int, int> f;
+    size_t count = 0;
+    Lcg rng(555);
+    for (int op = 0; op < 1000000; ++op)
+    {
+        const int k = static_cast<int>(rng.next() % keys);
+        const uint32_t what = rng.next() % 100;
+        if (what < 40)
+        {
+            const int v = static_cast<int>(rng.next());
+            t.put(k, v);
+            f.put(k, v);
+            if (!has[k])
+                ++count;
+            has[k] = 1;
+            val[k] = v;
+        }
+        else if (what < 70)
+        {
+            const bool had = has[k] != 0;
+            ASSERT_EQ(t.erase(k), had);
+            ASSERT_EQ(f.erase(k), had);
+            if (had)
+                --count;
+            has[k] = 0;
+        }
+        else if (what < 98)
+        {
+            int *p = t.find(k);
+            int *q = f.find(k);
+            ASSERT_EQ(p != nullptr, has[k] != 0);
+            ASSERT_EQ(q != nullptr, has[k] != 0);
+            if (p)
+            {
+                ASSERT_EQ(*p, val[k]);
+                ASSERT_EQ(*q, val[k]);
+            }
+        }
+        else if (what == 98)
+        {
+            ct::TreeMap<int, int> tc(t);
+            ct::FlatMap<int, int> fc(f);
+            ASSERT_EQ(tc.size(), count);
+            ASSERT_EQ(fc.size(), count);
+            if (op % 4 == 0)
+            {
+                t = tc;
+                f = fc;
+            }
+        }
+        else
+        {
+            int prev = -1;
+            size_t n = 0;
+            for (auto &e : t)
+            {
+                ASSERT_GT(e.key, prev);
+                ASSERT_TRUE(has[e.key] != 0);
+                ASSERT_EQ(e.value, val[e.key]);
+                prev = e.key;
+                ++n;
+            }
+            ASSERT_EQ(n, count);
+            prev = -1;
+            n = 0;
+            for (auto &e : f)
+            {
+                ASSERT_GT(e.key, prev);
+                ASSERT_EQ(e.value, val[e.key]);
+                prev = e.key;
+                ++n;
+            }
+            ASSERT_EQ(n, count);
+            ASSERT_TRUE(t.validate());
+            if (op % 30000 == 99)
+            {
+                t.clear();
+                f = ct::FlatMap<int, int>();
+                for (int i = 0; i < keys; ++i)
+                    has[i] = 0;
+                count = 0;
+            }
+        }
+    }
+}
+
+TEST(EdgeSelfReference, SelfAssignmentOfEveryContainerKeepsTheContents)
+{
+    ct::Vector<ct::String> v;
+    ct::Deque<ct::String> d;
+    ct::HashMap<int, ct::String> h;
+    ct::HashSet<int> hs;
+    ct::TreeMap<int, ct::String> t;
+    ct::FlatMap<int, ct::String> f;
+    ct::String s("a string long enough to live on the heap, not in the small buffer");
+    for (int i = 0; i < 50; ++i)
+    {
+        v.push_back(s);
+        d.push_back(s);
+        h.put(i, s);
+        hs.insert(i);
+        t.put(i, s);
+        f.put(i, s);
+    }
+    ct::Vector<ct::String> &vr = v;
+    ct::Deque<ct::String> &dr = d;
+    ct::HashMap<int, ct::String> &hr = h;
+    ct::HashSet<int> &hsr = hs;
+    ct::TreeMap<int, ct::String> &tr = t;
+    ct::FlatMap<int, ct::String> &fr = f;
+    ct::String &sr = s;
+    v = vr;
+    d = dr;
+    h = hr;
+    hs = hsr;
+    t = tr;
+    f = fr;
+    s = sr;
+    v = static_cast<ct::Vector<ct::String> &&>(vr);
+    d = static_cast<ct::Deque<ct::String> &&>(dr);
+    h = static_cast<ct::HashMap<int, ct::String> &&>(hr);
+    hs = static_cast<ct::HashSet<int> &&>(hsr);
+    t = static_cast<ct::TreeMap<int, ct::String> &&>(tr);
+    f = static_cast<ct::FlatMap<int, ct::String> &&>(fr);
+    s = static_cast<ct::String &&>(sr);
+    ASSERT_EQ(v.size(), 50u);
+    ASSERT_EQ(d.size(), 50u);
+    ASSERT_EQ(h.size(), 50u);
+    ASSERT_EQ(hs.size(), 50u);
+    ASSERT_EQ(t.size(), 50u);
+    ASSERT_EQ(f.size(), 50u);
+    ASSERT_EQ(s.size(), strlen("a string long enough to live on the heap, not in the small buffer"));
+    for (int i = 0; i < 50; ++i)
+    {
+        ASSERT_TRUE(v[static_cast<size_t>(i)] == s);
+        ASSERT_TRUE(d[static_cast<size_t>(i)] == s);
+        ASSERT_TRUE(*h.find(i) == s);
+        ASSERT_TRUE(hs.contains(i));
+        ASSERT_TRUE(*t.find(i) == s);
+        ASSERT_TRUE(*f.find(i) == s);
+    }
+}

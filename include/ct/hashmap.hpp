@@ -143,7 +143,11 @@ namespace ct
         // Entradas com mais de 128 bytes ficam fora da tabela, cada uma no seu bloco (a tabela guarda ponteiros): a
         // tabela fica com 9 bytes por slot em vez de sizeof(entrada) + 1, por isso nao desperdica 25 a 60 % de memoria
         // em slots vazios, cresce sem mover as entradas e uma referencia a um valor sobrevive ao rehash.
-        constexpr std::size_t kHashInlineMax = 128;
+        // (CT_HASH_INLINE_MAX muda o limite; com um valor enorme nenhuma entrada fica fora e a tabela e a de antes.)
+#if !defined(CT_HASH_INLINE_MAX)
+#define CT_HASH_INLINE_MAX 128
+#endif
+        constexpr std::size_t kHashInlineMax = CT_HASH_INLINE_MAX;
     } // namespace detail
 
     // Mapa de hash de enderecamento aberto com sondagem linear e remocao por deslocamento (sem marcadores).

@@ -10,7 +10,7 @@ namespace ct
     namespace detail
     {
 
-        constexpr std::size_t kSmallSort = 24;   
+                constexpr std::size_t kSmallSort = 24;
         constexpr std::size_t kRadixMin = 128;   
 
         template <typename T, typename C>
@@ -61,33 +61,197 @@ namespace ct
             }
         }
 
-        // Poe em *result a mediana de *a, *b e *c.
+        // O ponteiro para a mediana de *a, *b e *c.
         template <typename T, typename C>
-        inline void move_median_to_first(T *result, T *a, T *b, T *c, C cmp)
+        inline T *median_of_3(T *a, T *b, T *c, C cmp)
         {
             if (cmp(*a, *b))
             {
                 if (cmp(*b, *c))
-                    swap_vals(*result, *b);
-                else if (cmp(*a, *c))
-                    swap_vals(*result, *c);
-                else
-                    swap_vals(*result, *a);
+                    return b;
+                return cmp(*a, *c) ? c : a;
             }
-            else if (cmp(*a, *c))
-                swap_vals(*result, *a);
-            else if (cmp(*b, *c))
-                swap_vals(*result, *c);
-            else
-                swap_vals(*result, *b);
+            if (cmp(*a, *c))
+                return a;
+            return cmp(*b, *c) ? c : b;
         }
+
+        // Poe a mediana (de tres amostras, ou de nove acima de 128 elementos: a mediana das medianas de tres grupos, que
+        // da uma divisao mais equilibrada em entradas grandes) em *lo. So le dentro de [lo, hi).
+        template <typename T, typename C>
+        inline void choose_pivot(T *lo, T *hi, C cmp)
+        {
+            const std::size_t n = static_cast<std::size_t>(hi - lo);
+            T *mid = lo + n / 2;
+            T *last = hi - 1;
+            T *m;
+            if (n > 128)
+            {
+                const std::size_t s = n / 8;
+                T *a = median_of_3(lo + 1, lo + 1 + s, lo + 1 + 2 * s, cmp);
+                T *b = median_of_3(mid - s, mid, mid + s, cmp);
+                T *c = median_of_3(last - 2 * s, last - s, last, cmp);
+                m = median_of_3(a, b, c, cmp);
+            }
+            else
+                m = median_of_3(lo + 1, mid, last, cmp);
+            swap_vals(*lo, *m);
+        }
+
+        // ---- particao por blocos (BlockQuicksort, Edelkamp e Weiss) ----
+        // Os elementos de tipos trivialmente copiaveis e pequenos particionam-se sem saltos que dependam dos dados: cada
+        // bloco de 64 elementos guarda os desvios dos que estao do lado errado (um incremento em vez de um salto) e depois
+        // trocam-se aos pares. Com dados ao acaso o salto de uma particao normal falha em metade das comparacoes. Le sempre
+        // dentro de [l, r) por construcao (os blocos tem tamanho fixo), por isso um comparador que nao e uma ordem fraca
+        // estrita (<=) nao faz ler fora do intervalo nem precisa de guardas.
+                constexpr unsigned kSortBlock = 64;
+
+        template <typename T>
+        struct use_block_partition : integral_constant<bool, is_trivially_copyable_t<T>::value && sizeof(T) <= 32>
+        {
+        };
+
+        // goes_left(x, pivot): x fica a esquerda. Particiona [l, r) e devolve o ponto de corte: [l, p) vai para a esquerda.
+        template <typename T, typename Pred>
+        inline T *block_partition(T *l, T *r, const T &pivot, Pred goes_left)
+        {
+            unsigned char offl[kSortBlock];
+            unsigned char offr[kSortBlock];
+            unsigned nl = 0, nr = 0, sl = 0, sr = 0;
+            while (static_cast<std::size_t>(r - l) > 2 * kSortBlock)
+            {
+                if (nl == 0)
+                {
+                    sl = 0;
+                    for (unsigned i = 0; i < kSortBlock; i += 4)
+                    {
+                        offl[nl] = static_cast<unsigned char>(i);
+                        nl += !goes_left(l[i], pivot);
+                        offl[nl] = static_cast<unsigned char>(i + 1);
+                        nl += !goes_left(l[i + 1], pivot);
+                        offl[nl] = static_cast<unsigned char>(i + 2);
+                        nl += !goes_left(l[i + 2], pivot);
+                        offl[nl] = static_cast<unsigned char>(i + 3);
+                        nl += !goes_left(l[i + 3], pivot);
+                    }
+                }
+                if (nr == 0)
+                {
+                    sr = 0;
+                    for (unsigned i = 0; i < kSortBlock; i += 4)
+                    {
+                        offr[nr] = static_cast<unsigned char>(i + 1);
+                        nr += goes_left(*(r - 1 - i), pivot);
+                        offr[nr] = static_cast<unsigned char>(i + 2);
+                        nr += goes_left(*(r - 2 - i), pivot);
+                        offr[nr] = static_cast<unsigned char>(i + 3);
+                        nr += goes_left(*(r - 3 - i), pivot);
+                        offr[nr] = static_cast<unsigned char>(i + 4);
+                        nr += goes_left(*(r - 4 - i), pivot);
+                    }
+                }
+                const unsigned m = nl < nr ? nl : nr;
+                for (unsigned j = 0; j < m; ++j)
+                    swap_vals(l[offl[sl + j]], *(r - offr[sr + j]));
+                nl -= m;
+                nr -= m;
+                sl += m;
+                sr += m;
+                if (nl == 0)
+                    l += kSortBlock;
+                if (nr == 0)
+                    r -= kSortBlock;
+            }
+            // O que sobra: no maximo um bloco pendente (de um dos lados) mais os elementos ainda por ver, que formam o bloco
+            // do outro lado (ou dois blocos, metade cada, se nao ha pendente).
+            const std::size_t unknown = static_cast<std::size_t>(r - l) - ((nl || nr) ? kSortBlock : 0);
+            std::size_t lsize, rsize;
+            if (nr)
+            {
+                lsize = unknown;
+                rsize = kSortBlock;
+            }
+            else if (nl)
+            {
+                lsize = kSortBlock;
+                rsize = unknown;
+            }
+            else
+            {
+                lsize = unknown / 2;
+                rsize = unknown - lsize;
+            }
+            if (unknown && !nl)
+            {
+                sl = 0;
+                for (std::size_t i = 0; i < lsize; ++i)
+                {
+                    offl[nl] = static_cast<unsigned char>(i);
+                    nl += !goes_left(l[i], pivot);
+                }
+            }
+            if (unknown && !nr)
+            {
+                sr = 0;
+                for (std::size_t i = 0; i < rsize; ++i)
+                {
+                    offr[nr] = static_cast<unsigned char>(i + 1);
+                    nr += goes_left(*(r - 1 - i), pivot);
+                }
+            }
+            const unsigned m = nl < nr ? nl : nr;
+            for (unsigned j = 0; j < m; ++j)
+                swap_vals(l[offl[sl + j]], *(r - offr[sr + j]));
+            nl -= m;
+            nr -= m;
+            sl += m;
+            sr += m;
+            if (nl == 0)
+                l += lsize;
+            if (nr == 0)
+                r -= rsize;
+            // [l, r) ja esta identificado: o que falta e levar os pendentes de um lado para a ponta certa
+            if (nl)
+            {
+                const unsigned char *o = offl + sl;
+                while (nl--)
+                    swap_vals(l[o[nl]], *--r);
+                l = r;
+            }
+            if (nr)
+            {
+                const unsigned char *o = offr + sr;
+                while (nr--)
+                {
+                    swap_vals(*(r - o[nr]), *l);
+                    ++l;
+                }
+                r = l;
+            }
+            return l;
+        }
+
+        template <typename C>
+        struct LessThanPivot
+        {
+            C cmp;
+            template <typename T>
+            bool operator()(const T &x, const T &pivot) const { return cmp(x, pivot); }
+        };
+        template <typename C>
+        struct LessEqualPivot
+        {
+            C cmp;
+            template <typename T>
+            bool operator()(const T &x, const T &pivot) const { return !cmp(pivot, x); }
+        };
 
         // Particao de Hoare com o pivo (a mediana de tres) em *lo: as duas pontas param nos iguais ao pivo, por isso
         // uma entrada com muitos repetidos parte-se ao meio em vez de ficar toda de um lado (o que gastava a profundidade
         // e caia no heapsort), e uma entrada ordenada ao contrario nao troca quase nada. As guardas lo e hi custam um
         // teste e mantem a leitura dentro do intervalo mesmo com um comparador que nao e uma ordem fraca estrita (<=).
         template <typename T, typename C>
-        inline void intro_rec(T *lo, T *hi, int depth, C cmp)
+        inline void intro_rec_hoare(T *lo, T *hi, int depth, C cmp)
         {
             while (static_cast<std::size_t>(hi - lo) > kSmallSort)
             {
@@ -96,7 +260,7 @@ namespace ct
                     heap_sort(lo, hi, cmp);
                     return;
                 }
-                move_median_to_first(lo, lo + 1, lo + (hi - lo) / 2, hi - 1, cmp);
+                choose_pivot(lo, hi, cmp);
                 T *left = lo + 1;
                 T *right = hi;
                 for (;;)
@@ -111,10 +275,51 @@ namespace ct
                     swap_vals(*left, *right);
                     ++left;
                 }
-                intro_rec(left, hi, depth, cmp);
+                intro_rec_hoare(left, hi, depth, cmp);
                 hi = left;
             }
             insertion_sort(lo, hi, cmp);
+        }
+
+        // Tipos pequenos e trivialmente copiaveis: particao por blocos. `leftmost` diz se [lo, hi) comeca no inicio do
+        // intervalo todo; se nao, *(lo - 1) e o pivo de um nivel acima (ou um elemento anterior), e se o pivo novo nao e
+        // maior que ele (ha muitos repetidos) os iguais ao pivo vao todos para a esquerda de uma vez e ficam prontos, em
+        // vez de o pivo ir sempre para o mesmo lado.
+        template <typename T, typename C>
+        inline void intro_rec_blocks(T *lo, T *hi, int depth, C cmp, bool leftmost)
+        {
+            while (static_cast<std::size_t>(hi - lo) > kSmallSort)
+            {
+                if (depth-- == 0)
+                {
+                    heap_sort(lo, hi, cmp);
+                    return;
+                }
+                choose_pivot(lo, hi, cmp);
+                const T pivot = *lo;
+                if (!leftmost && !cmp(*(lo - 1), pivot))
+                {
+                    lo = block_partition(lo + 1, hi, pivot, LessEqualPivot<C>{cmp});
+                    leftmost = false;
+                    continue;
+                }
+                T *p = block_partition(lo + 1, hi, pivot, LessThanPivot<C>{cmp});
+                swap_vals(*lo, *(p - 1));
+                intro_rec_blocks(p, hi, depth, cmp, false);
+                hi = p - 1;
+            }
+            insertion_sort(lo, hi, cmp);
+        }
+
+        template <typename T, typename C>
+        inline void intro_rec(T *lo, T *hi, int depth, C cmp, true_type)
+        {
+            intro_rec_blocks(lo, hi, depth, cmp, true);
+        }
+        template <typename T, typename C>
+        inline void intro_rec(T *lo, T *hi, int depth, C cmp, false_type)
+        {
+            intro_rec_hoare(lo, hi, depth, cmp);
         }
 
         inline int log2_floor(std::size_t n)
@@ -127,33 +332,40 @@ namespace ct
 
         // Uma entrada ja ordenada (ou ordenada ao contrario, estritamente) e muito comum e fica em n comparacoes: a
         // primeira passagem para no primeiro par fora de ordem, por isso numa entrada qualquer custa duas ou tres.
+        // Devolve true se o intervalo ficou ordenado (estava, ou foi invertido: so se for estritamente decrescente, por
+        // isso e estavel).
+        template <typename T, typename C>
+        inline bool presorted(T *lo, T *hi, C cmp)
+        {
+            T *p = lo + 1;
+            while (p < hi && !cmp(*p, *(p - 1)))
+                ++p;
+            if (p == hi)
+                return true;
+            if (p == lo + 1)
+            {
+                T *q = lo + 2;
+                while (q < hi && cmp(*q, *(q - 1)))
+                    ++q;
+                if (q == hi)
+                {
+                    for (T *a = lo, *b = hi - 1; a < b; ++a, --b)
+                        swap_vals(*a, *b);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         template <typename T, typename C>
         inline void intro_sort(T *lo, T *hi, C cmp)
         {
             const std::size_t n = static_cast<std::size_t>(hi - lo);
             if (n < 2)
                 return;
-            if (n > kSmallSort)
-            {
-                T *p = lo + 1;
-                while (p < hi && !cmp(*p, *(p - 1)))
-                    ++p;
-                if (p == hi)
-                    return;
-                if (p == lo + 1)
-                {
-                    T *q = lo + 2;
-                    while (q < hi && cmp(*q, *(q - 1)))
-                        ++q;
-                    if (q == hi)
-                    {
-                        for (T *a = lo, *b = hi - 1; a < b; ++a, --b)
-                            swap_vals(*a, *b);
-                        return;
-                    }
-                }
-            }
-            intro_rec(lo, hi, 2 * log2_floor(n), cmp);
+            if (n > kSmallSort && presorted(lo, hi, cmp))
+                return;
+            intro_rec(lo, hi, 2 * log2_floor(n), cmp, use_block_partition<T>());
         }
 
         template <typename T>
@@ -249,6 +461,88 @@ namespace ct
                 buf[i].~T();
         }
 
+        // Tipos pequenos e trivialmente copiaveis: a fusao passa de um vetor para o outro (um buffer do tamanho do
+        // intervalo) em cada nivel, sem copiar primeiro metade para o buffer, e escolhe o menor dos dois elementos sem salto
+        // (os dados ao acaso falham metade dos saltos de uma fusao normal). Uma vez por nivel cada elemento e escrito uma
+        // vez; no fim, se o resultado ficou no buffer, copia-se de volta.
+        template <typename T, typename C>
+        inline void merge_to(const T *l, const T *le, const T *r, const T *re, T *out, C cmp)
+        {
+            // Os primeiros 32 elementos saem com saltos e contam-se as mudancas de lado: dados ao acaso mudam em metade
+            // (um salto que falha metade das vezes: passa-se a escolher sem salto), repetidos e inversoes saem em blocos
+            // (o salto e previsivel e a escolha sem salto, que depende da carga anterior, seria mais lenta).
+            unsigned changes = 0;
+            bool prev = false;
+            for (unsigned k = 0; k < 32 && l < le && r < re; ++k)
+            {
+                const bool take_right = cmp(*r, *l); // so o da direita se for estritamente menor: estavel
+                if (take_right)
+                    *out++ = *r++;
+                else
+                    *out++ = *l++;
+                changes += take_right != prev ? 1u : 0u;
+                prev = take_right;
+            }
+            if (changes > 8)
+            {
+                while (l < le && r < re)
+                {
+                    const bool take_right = cmp(*r, *l);
+                    const T *from = take_right ? r : l; // escolher o ponteiro (um cmov) e carregar uma vez
+                    *out++ = *from;
+                    r += static_cast<std::size_t>(take_right);
+                    l += static_cast<std::size_t>(!take_right);
+                }
+            }
+            else
+            {
+                while (l < le && r < re)
+                {
+                    if (cmp(*r, *l))
+                        *out++ = *r++;
+                    else
+                        *out++ = *l++;
+                }
+            }
+            if (l < le)
+                std::memcpy(static_cast<void *>(out), static_cast<const void *>(l), static_cast<std::size_t>(le - l) * sizeof(T));
+            else if (r < re)
+                std::memcpy(static_cast<void *>(out), static_cast<const void *>(r), static_cast<std::size_t>(re - r) * sizeof(T));
+        }
+
+        template <typename T, typename C>
+        inline void stable_sort_pingpong(T *lo, T *hi, C cmp)
+        {
+            const std::size_t n = static_cast<std::size_t>(hi - lo);
+            for (T *p = lo; p < hi; p += kSmallSort)
+                insertion_sort(p, (hi - p > static_cast<std::ptrdiff_t>(kSmallSort)) ? p + kSmallSort : hi, cmp);
+            std::size_t bytes = 0;
+            if (!checked_mul(n, sizeof(T), bytes))
+                fatal("ct::stable_sort: tamanho invalido");
+            HeapAlloc allocator;
+            T *buf = static_cast<T *>(allocator.allocate(bytes, alignof(T)));
+            T *src = lo;
+            T *dst = buf;
+            for (std::size_t width = kSmallSort; width < n; width *= 2)
+            {
+                for (std::size_t i = 0; i < n; i += 2 * width)
+                {
+                    const std::size_t mid = i + width < n ? i + width : n;
+                    const std::size_t end = i + 2 * width < n ? i + 2 * width : n;
+                    if (mid >= end || !cmp(src[mid], src[mid - 1])) // os dois pedacos ja estao em ordem: so copiar
+                        std::memcpy(static_cast<void *>(dst + i), static_cast<const void *>(src + i), (end - i) * sizeof(T));
+                    else
+                        merge_to(src + i, src + mid, src + mid, src + end, dst + i, cmp);
+                }
+                T *t = src;
+                src = dst;
+                dst = t;
+            }
+            if (src != lo)
+                std::memcpy(static_cast<void *>(lo), static_cast<const void *>(src), bytes);
+            allocator.deallocate(buf, bytes);
+        }
+
         template <typename T, typename C>
         inline void stable_sort_impl(T *lo, T *hi, C cmp)
         {
@@ -256,6 +550,13 @@ namespace ct
             if (n <= kSmallSort)
             {
                 insertion_sort(lo, hi, cmp);
+                return;
+            }
+            if (presorted(lo, hi, cmp))
+                return;
+            if (use_block_partition<T>::value)
+            {
+                stable_sort_pingpong(lo, hi, cmp);
                 return;
             }
             for (T *p = lo; p < hi; p += kSmallSort)

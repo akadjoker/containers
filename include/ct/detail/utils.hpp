@@ -512,17 +512,25 @@ namespace ct
 #endif
         }
 
-        // Os n bytes (1 a 8) de meta a partir de m (cada um 0 = livre ou 1 = ocupado) como uma palavra em que o bit 8k
-        // esta aceso quando o slot k esta ocupado.
+        // Cada byte de meta e 0 (livre) ou 0x80 | etiqueta (ocupado, com 7 bits do hash que nao entram no indice): a
+        // sondagem compara a etiqueta antes da chave e so toca no slot quando ela bate. meta_tag tira a etiqueta do hash.
+        inline std::uint8_t meta_tag(std::uint64_t h) noexcept
+        {
+            return static_cast<std::uint8_t>(0x80u | static_cast<unsigned>(h >> 57));
+        }
+
+        // Os n bytes (1 a 8) de meta a partir de m como uma palavra em que o bit 8k + 7 esta aceso quando o slot k esta
+        // ocupado.
         inline std::uint64_t meta_group(const std::uint8_t *m, std::size_t n) noexcept
         {
             std::uint64_t w = 0;
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
             std::memcpy(&w, m, n);
+            w &= 0x8080808080808080ull;
 #else
             for (std::size_t k = 0; k < n; ++k)
                 if (m[k])
-                    w |= std::uint64_t(1) << (8 * k);
+                    w |= std::uint64_t(0x80) << (8 * k);
 #endif
             return w;
         }

@@ -497,25 +497,95 @@ namespace ct
             return lex_less_n(a, na, b, nb, is_memcmp_ordered<T>{});
         }
 
-        // Quantos bytes de meta (0 = livre, 1 = ocupado) a zero ha a partir de m, sem passar de mend: 8 de cada vez, que
-        // e o que faz iterar uma tabela com pouca carga custar quase so os elementos e nao os buracos.
-        inline std::size_t empty_run(const std::uint8_t *m, const std::uint8_t *mend) noexcept
+        inline unsigned ctz64(std::uint64_t x) noexcept
         {
-            std::size_t n = 0;
-#if defined(__GNUC__) && defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-            while (mend - (m + n) >= 8)
+#if defined(__GNUC__) || defined(__clang__)
+            return static_cast<unsigned>(__builtin_ctzll(x));
+#else
+            unsigned n = 0;
+            while (!(x & 1))
             {
-                std::uint64_t w;
-                std::memcpy(&w, m + n, 8);
-                if (w)
-                    return n + (static_cast<std::size_t>(__builtin_ctzll(w)) >> 3);
-                n += 8;
-            }
-#endif
-            while (m + n != mend && !m[n])
+                x >>= 1;
                 ++n;
+            }
             return n;
+#endif
         }
+
+        // Os n bytes (1 a 8) de meta a partir de m (cada um 0 = livre ou 1 = ocupado) como uma palavra em que o bit 8k
+        // esta aceso quando o slot k esta ocupado.
+        inline std::uint64_t meta_group(const std::uint8_t *m, std::size_t n) noexcept
+        {
+            std::uint64_t w = 0;
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            std::memcpy(&w, m, n);
+#else
+            for (std::size_t k = 0; k < n; ++k)
+                if (m[k])
+                    w |= std::uint64_t(1) << (8 * k);
+#endif
+            return w;
+        }
+
+        // Iterador das tabelas de hash: le a meta 8 slots de cada vez e visita os ocupados pelos bits acesos da palavra,
+        // por isso o custo por elemento nao depende de quantos buracos ha pelo meio (a 38 % de carga eram quatro
+        // quintos dos ciclos). E o ocupado atual e o bit mais baixo que resta.
+        template <typename E>
+        class SlotIter
+        {
+            E *eg_;
+            const std::uint8_t *mg_;
+            const std::uint8_t *mend_;
+            std::uint64_t bits_;
+
+            template <typename U>
+            friend class SlotIter;
+
+        public:
+            SlotIter(E *e, const std::uint8_t *m, const std::uint8_t *mend) noexcept : eg_(e), mg_(m), mend_(mend), bits_(0)
+            {
+                load();
+            }
+            template <typename U, typename = typename enable_if<is_same<const U, E>::value && !is_same<U, E>::value>::type>
+            SlotIter(const SlotIter<U> &o) noexcept : eg_(o.eg_), mg_(o.mg_), mend_(o.mend_), bits_(o.bits_)
+            {
+            }
+            E &operator*() const noexcept { return eg_[ctz64(bits_) >> 3]; }
+            E *operator->() const noexcept { return eg_ + (ctz64(bits_) >> 3); }
+            SlotIter &operator++() noexcept
+            {
+                bits_ &= bits_ - 1;
+                if (!bits_)
+                {
+                    const std::size_t n = group_size();
+                    mg_ += n;
+                    eg_ += n;
+                    load();
+                }
+                return *this;
+            }
+            bool operator==(const SlotIter &o) const noexcept { return mg_ == o.mg_ && bits_ == o.bits_; }
+            bool operator!=(const SlotIter &o) const noexcept { return !(*this == o); }
+
+        private:
+            std::size_t group_size() const noexcept
+            {
+                const std::size_t left = static_cast<std::size_t>(mend_ - mg_);
+                return left < 8 ? left : 8;
+            }
+            void load() noexcept
+            {
+                while (mg_ != mend_)
+                {
+                    const std::size_t n = group_size();
+                    bits_ = meta_group(mg_, n);
+                    if (bits_)
+                        return;
+                    mg_ += n;
+                    eg_ += n;
+                }
+            }
+        };
 
         inline std::uint64_t hash_mix(std::uint64_t x) noexcept
         {

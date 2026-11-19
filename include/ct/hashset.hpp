@@ -177,41 +177,7 @@ namespace ct
                 rehash(want);
         }
 
-        class iterator
-        {
-            const K *e_;
-            const std::uint8_t *m_;
-            const std::uint8_t *mend_;
-
-        public:
-            iterator(const K *e, const std::uint8_t *m, const std::uint8_t *mend)
-                : e_(e), m_(m), mend_(mend)
-            {
-                skip();
-            }
-            const K &operator*() const { return *e_; }
-            const K *operator->() const { return e_; }
-            iterator &operator++()
-            {
-                ++e_;
-                ++m_;
-                skip();
-                return *this;
-            }
-            bool operator==(const iterator &o) const { return m_ == o.m_; }
-            bool operator!=(const iterator &o) const { return m_ != o.m_; }
-
-        private:
-            void skip()
-            {
-                if (m_ != mend_ && !*m_)
-                {
-                    const std::size_t k = detail::empty_run(m_, mend_);
-                    m_ += k;
-                    e_ += k;
-                }
-            }
-        };
+        using iterator = detail::SlotIter<const K>;
 
         iterator begin() const noexcept
         {
@@ -275,7 +241,11 @@ namespace ct
             if (!slots_)
                 return true;
             const size_type capacity = mask_ + 1;
+            // Uma tabela nunca pode ficar 100 % cheia: probe() so para na chave ou num slot livre, e com a chave em falta
+            // numa tabela cheia nao para. Com capacidade 2 (reserve(1), ou a copia de um conjunto de 1 elemento) o
+            // limite de capacity - capacity / 4 e a tabela toda, e o terceiro insert ficava a rodar para sempre.
             return size_ == (std::numeric_limits<size_type>::max)() ||
+                   size_ + 1 >= capacity ||
                    size_ + 1 > capacity - capacity / 4;
         }
 

@@ -125,11 +125,35 @@ namespace ct
             return r;
         }
 
+        // Uma entrada ja ordenada (ou ordenada ao contrario, estritamente) e muito comum e fica em n comparacoes: a
+        // primeira passagem para no primeiro par fora de ordem, por isso numa entrada qualquer custa duas ou tres.
         template <typename T, typename C>
         inline void intro_sort(T *lo, T *hi, C cmp)
         {
-            if (hi - lo > 1)
-                intro_rec(lo, hi, 2 * log2_floor(static_cast<std::size_t>(hi - lo)), cmp);
+            const std::size_t n = static_cast<std::size_t>(hi - lo);
+            if (n < 2)
+                return;
+            if (n > kSmallSort)
+            {
+                T *p = lo + 1;
+                while (p < hi && !cmp(*p, *(p - 1)))
+                    ++p;
+                if (p == hi)
+                    return;
+                if (p == lo + 1)
+                {
+                    T *q = lo + 2;
+                    while (q < hi && cmp(*q, *(q - 1)))
+                        ++q;
+                    if (q == hi)
+                    {
+                        for (T *a = lo, *b = hi - 1; a < b; ++a, --b)
+                            swap_vals(*a, *b);
+                        return;
+                    }
+                }
+            }
+            intro_rec(lo, hi, 2 * log2_floor(n), cmp);
         }
 
         template <typename T>

@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #if defined(__GLIBC__)
 #include <malloc.h>
 #endif
@@ -70,6 +71,39 @@ TEST(EdgeSort, ManyDuplicatesStayNearNLogN)
             ASSERT_LE(v[k - 1], v[k]) << names[i];
         EXPECT_LT(g_cmps, 2200000u) << names[i];
     }
+}
+
+// Ordenada ou ordenada ao contrario: uma passagem (antes eram 1,3 e 3,4 milhoes de comparacoes para 100000).
+TEST(EdgeSort, SortedAndReversedInputCostOnePass)
+{
+    ct::Vector<int> v;
+    fill_pattern(v, 1, 100000);
+    g_cmps = 0;
+    ct::sort(v.begin(), v.end(), counted_less);
+    EXPECT_LE(g_cmps, 100000u);
+    fill_pattern(v, 2, 100000);
+    g_cmps = 0;
+    ct::sort(v.begin(), v.end(), counted_less);
+    EXPECT_LE(g_cmps, 200000u);
+    for (size_t k = 1; k < v.size(); ++k)
+        ASSERT_LE(v[k - 1], v[k]);
+    EXPECT_EQ(v[0], 1);
+    EXPECT_EQ(v[99999], 100000);
+    // quase ordenada: o primeiro par fora de ordem a meio nao pode estragar o resultado
+    fill_pattern(v, 1, 5000);
+    int t = v[2500];
+    v[2500] = v[2501];
+    v[2501] = t;
+    ct::sort(v.begin(), v.end(), counted_less);
+    for (size_t k = 0; k < v.size(); ++k)
+        ASSERT_EQ(v[k], static_cast<int>(k));
+    // com repetidos ordenados ao contrario (nao estrito) tambem tem de dar o resultado certo
+    v.clear();
+    for (int i = 0; i < 3000; ++i)
+        v.push_back((3000 - i) / 3);
+    ct::sort(v.begin(), v.end(), counted_less);
+    for (size_t k = 1; k < v.size(); ++k)
+        ASSERT_LE(v[k - 1], v[k]);
 }
 
 TEST(EdgeSort, AllPatternsAllSizesAroundTheSmallSortLimit)
@@ -145,8 +179,8 @@ TEST(EdgeSort, RandomAgainstInsertionReference)
 
 // Sem cabecalho por alocacao: 1000 blocos de 24 bytes pedidos com o alinhamento de um ponteiro ocupam 32 bytes cada no
 // malloc do glibc, e nao os 48 de antes (que pedia 32). Em Windows o cabecalho continua. mallinfo2 conta os bytes
-// em uso (os pedidos arredondados ao bloco do malloc), por isso nao depende da arena nem do tcache; com ASan o malloc
-// e outro e o teste fica de fora.
+// em uso (os pedidos arredondados ao bloco do malloc); o tcache pode devolver uns blocos ja contados, por isso
+// 30 a 32 e nao 48. Com ASan o malloc e outro e o teste fica de fora.
 #if defined(__has_feature)
 #if __has_feature(address_sanitizer)
 #define CT_EDGE_ASAN 1
@@ -164,7 +198,8 @@ TEST(EdgeHeapAlloc, NoPerAllocationHeaderOnPosix)
     for (int i = 0; i < 1000; ++i)
         blocks[i] = a.allocate(24, 8);
     const size_t per_block = (mallinfo2().uordblks - before) / 1000;
-    EXPECT_EQ(per_block, 32u);
+    EXPECT_GE(per_block, 30u);
+    EXPECT_LE(per_block, 32u);
     for (int i = 0; i < 1000; ++i)
         a.deallocate(blocks[i], 24);
 }
@@ -266,6 +301,91 @@ TEST(EdgeHashMap, IterationVisitsExactlyTheOccupiedSlots)
         (void)sum;
     }
 }
+
+// Tabelas de 2, 4 e 8 slots (reserve pequeno) tem menos de um grupo de 8 bytes de meta: o ultimo grupo e parcial.
+TEST(EdgeHashMap, IterationAtTinyAndExactCapacities)
+{
+    for (size_t reserve = 0; reserve <= 70; ++reserve)
+        for (size_t fill = 0; fill <= reserve + 3; ++fill)
+        {
+            ct::HashMap<int, int> m;
+            ct::HashSet<int> s;
+            if (reserve)
+            {
+                m.reserve(reserve);
+                s.reserve(reserve);
+            }
+            for (size_t i = 0; i < fill; ++i)
+            {
+                m.put(static_cast<int>(i * 40503u), static_cast<int>(i));
+                s.insert(static_cast<int>(i * 40503u));
+            }
+            size_t n = 0, sum = 0;
+            for (auto &e : m)
+            {
+                ++n;
+                sum += static_cast<size_t>(e.value);
+            }
+            ASSERT_EQ(n, fill) << reserve << " " << fill;
+            ASSERT_EQ(sum, fill * (fill ? fill - 1 : 0) / 2);
+            n = 0;
+            for (auto k : s)
+            {
+                (void)k;
+                ++n;
+            }
+            ASSERT_EQ(n, fill);
+            const ct::HashMap<int, int> &cm = m;
+            ct::HashMap<int, int>::const_iterator it = m.begin();
+            ASSERT_TRUE(it == cm.begin());
+            n = 0;
+            for (it = cm.begin(); it != cm.end(); ++it)
+                ++n;
+            ASSERT_EQ(n, fill);
+        }
+}
+
+// Um HashSet com capacidade 2 (reserve(1), ou a copia de um conjunto de 1 elemento) ficava 100 % cheio ao segundo insert e o
+// terceiro nunca acabava (a sondagem so para num slot livre). O filho tem um alarme: se ficar preso morre por sinal e o
+// teste falha, em vez de pendurar a bateria.
+#if !defined(_WIN32)
+#include <unistd.h>
+namespace
+{
+    void set_fill_with_tiny_capacity()
+    {
+        alarm(5);
+        ct::HashSet<int> a;
+        a.reserve(1);
+        for (int i = 0; i < 50; ++i)
+            a.insert(i * 7);
+        ct::HashSet<int> one;
+        one.insert(1);
+        ct::HashSet<int> c(one);
+        for (int i = 0; i < 50; ++i)
+        {
+            if (c.contains(1000 + i))
+                _exit(2);
+            c.insert(1000 + i);
+        }
+        ct::HashSet<int> d;
+        d.reserve(1);
+        d.insert(1);
+        d.insert(2);
+        if (d.contains(3))
+            _exit(3);
+        for (int i = 0; i < 50; ++i)
+            if (!c.contains(1000 + i))
+                _exit(4);
+        _exit(a.size() == 50 && c.size() == 51 ? 0 : 5);
+    }
+}
+
+TEST(EdgeHashMap, SetWithCapacityTwoDoesNotFillUpAndSpin)
+{
+    EXPECT_EXIT(set_fill_with_tiny_capacity(), ::testing::ExitedWithCode(0), "");
+}
+#endif
 
 TEST(EdgeHashMap, EmptyAndSingleElement)
 {
@@ -1051,6 +1171,50 @@ TEST(EdgeNumbers, StringToIntKnownValues)
     EXPECT_EQ(to_i("1e3"), 1);
     EXPECT_EQ(to_i("- 5"), 0);
     EXPECT_EQ(to_i("007"), 7);
+}
+
+// to_int tem de dar o mesmo que static_cast<int>(strtol(...)) em qualquer texto: diferencial com 1e6 textos.
+TEST(EdgeNumbers, StringToIntMatchesStrtolOnRandomText)
+{
+    Lcg rng(4242);
+    const char alphabet[] = "0123456789  +-\t\n\v\f\rabcxX.e";
+    for (int round = 0; round < 1000000; ++round)
+    {
+        char buf[48];
+        const size_t n = rng.next() % 40;
+        const uint32_t digits_bias = rng.next() % 4;
+        for (size_t i = 0; i < n; ++i)
+        {
+            const uint32_t r = rng.next();
+            buf[i] = (digits_bias && (r & 3)) ? static_cast<char>('0' + (r >> 4) % 10)
+                                                : alphabet[(r >> 4) % (sizeof(alphabet) - 1)];
+        }
+        buf[n] = '\0';
+        const int want = static_cast<int>(strtol(buf, nullptr, 10));
+        ASSERT_EQ(ct::String(buf).to_int(), want) << buf;
+    }
+    const char *edge[] = {"9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809",
+                          "99999999999999999999999", "-99999999999999999999999", "2147483648", "-2147483649", "4294967296"};
+    for (const char *e : edge)
+        ASSERT_EQ(ct::String(e).to_int(), static_cast<int>(strtol(e, nullptr, 10))) << e;
+}
+
+TEST(EdgeNumbers, IntegerToTextMatchesPrintfOnRandomValues)
+{
+    Lcg rng(777);
+    for (int round = 0; round < 500000; ++round)
+    {
+        const uint64_t raw = (static_cast<uint64_t>(rng.next()) << 32) | rng.next();
+        const int shift = static_cast<int>(rng.next() % 64);
+        const long long v = static_cast<long long>(raw >> shift) * ((round & 1) ? -1 : 1);
+        char want[40];
+        snprintf(want, sizeof(want), "%lld", v);
+        ASSERT_TRUE(ct::String::number(v) == want) << want;
+        char wantu[40];
+        snprintf(wantu, sizeof(wantu), "%llu", static_cast<unsigned long long>(raw >> shift));
+        ASSERT_TRUE(ct::String::number(static_cast<unsigned long long>(raw >> shift)) == wantu) << wantu;
+        ASSERT_TRUE(ct::String::number(static_cast<int>(v)) == [&] { char b[40]; snprintf(b, sizeof(b), "%d", static_cast<int>(v)); return ct::String(b); }());
+    }
 }
 
 TEST(EdgeNumbers, StringToFloatKnownValues)

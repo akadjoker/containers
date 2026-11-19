@@ -411,11 +411,7 @@ namespace ct
             char *p = end_ptr;
             unsigned long long u = v < 0 ? 0ull - static_cast<unsigned long long>(v)
                                          : static_cast<unsigned long long>(v);
-            do
-            {
-                *--p = char('0' + u % 10);
-                u /= 10;
-            } while (u);
+            p = write_digits(u, p);
             if (v < 0)
                 *--p = '-';
             return append(p, static_cast<size_type>(end_ptr - p));
@@ -425,12 +421,7 @@ namespace ct
         {
             char tmp[24];
             char *end_ptr = tmp + sizeof(tmp);
-            char *p = end_ptr;
-            do
-            {
-                *--p = char('0' + v % 10);
-                v /= 10;
-            } while (v);
+            char *p = write_digits(v, end_ptr);
             return append(p, static_cast<size_type>(end_ptr - p));
         }
 
@@ -658,7 +649,33 @@ namespace ct
             return compare(pos, n, String(s));
         }
 
-        int to_int() const { return static_cast<int>(std::strtol(c_str(), nullptr, 10)); }
+        // O mesmo resultado que static_cast<int>(strtol(c_str(), nullptr, 10)) (espacos iniciais, sinal, algarismos, o
+        // resto e ignorado, fora do intervalo do long fica no limite e depois e truncado para int), sem passar pelo
+        // strtol: metade das instrucoes.
+        int to_int() const
+        {
+            const char *p = c_str();
+            while (is_space(*p))
+                ++p;
+            const bool negative = *p == '-';
+            if (*p == '-' || *p == '+')
+                ++p;
+            const unsigned long limit = negative ? static_cast<unsigned long>((std::numeric_limits<long>::max)()) + 1ul
+                                                 : static_cast<unsigned long>((std::numeric_limits<long>::max)());
+            unsigned long value = 0;
+            for (; static_cast<unsigned>(*p - '0') < 10u; ++p)
+            {
+                const unsigned digit = static_cast<unsigned>(*p - '0');
+                if (value > (limit - digit) / 10ul)
+                {
+                    value = limit;
+                    break;
+                }
+                value = value * 10ul + digit;
+            }
+            const long signed_value = negative ? static_cast<long>(0ul - value) : static_cast<long>(value);
+            return static_cast<int>(signed_value);
+        }
         float to_float() const
         {
             const char dp = detail::decimal_point();
@@ -695,6 +712,33 @@ namespace ct
 
     private:
         Storage storage_;
+
+        // Escreve v em decimal, acabando em end, e devolve o primeiro caracter: dois algarismos por passo.
+        static char *write_digits(unsigned long long v, char *end) noexcept
+        {
+            static const char pairs[] =
+                "00010203040506070809101112131415161718192021222324252627282930313233343536373839"
+                "40414243444546474849505152535455565758596061626364656667686970717273747576777879"
+                "8081828384858687888990919293949596979899";
+            char *p = end;
+            while (v >= 100)
+            {
+                const unsigned r = static_cast<unsigned>(v % 100);
+                v /= 100;
+                p -= 2;
+                p[0] = pairs[2 * r];
+                p[1] = pairs[2 * r + 1];
+            }
+            if (v >= 10)
+            {
+                p -= 2;
+                p[0] = pairs[2 * v];
+                p[1] = pairs[2 * v + 1];
+            }
+            else
+                *--p = static_cast<char>('0' + v);
+            return p;
+        }
 
         static bool is_space(char c)
         {

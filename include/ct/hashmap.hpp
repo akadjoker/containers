@@ -366,79 +366,8 @@ namespace ct
                 rehash(want);
         }
 
-        class const_iterator
-        {
-            const Entry *e_;
-            const std::uint8_t *m_;
-            const std::uint8_t *mend_;
-
-        public:
-            const_iterator(const Entry *e, const std::uint8_t *m, const std::uint8_t *mend)
-                : e_(e), m_(m), mend_(mend)
-            {
-                skip();
-            }
-            const Entry &operator*() const { return *e_; }
-            const Entry *operator->() const { return e_; }
-            const_iterator &operator++()
-            {
-                ++e_;
-                ++m_;
-                skip();
-                return *this;
-            }
-            bool operator==(const const_iterator &o) const { return m_ == o.m_; }
-            bool operator!=(const const_iterator &o) const { return m_ != o.m_; }
-
-        private:
-            void skip()
-            {
-                if (m_ != mend_ && !*m_)
-                {
-                    const std::size_t k = detail::empty_run(m_, mend_);
-                    m_ += k;
-                    e_ += k;
-                }
-            }
-        };
-
-        class iterator
-        {
-            Entry *e_;
-            std::uint8_t *m_;
-            std::uint8_t *mend_;
-
-        public:
-            iterator(Entry *e, std::uint8_t *m, std::uint8_t *mend)
-                : e_(e), m_(m), mend_(mend)
-            {
-                skip();
-            }
-            Entry &operator*() const { return *e_; }
-            Entry *operator->() const { return e_; }
-            iterator &operator++()
-            {
-                ++e_;
-                ++m_;
-                skip();
-                return *this;
-            }
-            bool operator==(const iterator &o) const { return m_ == o.m_; }
-            bool operator!=(const iterator &o) const { return m_ != o.m_; }
-
-            operator const_iterator() const { return const_iterator(e_, m_, mend_); }
-
-        private:
-            void skip()
-            {
-                if (m_ != mend_ && !*m_)
-                {
-                    const std::size_t k = detail::empty_run(m_, mend_);
-                    m_ += k;
-                    e_ += k;
-                }
-            }
-        };
+        using iterator = detail::SlotIter<Entry>;
+        using const_iterator = detail::SlotIter<const Entry>;
 
         iterator begin() noexcept
         {

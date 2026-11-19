@@ -205,7 +205,7 @@ namespace ct
                 for (size_type i = 0; i <= mask_; ++i)
                     if (o.meta_[i])
                         ::new (static_cast<void *>(&slots_[i])) K(o.slots_[i]);
-                std::memcpy(meta_, o.meta_, mask_ + 1);
+                detail::copy_bytes(meta_, o.meta_, mask_ + 1);
                 size_ = o.size_;
                 return;
             }

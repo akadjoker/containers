@@ -514,14 +514,19 @@ namespace ct
 
         // Cada byte de meta e 0 (livre) ou 0x80 | etiqueta (ocupado, com 7 bits do hash que nao entram no indice): a
         // sondagem compara a etiqueta antes da chave e so toca no slot quando ela bate. meta_tag tira a etiqueta do hash.
-        inline std::uint8_t meta_tag(std::uint64_t h) noexcept
+        inline unsigned char meta_tag(std::uint64_t h) noexcept
         {
-            return static_cast<std::uint8_t>(0x80u | static_cast<unsigned>(h >> 57));
+            return static_cast<unsigned char>(0x80u | static_cast<unsigned>(h >> 57));
+        }
+
+        inline void copy_bytes(void *dst, const void *src, std::size_t n) noexcept
+        {
+            std::memcpy(dst, src, n);
         }
 
         // Os n bytes (1 a 8) de meta a partir de m como uma palavra em que o bit 8k + 7 esta aceso quando o slot k esta
         // ocupado.
-        inline std::uint64_t meta_group(const std::uint8_t *m, std::size_t n) noexcept
+        inline std::uint64_t meta_group(const unsigned char *m, std::size_t n) noexcept
         {
             std::uint64_t w = 0;
 #if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
@@ -542,15 +547,15 @@ namespace ct
         class SlotIter
         {
             E *eg_;
-            const std::uint8_t *mg_;
-            const std::uint8_t *mend_;
+            const unsigned char *mg_;
+            const unsigned char *mend_;
             std::uint64_t bits_;
 
             template <typename U>
             friend class SlotIter;
 
         public:
-            SlotIter(E *e, const std::uint8_t *m, const std::uint8_t *mend) noexcept : eg_(e), mg_(m), mend_(mend), bits_(0)
+            SlotIter(E *e, const unsigned char *m, const unsigned char *mend) noexcept : eg_(e), mg_(m), mend_(mend), bits_(0)
             {
                 load();
             }

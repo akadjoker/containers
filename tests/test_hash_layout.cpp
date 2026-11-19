@@ -375,3 +375,196 @@ TEST(HashLayoutDist, StringSetAgainstModelAndCollisions)
         ASSERT_EQ(c.contains(ct::String("c") + ct::String::number(i)), i % 3 != 0) << i;
     EXPECT_EQ(c.erase_if([](const ct::String &k) { return k.size() == 3; }), 90u - 30u);
 }
+
+// ---- as tres disposicoes da tabela (entrada inteira no slot, chave no slot e valor num bloco, entrada inteira num bloco) ----
+namespace
+{
+    struct BigKey // 48 bytes: a chave nao e pequena (mais de 32), por isso a entrada inteira vai para um bloco do slab
+    {
+        uint64_t a[6];
+        bool operator==(const BigKey &o) const { return memcmp(a, o.a, sizeof a) == 0; }
+        uint64_t hash() const { return ct::detail::hash_bytes(reinterpret_cast<const char *>(a), sizeof a); }
+        static BigKey make(uint64_t x)
+        {
+            BigKey k;
+            for (int i = 0; i < 6; ++i)
+                k.a[i] = x * 31 + static_cast<uint64_t>(i);
+            return k;
+        }
+    };
+
+    int g_mo_live = 0;
+    struct MoveOnlyBig // 256 bytes, so move
+    {
+        uint64_t v[32];
+        explicit MoveOnlyBig(uint64_t x = 0)
+        {
+            ++g_mo_live;
+            for (int i = 0; i < 32; ++i)
+                v[i] = x + static_cast<uint64_t>(i);
+        }
+        MoveOnlyBig(MoveOnlyBig &&o) noexcept
+        {
+            ++g_mo_live;
+            memcpy(v, o.v, sizeof v);
+            o.v[0] = 0xdead;
+        }
+        MoveOnlyBig &operator=(MoveOnlyBig &&o) noexcept
+        {
+            memcpy(v, o.v, sizeof v);
+            o.v[0] = 0xdead;
+            return *this;
+        }
+        MoveOnlyBig(const MoveOnlyBig &) = delete;
+        MoveOnlyBig &operator=(const MoveOnlyBig &) = delete;
+        ~MoveOnlyBig() { --g_mo_live; }
+    };
+
+    struct alignas(64) AlignedBig
+    {
+        uint64_t v[24];
+        AlignedBig() { memset(v, 0, sizeof v); }
+        explicit AlignedBig(uint64_t x)
+        {
+            for (int i = 0; i < 24; ++i)
+                v[i] = x + static_cast<uint64_t>(i);
+        }
+    };
+}
+
+TEST(HashLayoutModes, TheThreeLayoutsAreChosenByKeyAndValueSize)
+{
+    EXPECT_EQ((ct::detail::HashMode<int, int>::value), 0);
+    EXPECT_EQ((ct::detail::HashMode<ct::String, int>::value), 0);
+    EXPECT_EQ((ct::detail::HashMode<int, Big>::value), 1);
+    EXPECT_EQ((ct::detail::HashMode<ct::String, Big>::value), 1); // String tem 24 bytes: chave pequena
+    EXPECT_EQ((ct::detail::HashMode<BigKey, Big>::value), 2);     // chave de 48 bytes: a entrada inteira num bloco
+    EXPECT_EQ((ct::detail::HashMode<BigKey, int>::value), 0);     // 56 bytes: cabe inline
+}
+
+TEST(HashLayoutModes, EntireEntryInASlabBlockWhenTheKeyIsBig)
+{
+    Big::live = 0;
+    {
+        ct::HashMap<BigKey, Big> m;
+        for (uint64_t i = 0; i < 3000; ++i)
+            m.put(BigKey::make(i), Big(i * 7));
+        Big *first = m.find(BigKey::make(0));
+        ASSERT_NE(first, nullptr);
+        for (uint64_t i = 3000; i < 9000; ++i)
+            m.put(BigKey::make(i), Big(i * 7));
+        EXPECT_EQ(m.find(BigKey::make(0)), first) << "o bloco nao se move no rehash";
+        ASSERT_EQ(m.size(), 9000u);
+        EXPECT_EQ(Big::live, 9000);
+        for (uint64_t i = 0; i < 9000; i += 3)
+            ASSERT_TRUE(m.erase(BigKey::make(i)));
+        EXPECT_EQ(Big::live, 6000);
+        size_t n = 0;
+        for (auto &e : m)
+        {
+            ASSERT_EQ(e.value.v[0], e.key.a[0] / 31 * 7);
+            ++n;
+        }
+        EXPECT_EQ(n, 6000u);
+        ct::HashMap<BigKey, Big> copy(m);
+        EXPECT_EQ(Big::live, 12000);
+        for (uint64_t i = 1; i < 9000; i += 3)
+            ASSERT_EQ(copy.find(BigKey::make(i))->v[1], i * 7 + 1);
+        EXPECT_EQ(copy.erase_if([](const BigKey &k, Big &) { return k.a[0] % 2 == 0; }), 3000u);
+        copy.clear();
+        EXPECT_EQ(Big::live, 6000);
+        m = copy; // atribuicao de uma vazia
+        EXPECT_TRUE(m.empty());
+        EXPECT_EQ(Big::live, 0);
+    }
+    EXPECT_EQ(Big::live, 0);
+}
+
+TEST(HashLayoutModes, MoveOnlyAndOverAlignedBigValues)
+{
+    g_mo_live = 0;
+    {
+        ct::HashMap<int, MoveOnlyBig> m;
+        for (int i = 0; i < 2000; ++i)
+            m.put(i, MoveOnlyBig(static_cast<uint64_t>(i)));
+        for (int i = 0; i < 2000; i += 2)
+            ASSERT_TRUE(m.erase(i));
+        EXPECT_EQ(g_mo_live, 1000);
+        MoveOnlyBig out;
+        ASSERT_TRUE(m.erase(1, out));
+        EXPECT_EQ(out.v[5], 6u);
+        ct::HashMap<int, MoveOnlyBig> moved(static_cast<ct::HashMap<int, MoveOnlyBig> &&>(m));
+        EXPECT_TRUE(m.empty());
+        m.put(7, MoveOnlyBig(7)); // o mapa movido de pode voltar a ser usado
+        ct::HashMap<int, MoveOnlyBig> assigned;
+        assigned.put(3, MoveOnlyBig(3));
+        assigned = static_cast<ct::HashMap<int, MoveOnlyBig> &&>(moved);
+        EXPECT_EQ(assigned.size(), 999u);
+        EXPECT_EQ(assigned.find(5)->v[0], 5u);
+        assigned.erase_if([](const int &k, MoveOnlyBig &) { return k > 100; });
+        EXPECT_EQ(g_mo_live, static_cast<int>(assigned.size() + m.size()) + 1);
+    }
+    EXPECT_EQ(g_mo_live, 0);
+    ct::HashMap<int, AlignedBig> a;
+    for (int i = 0; i < 1500; ++i)
+        a.put(i, AlignedBig(static_cast<uint64_t>(i)));
+    for (int i = 0; i < 1500; i += 3)
+        a.erase(i);
+    ct::HashMap<int, AlignedBig> c(a);
+    for (auto &e : c)
+        ASSERT_EQ(reinterpret_cast<uintptr_t>(&e.value) % 64, 0u);
+    for (int i = 1; i < 1500; i += 3)
+        ASSERT_EQ(a.find(i)->v[23], static_cast<uint64_t>(i) + 23);
+}
+
+TEST(HashLayoutModes, RandomOperationsOnABigValueMapAgainstADirectArrayModel)
+{
+    Big::live = 0;
+    const int keys = 3000;
+    ct::Vector<char> has;
+    ct::Vector<uint64_t> val;
+    has.resize(keys);
+    val.resize(keys);
+    size_t count = 0;
+    uint64_t s = 99;
+    ct::HashMap<int, Big> m;
+    for (int op = 0; op < 400000; ++op)
+    {
+        const int k = static_cast<int>(next_rand(s) % keys);
+        const uint64_t what = next_rand(s) % 100;
+        if (what < 45)
+        {
+            const uint64_t v = next_rand(s);
+            m.put(k, Big(v));
+            if (!has[static_cast<size_t>(k)])
+                ++count;
+            has[static_cast<size_t>(k)] = 1;
+            val[static_cast<size_t>(k)] = v;
+        }
+        else if (what < 70)
+        {
+            const bool had = has[static_cast<size_t>(k)] != 0;
+            ASSERT_EQ(m.erase(k), had);
+            if (had)
+                --count;
+            has[static_cast<size_t>(k)] = 0;
+        }
+        else if (what < 98)
+        {
+            Big *p = m.find(k);
+            ASSERT_EQ(p != nullptr, has[static_cast<size_t>(k)] != 0);
+            if (p)
+                ASSERT_EQ(p->v[3], val[static_cast<size_t>(k)] + 3);
+        }
+        else if (what == 98)
+        {
+            ct::HashMap<int, Big> c(m);
+            ASSERT_EQ(c.size(), count);
+            m = c;
+        }
+        else
+            m = ct::HashMap<int, Big>(m);
+        ASSERT_EQ(m.size(), count);
+        ASSERT_EQ(Big::live, static_cast<int>(count));
+    }
+}

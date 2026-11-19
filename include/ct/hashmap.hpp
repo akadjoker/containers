@@ -195,6 +195,12 @@ namespace ct
             static constexpr bool kSmallKey = sizeof(K) <= kHashSmallKey;
             static constexpr int value = !kBig ? 0 : (kSmallKey ? (sizeof(V) >= sizeof(void *) ? 1 : 0) : 2);
         };
+        template <typename K, typename V>
+        constexpr bool HashMode<K, V>::kBig;
+        template <typename K, typename V>
+        constexpr bool HashMode<K, V>::kSmallKey;
+        template <typename K, typename V>
+        constexpr int HashMode<K, V>::value;
         template <typename T, int Mode>
         struct HashSlabFor
         {

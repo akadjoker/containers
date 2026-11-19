@@ -34,11 +34,10 @@ namespace ct
         explicit Pool(std::size_t slots_per_chunk = default_slots(), const Alloc &alloc = Alloc())
             : Alloc(alloc), chunks_(nullptr), index_(nullptr), index_size_(0), index_cap_(0), free_(nullptr), cur_(nullptr),
               end_(nullptr), slots_per_chunk_(slots_per_chunk ? slots_per_chunk : 1), live_(0),
-              capacity_(0), last_(nullptr), chunk_data_bytes_(0)
+              capacity_(0), last_(nullptr)
         {
             if (slots_per_chunk_ > max_slots())
                 detail::fatal("ct::Pool: numero de slots invalido");
-            chunk_data_bytes_ = slots_per_chunk_ * kSlot;
         }
 
         ~Pool()
@@ -53,7 +52,7 @@ namespace ct
         Pool(Pool &&o) noexcept
             : Alloc(static_cast<Alloc &&>(o)), chunks_(o.chunks_), index_(o.index_),
               index_size_(o.index_size_), index_cap_(o.index_cap_), free_(o.free_), cur_(o.cur_), end_(o.end_), slots_per_chunk_(o.slots_per_chunk_),
-              live_(o.live_), capacity_(o.capacity_), last_(o.last_), chunk_data_bytes_(o.chunk_data_bytes_)
+              live_(o.live_), capacity_(o.capacity_), last_(o.last_)
         {
             o.last_ = nullptr;
             o.chunks_ = nullptr;
@@ -83,7 +82,6 @@ namespace ct
                 live_ = o.live_;
                 capacity_ = o.capacity_;
                 last_ = o.last_;
-                chunk_data_bytes_ = o.chunk_data_bytes_;
                 o.last_ = nullptr;
                 o.chunks_ = nullptr;
                 o.index_ = nullptr;
@@ -180,7 +178,6 @@ namespace ct
         // O ultimo pedaco por onde passou um ponteiro (create, destroy e allocate seguidos quase sempre ficam no mesmo
         // pedaco): evita a pesquisa binaria no indice de pedacos em cada chamada
         mutable Chunk *last_;
-        std::size_t chunk_data_bytes_;
 
         static constexpr std::size_t max_slots()
         {
@@ -227,7 +224,7 @@ namespace ct
         std::uint8_t &state_ref(T *p) const
         {
             Chunk *chunk = last_;
-            if (!chunk || address(p) - address(chunk->data) >= chunk_data_bytes_)
+            if (!chunk || address(p) - address(chunk->data) >= slots_per_chunk_ * kSlot)
             {
                 chunk = find_chunk(p);
                 if (!chunk)

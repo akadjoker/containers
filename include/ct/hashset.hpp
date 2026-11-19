@@ -38,12 +38,7 @@ namespace ct
                                     slots_(nullptr), meta_(nullptr), mask_(0), size_(0)
         {
             if (o.size_)
-            {
-                reserve(o.size_);
-                for (size_type i = 0; i <= o.mask_; ++i)
-                    if (o.meta_[i])
-                        insert(o.slots_[i]);
-            }
+                copy_entries(o, true);
         }
 
         HashSet(HashSet &&o) noexcept
@@ -63,12 +58,7 @@ namespace ct
             {
                 clear();
                 if (o.size_)
-                {
-                    reserve(o.size_);
-                    for (size_type i = 0; i <= o.mask_; ++i)
-                        if (o.meta_[i])
-                            insert(o.slots_[i]);
-                }
+                    copy_entries(o, false);
             }
             return *this;
         }
@@ -214,10 +204,11 @@ namespace ct
         private:
             void skip()
             {
-                while (m_ != mend_ && !*m_)
+                if (m_ != mend_ && !*m_)
                 {
-                    ++m_;
-                    ++e_;
+                    const std::size_t k = detail::empty_run(m_, mend_);
+                    m_ += k;
+                    e_ += k;
                 }
             }
         };
@@ -233,6 +224,24 @@ namespace ct
         }
 
     private:
+        // Ver HashMap::copy_entries: mesma capacidade e mesmo hasher, cada elemento volta ao mesmo indice.
+        void copy_entries(const HashSet &o, bool same_hasher)
+        {
+            reserve(o.size_);
+            if (same_hasher && mask_ == o.mask_)
+            {
+                for (size_type i = 0; i <= mask_; ++i)
+                    if (o.meta_[i])
+                        ::new (static_cast<void *>(&slots_[i])) K(o.slots_[i]);
+                std::memcpy(meta_, o.meta_, mask_ + 1);
+                size_ = o.size_;
+                return;
+            }
+            for (size_type i = 0; i <= o.mask_; ++i)
+                if (o.meta_[i])
+                    insert(o.slots_[i]);
+        }
+
         K *slots_;
         std::uint8_t *meta_; 
         size_type mask_;

@@ -497,6 +497,26 @@ namespace ct
             return lex_less_n(a, na, b, nb, is_memcmp_ordered<T>{});
         }
 
+        // Quantos bytes de meta (0 = livre, 1 = ocupado) a zero ha a partir de m, sem passar de mend: 8 de cada vez, que
+        // e o que faz iterar uma tabela com pouca carga custar quase so os elementos e nao os buracos.
+        inline std::size_t empty_run(const std::uint8_t *m, const std::uint8_t *mend) noexcept
+        {
+            std::size_t n = 0;
+#if defined(__GNUC__) && defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+            while (mend - (m + n) >= 8)
+            {
+                std::uint64_t w;
+                std::memcpy(&w, m + n, 8);
+                if (w)
+                    return n + (static_cast<std::size_t>(__builtin_ctzll(w)) >> 3);
+                n += 8;
+            }
+#endif
+            while (m + n != mend && !m[n])
+                ++n;
+            return n;
+        }
+
         inline std::uint64_t hash_mix(std::uint64_t x) noexcept
         {
             x ^= x >> 33;

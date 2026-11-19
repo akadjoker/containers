@@ -164,12 +164,7 @@ namespace ct
                                     slots_(nullptr), meta_(nullptr), mask_(0), size_(0)
         {
             if (o.size_)
-            {
-                reserve(o.size_);
-                for (size_type i = 0; i <= o.mask_; ++i)
-                    if (o.meta_[i])
-                        put(o.slots_[i].key, o.slots_[i].value);
-            }
+                copy_entries(o, true);
         }
 
         HashMap(HashMap &&o) noexcept
@@ -189,12 +184,7 @@ namespace ct
             {
                 clear();
                 if (o.size_)
-                {
-                    reserve(o.size_);
-                    for (size_type i = 0; i <= o.mask_; ++i)
-                        if (o.meta_[i])
-                            put(o.slots_[i].key, o.slots_[i].value);
-                }
+                    copy_entries(o, false);
             }
             return *this;
         }
@@ -403,10 +393,11 @@ namespace ct
         private:
             void skip()
             {
-                while (m_ != mend_ && !*m_)
+                if (m_ != mend_ && !*m_)
                 {
-                    ++m_;
-                    ++e_;
+                    const std::size_t k = detail::empty_run(m_, mend_);
+                    m_ += k;
+                    e_ += k;
                 }
             }
         };
@@ -440,10 +431,11 @@ namespace ct
         private:
             void skip()
             {
-                while (m_ != mend_ && !*m_)
+                if (m_ != mend_ && !*m_)
                 {
-                    ++m_;
-                    ++e_;
+                    const std::size_t k = detail::empty_run(m_, mend_);
+                    m_ += k;
+                    e_ += k;
                 }
             }
         };
@@ -474,6 +466,26 @@ namespace ct
         std::uint8_t *meta_; 
         size_type mask_;     
         size_type size_;
+
+        // Pre-condicao: esta tabela esta vazia e o.size_ > 0. Quando o hasher e o da origem (a copia construida) e a
+        // capacidade que fica e a dela (o caso de uma tabela que cresceu por dobragem), cada entrada volta ao mesmo
+        // indice: nao ha hash nem sondagem, e a distribuicao das chaves, que ja e valida para esta mascara, fica igual.
+        void copy_entries(const HashMap &o, bool same_hasher)
+        {
+            reserve(o.size_);
+            if (same_hasher && mask_ == o.mask_)
+            {
+                for (size_type i = 0; i <= mask_; ++i)
+                    if (o.meta_[i])
+                        ::new (static_cast<void *>(&slots_[i])) Entry(o.slots_[i]);
+                std::memcpy(meta_, o.meta_, mask_ + 1);
+                size_ = o.size_;
+                return;
+            }
+            for (size_type i = 0; i <= o.mask_; ++i)
+                if (o.meta_[i])
+                    put(o.slots_[i].key, o.slots_[i].value);
+        }
 
         template <typename KK, typename VV>
         CT_NOINLINE V &put_slow(KK &&k, VV &&v)

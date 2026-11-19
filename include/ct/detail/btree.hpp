@@ -183,6 +183,7 @@ namespace ct
         // folha da direita no momento da divisao) e os filhos; as folhas ligam-se para a frente. Garantias (mais fracas que
         // as do TreeMap): inserir e apagar invalidam iteradores, ponteiros e referencias para itens (os itens movem-se
         // entre nos), por isso so percorrer, procurar e as pesquisas de intervalo sao seguras sem mudar a arvore.
+        CT_ABI_DBGITER_BEGIN
         template <typename Traits, typename K, typename L, size_t NodeBytes, typename Alloc, typename Probe>
         class BTreeCore : private L, private Alloc
         {
@@ -1274,5 +1275,6 @@ namespace ct
         constexpr unsigned BTreeCore<Traits, K, L, NodeBytes, Alloc, Probe>::kIntMin;
         template <typename Traits, typename K, typename L, size_t NodeBytes, typename Alloc, typename Probe>
         constexpr unsigned BTreeCore<Traits, K, L, NodeBytes, Alloc, Probe>::kMaxH;
+        CT_ABI_DBGITER_END
     } // namespace detail
 } // namespace ct

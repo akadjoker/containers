@@ -24,9 +24,14 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release)
 endif()
 
+option(CT_DEBUG_ITERATORS "HashMap/HashSet abort when an iterator is used after the table changed (explicit, never implied by NDEBUG: every target that links ct gets CT_DEBUG_ITERATORS=1)" OFF)
+
 add_library(ct INTERFACE)
 add_library(ct::ct ALIAS ct)
 target_include_directories(ct INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+if(CT_DEBUG_ITERATORS)
+  target_compile_definitions(ct INTERFACE CT_DEBUG_ITERATORS=1)
+endif()
 
 find_package(Threads REQUIRED)
 add_library(ct_threads INTERFACE)
@@ -143,6 +148,27 @@ target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)
 gtest_discover_tests(ct_tests)
+
+if(NOT MSVC)
+  # ABI: uma unidade com NDEBUG e outra com -UNDEBUG vem com os mesmos tipos (e, nos tres executaveis de baixo, tambem com a verificacao de
+  # depuracao dos iteradores ligada); duas unidades que discordam do CT_DEBUG_ITERATORS tem de falhar na ligacao.
+  add_executable(ct_abi_tests tests/abi_a.cpp tests/abi_b.cpp tests/abi_main.cpp)
+  target_link_libraries(ct_abi_tests PRIVATE ct)
+  add_test(NAME ct_abi_tests COMMAND ct_abi_tests)
+  add_executable(ct_abi_tests_dbgiter tests/abi_a.cpp tests/abi_b.cpp tests/abi_main.cpp)
+  target_link_libraries(ct_abi_tests_dbgiter PRIVATE ct)
+  target_compile_definitions(ct_abi_tests_dbgiter PRIVATE CT_DEBUG_ITERATORS=1)
+  set_source_files_properties(tests/abi_a.cpp PROPERTIES COMPILE_OPTIONS "-DNDEBUG")
+  set_source_files_properties(tests/abi_b.cpp PROPERTIES COMPILE_OPTIONS "-UNDEBUG")
+  if(NOT CT_DEBUG_ITERATORS)
+    add_executable(ct_abi_mixed_link_fail EXCLUDE_FROM_ALL tests/abi_mixed_a.cpp tests/abi_mixed_b.cpp)
+    target_link_libraries(ct_abi_mixed_link_fail PRIVATE ct)
+    set_source_files_properties(tests/abi_mixed_b.cpp PROPERTIES COMPILE_OPTIONS "-DCT_DEBUG_ITERATORS=1")
+    add_test(NAME ct_abi_mixed_debug_iterators_fails_to_link
+             COMMAND ${CMAKE_COMMAND} --build ${CMAKE_BINARY_DIR} --target ct_abi_mixed_link_fail)
+    set_tests_properties(ct_abi_mixed_debug_iterators_fails_to_link PROPERTIES WILL_FAIL TRUE)
+  endif()
+endif()
 
 set(CT_PUBLIC_HEADERS
   ct/arena.hpp

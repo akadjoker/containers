@@ -7,6 +7,7 @@ namespace ct
 
     // Conjunto ordenado por uma B+ arvore: o BTreeMap sem valores. As garantias sao as do BTreeMap (ver btreemap.hpp):
     // inserir e apagar invalidam todos os iteradores e referencias; percorrer e pesquisar nao. K tem de ser copiavel.
+    CT_ABI_DBGITER_BEGIN
     template <typename K, typename L = Less<K>, size_t NodeBytes = 512, typename Alloc = HeapAlloc,
               typename Probe = detail::BTreeNoProbe>
     class BTreeSet : public detail::BTreeCore<detail::BTreeSetTraits<K>, K, L, NodeBytes, Alloc, Probe>
@@ -76,5 +77,6 @@ namespace ct
                 insert(*first);
         }
     };
+    CT_ABI_DBGITER_END
 
 } // namespace ct

@@ -151,6 +151,12 @@ namespace ct
         // (CT_HASH_INLINE_MAX muda o limite; com um valor enorme nenhuma entrada fica fora e a tabela e a de antes.)
 #if !defined(CT_HASH_INLINE_MAX)
 #define CT_HASH_INLINE_MAX 128
+#define CT_ABI_HASHINL_BEGIN
+#define CT_ABI_HASHINL_END
+#else
+        // um valor escolhido pela aplicacao muda o layout: o valor entra no nome do tipo (tem de ser um literal inteiro)
+#define CT_ABI_HASHINL_BEGIN inline namespace CT_ABI_PASTE(abi_hashinline_, CT_HASH_INLINE_MAX) {
+#define CT_ABI_HASHINL_END }
 #endif
         constexpr std::size_t kHashInlineMax = CT_HASH_INLINE_MAX;
         constexpr std::size_t kHashSmallKey = 32;
@@ -188,19 +194,21 @@ namespace ct
     {
         // 0: a entrada inteira no slot; 1: a chave no slot e o valor num bloco do slab; 2: o slot e um ponteiro para a
         // entrada inteira (chave grande), que vive num bloco do slab.
-        template <typename K, typename V>
+        // O limite entra como parametro (e nao so como a constante da unidade): duas unidades com CT_HASH_INLINE_MAX diferente
+        // instanciam tipos diferentes em vez de duas definicoes diferentes do mesmo tipo
+        template <typename K, typename V, std::size_t InlineMax = kHashInlineMax>
         struct HashMode
         {
-            static constexpr bool kBig = sizeof(HashEntry<K, V, false>) > kHashInlineMax;
+            static constexpr bool kBig = sizeof(HashEntry<K, V, false>) > InlineMax;
             static constexpr bool kSmallKey = sizeof(K) <= kHashSmallKey;
             static constexpr int value = !kBig ? 0 : (kSmallKey ? (sizeof(V) >= sizeof(void *) ? 1 : 0) : 2);
         };
-        template <typename K, typename V>
-        constexpr bool HashMode<K, V>::kBig;
-        template <typename K, typename V>
-        constexpr bool HashMode<K, V>::kSmallKey;
-        template <typename K, typename V>
-        constexpr int HashMode<K, V>::value;
+        template <typename K, typename V, std::size_t InlineMax>
+        constexpr bool HashMode<K, V, InlineMax>::kBig;
+        template <typename K, typename V, std::size_t InlineMax>
+        constexpr bool HashMode<K, V, InlineMax>::kSmallKey;
+        template <typename K, typename V, std::size_t InlineMax>
+        constexpr int HashMode<K, V, InlineMax>::value;
         template <typename T, int Mode>
         struct HashSlabFor
         {
@@ -213,6 +221,8 @@ namespace ct
         };
     } // namespace detail
 
+    CT_ABI_DBGITER_BEGIN
+    CT_ABI_HASHINL_BEGIN
     template <typename K, typename V, typename H = Hash<K>, typename Alloc = HeapAlloc>
     class HashMap : private H, private Alloc,
                     private detail::HashSlabFor<typename detail::hash_pick<detail::HashMode<K, V>::value == 1, V, detail::HashEntry<K, V, false>>::type,
@@ -496,9 +506,9 @@ namespace ct
         // Percorrer: a ordem e a dos slots (sem significado). Apagar ou inserir durante o ciclo e INVALIDO: a remocao
         // desloca os elementos seguintes para tras (o ciclo salta ou repete elementos) e a insercao pode fazer rehash
         // (invalida todos os iteradores e referencias). Para apagar varios use erase_if(pred), que visita cada elemento
-        // uma vez; ou junte as chaves e apague depois. Em compilacoes de depuracao (CT_DEBUG_ITERATORS, por omissao
-        // quando NDEBUG nao esta definido) usar um iterador depois de a tabela mudar aborta com uma mensagem; em
-        // Release nao ha verificacao e o iterador e o SlotIter simples.
+        // uma vez; ou junte as chaves e apague depois. Com CT_DEBUG_ITERATORS=1 (explicito: nunca por omissao nem por causa de
+        // NDEBUG, e igual em todas as unidades do programa; o tipo passa a ct::abi_dbgiter::HashMap) usar um iterador depois de a
+        // tabela mudar aborta com uma mensagem; sem ela nao ha verificacao e o iterador e o SlotIter simples.
 #if defined(CT_DEBUG_ITERATORS)
         using iterator = typename detail::hash_pick<kIndirect, detail::IndirectIter<detail::CheckedSlotIter<Entry *, kDist>, Entry>,
                                                     detail::CheckedSlotIter<Entry, kDist>>::type;
@@ -936,5 +946,7 @@ namespace ct
             mask_ = 0;
         }
     };
+    CT_ABI_HASHINL_END
+    CT_ABI_DBGITER_END
 
 }

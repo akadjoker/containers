@@ -15,9 +15,24 @@
 #include <sys/stat.h>
 #endif
 
+// O motor mbedTLS compilado e o por omissao mudam o layout e o comportamento de TlsLibrary: entram no nome do tipo (ver o fim de
+// detail/utils.hpp: uma unidade que discorda liga-se mal em vez de corromper memoria).
+#if defined(CT_TLS_MBEDTLS) && defined(CT_TLS_DEFAULT_MBEDTLS)
+#define CT_ABI_TLS_BEGIN inline namespace abi_tls_mbed_default {
+#define CT_ABI_TLS_END }
+#elif defined(CT_TLS_MBEDTLS)
+#define CT_ABI_TLS_BEGIN inline namespace abi_tls_mbed {
+#define CT_ABI_TLS_END }
+#else
+#define CT_ABI_TLS_BEGIN
+#define CT_ABI_TLS_END
+#endif
+
 namespace ct
 {
+    CT_ABI_TLS_BEGIN
     class TlsLibrary;
+    CT_ABI_TLS_END
 
     struct TlsConfig
     {

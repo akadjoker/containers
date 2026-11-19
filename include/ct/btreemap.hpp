@@ -15,10 +15,11 @@ namespace ct
     // GARANTIAS MAIS FRACAS que as do TreeMap (que promete ponteiros e iteradores estaveis): inserir e apagar invalidam
     // todos os iteradores e todos os ponteiros e referencias para chaves e valores (os itens movem-se entre nos). So
     // percorrer, procurar e as pesquisas de intervalo sao seguras sem mudar o mapa. Em compilacoes de depuracao
-    // (CT_DEBUG_ITERATORS, por omissao quando NDEBUG nao esta definido) usar um iterador depois de o mapa mudar aborta.
+    // (CT_DEBUG_ITERATORS=1, explicito: nunca por omissao nem por causa de NDEBUG) usar um iterador depois de o mapa mudar aborta.
     // Uma referencia ao valor devolvida por put e operator[] vale ate a proxima insercao ou remocao.
     // K tem de ser copiavel (as chaves separadoras dos nos internos sao copias).
     // As chaves sao unicas; `put` de uma chave que existe substitui o valor.
+    CT_ABI_DBGITER_BEGIN
     template <typename K, typename V, typename L = Less<K>, size_t NodeBytes = 512, typename Alloc = HeapAlloc,
               typename Probe = detail::BTreeNoProbe>
     class BTreeMap : public detail::BTreeCore<detail::BTreeMapTraits<K, V>, K, L, NodeBytes, Alloc, Probe>
@@ -131,5 +132,6 @@ namespace ct
                 put(first->key, first->value);
         }
     };
+    CT_ABI_DBGITER_END
 
 } // namespace ct

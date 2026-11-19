@@ -272,6 +272,7 @@ namespace ct
         };
     }
 
+    CT_ABI_TLS_BEGIN
     class TlsLibrary
     {
     public:
@@ -379,6 +380,7 @@ namespace ct
         void *default_ = nullptr;
         Mutex mutex_;
     };
+    CT_ABI_TLS_END
 
     class TlsSocket
     {

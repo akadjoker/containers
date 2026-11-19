@@ -5,6 +5,15 @@
 #include "string.hpp"
 #include "vector.hpp"
 
+// CT_RE_CHECK_CAPS (so para depurar o motor) muda o corpo de funcoes inline: entra no nome do tipo do motor
+#if defined(CT_RE_CHECK_CAPS)
+#define CT_ABI_RECHECK_BEGIN inline namespace abi_re_check_caps {
+#define CT_ABI_RECHECK_END }
+#else
+#define CT_ABI_RECHECK_BEGIN
+#define CT_ABI_RECHECK_END
+#endif
+
 namespace ct
 {
     namespace detail
@@ -1777,6 +1786,7 @@ namespace ct
                 std::size_t val;
             };
 
+            CT_ABI_RECHECK_BEGIN
             class Runner
             {
             public:
@@ -2287,6 +2297,7 @@ namespace ct
                     }
                 }
             };
+            CT_ABI_RECHECK_END
         }
     }
 

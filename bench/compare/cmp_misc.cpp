@@ -1,11 +1,12 @@
 // Restante: Deque, TreeMap e FlatMap (mapas ordenados), PriorityQueue e Function.
 // uso: cmp_misc <familia> <impl> <cenario> <tipo> <N>
 //   deque: impl ct std boost         cenarios push_back push_front iterate index drain fifo   tipos int p16 b256
-//   ordered: impl ctree cflat stdmap btree bflat   cenarios build hit miss erase iterate layout   tipos int s20
+//   ordered: impl ctree cflat stdmap btree bflat cbtree   cenarios build hit miss erase iterate bulk range layout   tipos int s8 s20
 //   pq: impl ct std   cenario pushpop   tipo int
 //   function: impl ct std   cenarios construct_small construct_big call copy
 #include "harness.hpp"
 
+#include <ct/btreemap.hpp>
 #include <ct/deque.hpp>
 #include <ct/flatmap.hpp>
 #include <ct/function.hpp>
@@ -33,6 +34,10 @@
 #endif
 
 using namespace cmp;
+
+#ifndef CT_BT_NODE
+#define CT_BT_NODE 512 // bytes por no do BTreeMap (a ct)
+#endif
 
 // ---- deque -------------------------------------------------------------------------------------------------------
 template <class D, class T> static bool dq(Runner &R, Result &out, const char *scen)
@@ -79,9 +84,10 @@ template <class T> static int deque_t(const char *impl, const char *scen, const 
 }
 
 // ---- mapas ordenados ----------------------------------------------------------------------------------------------
-template <class S, bool Str> struct OKey;
-template <class S> struct OKey<S, false> { using type = int; static int make(std::uint64_t i) { return static_cast<int>(perm32(static_cast<std::uint32_t>(i))); } };
-template <class S> struct OKey<S, true>
+// Kind: 0 = int, 1 = s20 ("entity/xxxxxxxx/idle"), 2 = s8 ("xxxxxxxx")
+template <class S, int Kind> struct OKey;
+template <class S> struct OKey<S, 0> { using type = int; static int make(std::uint64_t i) { return static_cast<int>(perm32(static_cast<std::uint32_t>(i))); } };
+template <class S> struct OKey<S, 1>
 {
     using type = S;
     static S make(std::uint64_t i)
@@ -91,8 +97,19 @@ template <class S> struct OKey<S, true>
         return S(b, static_cast<std::size_t>(n));
     }
 };
+template <class S> struct OKey<S, 2>
+{
+    using type = S;
+    static S make(std::uint64_t i)
+    {
+        char b[48];
+        int n = std::snprintf(b, 48, "%08x", perm32(static_cast<std::uint32_t>(i)));
+        return S(b, static_cast<std::size_t>(n));
+    }
+};
 
 struct OCt { static constexpr const char *name = "ctree"; using Str = ct::String; template <class K, class V> using M = ct::TreeMap<K, V>; };
+struct OBt { static constexpr const char *name = "cbtree"; using Str = ct::String; template <class K, class V> using M = ct::BTreeMap<K, V, ct::Less<K>, CT_BT_NODE>; };
 struct OFlat { static constexpr const char *name = "cflat"; using Str = ct::String; template <class K, class V> using M = ct::FlatMap<K, V>; };
 struct OStd { static constexpr const char *name = "stdmap"; using Str = std::string; template <class K, class V> using M = std::map<K, V>; };
 #ifdef CMP_ABSL
@@ -107,6 +124,32 @@ template <class K, class V> static V *ofind(ct::TreeMap<K, V> &m, const K &k) { 
 template <class K, class V> static V *ofind(ct::FlatMap<K, V> &m, const K &k) { return m.find(k); }
 template <class K, class V> static void oput(ct::TreeMap<K, V> &m, const K &k, V v) { m.put(k, v); }
 template <class K, class V> static void oput(ct::FlatMap<K, V> &m, const K &k, V v) { m.put(k, v); }
+template <class K, class V, class L, std::size_t NB, class A, class P> static void oput(ct::BTreeMap<K, V, L, NB, A, P> &m, const K &k, V v) { m.put(k, v); }
+template <class K, class V, class L, std::size_t NB, class A, class P> static V *ofind(ct::BTreeMap<K, V, L, NB, A, P> &m, const K &k) { return m.find(k); }
+template <class K, class V, class L, std::size_t NB, class A, class P> static bool oerase(ct::BTreeMap<K, V, L, NB, A, P> &m, const K &k) { return m.erase(k); }
+template <class K, class V, class L, std::size_t NB, class A, class P> static std::uint64_t oiter(ct::BTreeMap<K, V, L, NB, A, P> &m) { std::uint64_t s = 0; for (auto &e : m) s += static_cast<std::uint64_t>(e.value); return s; }
+// lower_bound e 8 vizinhos
+template <class K, class V, class L, std::size_t NB, class A, class P> static std::uint64_t orange(ct::BTreeMap<K, V, L, NB, A, P> &m, const K &k) { std::uint64_t s = 0; auto it = m.lower_bound(k); for (int i = 0; i < 8 && it != m.end(); ++i, ++it) s += static_cast<std::uint64_t>(it->value); return s; }
+template <class K, class V> static std::uint64_t orange(ct::TreeMap<K, V> &m, const K &k) { std::uint64_t s = 0; auto it = m.lower_bound_it(k); for (int i = 0; i < 8 && it != m.end(); ++i, ++it) s += static_cast<std::uint64_t>(it->value); return s; }
+template <class K, class V> static std::uint64_t orange(ct::FlatMap<K, V> &, const K &) { return 0; }
+template <class K, class V, class M> static std::uint64_t orange(M &m, const K &k) { std::uint64_t s = 0; auto it = m.lower_bound(k); for (int i = 0; i < 8 && it != m.end(); ++i, ++it) s += static_cast<std::uint64_t>(it->second); return s; }
+// construir de um intervalo ordenado: o BTreeMap tem assign_sorted; os outros o construtor de intervalo (ou um put por elemento)
+template <class K, class V, class L, std::size_t NB, class A, class P> static void obulk(ct::BTreeMap<K, V, L, NB, A, P> &m, const std::vector<K> &sorted)
+{
+    std::vector<typename ct::BTreeMap<K, V, L, NB, A, P>::Entry> e;
+    e.reserve(sorted.size());
+    for (std::size_t i = 0; i < sorted.size(); ++i) e.push_back({sorted[i], static_cast<int>(i)});
+    m.assign_sorted(e.data(), e.data() + e.size());
+}
+template <class K, class V> static void obulk(ct::TreeMap<K, V> &m, const std::vector<K> &sorted) { for (std::size_t i = 0; i < sorted.size(); ++i) m.put(sorted[i], static_cast<int>(i)); }
+template <class K, class V> static void obulk(ct::FlatMap<K, V> &m, const std::vector<K> &sorted) { for (std::size_t i = 0; i < sorted.size(); ++i) m.put(sorted[i], static_cast<int>(i)); }
+template <class K, class V, class M> static void obulk(M &m, const std::vector<K> &sorted)
+{
+    std::vector<std::pair<K, V>> e;
+    e.reserve(sorted.size());
+    for (std::size_t i = 0; i < sorted.size(); ++i) e.emplace_back(sorted[i], static_cast<int>(i));
+    m = M(e.begin(), e.end());
+}
 template <class K, class V, class M> static void oput(M &m, const K &k, V v) { m.try_emplace(k, v); }
 template <class K, class V> static bool oerase(ct::TreeMap<K, V> &m, const K &k) { return m.erase(k); }
 template <class K, class V> static bool oerase(ct::FlatMap<K, V> &m, const K &k) { return m.erase(k); }
@@ -115,7 +158,7 @@ template <class K, class V> static std::uint64_t oiter(ct::TreeMap<K, V> &m) { s
 template <class K, class V> static std::uint64_t oiter(ct::FlatMap<K, V> &m) { std::uint64_t s = 0; for (auto &e : m) s += static_cast<std::uint64_t>(e.value); return s; }
 template <class K, class V, class M> static std::uint64_t oiter(M &m) { std::uint64_t s = 0; for (auto &e : m) s += static_cast<std::uint64_t>(e.second); return s; }
 
-template <class X, bool Str> static int ordered(const char *scen, const char *type, Runner &R)
+template <class X, int Str> static int ordered(const char *scen, const char *type, Runner &R)
 {
     using KM = OKey<typename X::Str, Str>;
     using K = typename KM::type;
@@ -144,6 +187,17 @@ template <class X, bool Str> static int ordered(const char *scen, const char *ty
         M m; fill(m);
         r = R.run(N, R.inner_for(N), [] {}, [&] { chk = oiter<K, int>(m); touch(chk); });
     }
+    else if (!std::strcmp(scen, "range"))
+    {
+        M m; fill(m);
+        r = R.run(N, R.inner_for(N * 4), [] {}, [&] { std::uint64_t s = 0; for (std::uint64_t i = 0; i < N; ++i) s += orange<K, int>(m, other[i]); chk = s; touch(s); });
+    }
+    else if (!std::strcmp(scen, "bulk"))
+    {
+        std::vector<K> sorted(keys);
+        std::sort(sorted.begin(), sorted.end(), [](const K &a, const K &b) { return std::less<K>()(a, b); });
+        r = R.run(N, R.inner_for(N * (std::is_same<X, OFlat>::value ? 20 : 1)), [] {}, [&] { M m; obulk<K, int>(m, sorted); R.snap_live(); chk = m.size(); keep(m); });
+    }
     else if (!std::strcmp(scen, "layout"))
     {
         std::uint64_t l0 = g_alloc.live, c0 = g_alloc.calls;
@@ -158,9 +212,10 @@ template <class X, bool Str> static int ordered(const char *scen, const char *ty
     return 0;
 }
 
-template <bool Str> static int ordered_impl(const char *impl, const char *scen, const char *type, Runner &R)
+template <int Str> static int ordered_impl(const char *impl, const char *scen, const char *type, Runner &R)
 {
     if (!std::strcmp(impl, "ctree")) return ordered<OCt, Str>(scen, type, R);
+    if (!std::strcmp(impl, "cbtree")) return ordered<OBt, Str>(scen, type, R);
     if (!std::strcmp(impl, "cflat")) return ordered<OFlat, Str>(scen, type, R);
     if (!std::strcmp(impl, "stdmap")) return ordered<OStd, Str>(scen, type, R);
 #ifdef CMP_ABSL
@@ -240,7 +295,12 @@ int main(int argc, char **argv)
         if (!std::strcmp(type, "p16")) return deque_t<P16>(impl, scen, type, R);
         if (!std::strcmp(type, "b256")) return deque_t<B256>(impl, scen, type, R);
     }
-    if (!std::strcmp(fam, "ordered")) return !std::strcmp(type, "int") ? ordered_impl<false>(impl, scen, type, R) : ordered_impl<true>(impl, scen, type, R);
+    if (!std::strcmp(fam, "ordered"))
+    {
+        if (!std::strcmp(type, "int")) return ordered_impl<0>(impl, scen, type, R);
+        if (!std::strcmp(type, "s8")) return ordered_impl<2>(impl, scen, type, R);
+        return ordered_impl<1>(impl, scen, type, R);
+    }
     if (!std::strcmp(fam, "pq")) return !std::strcmp(impl, "ct") ? pq<ct::PriorityQueue<int>>(impl, R) : pq<std::priority_queue<int>>(impl, R);
     if (!std::strcmp(fam, "function")) return !std::strcmp(impl, "ct") ? fn<ct::Function<int(int)>>(impl, scen, R) : fn<std::function<int(int)>>(impl, scen, R);
     std::fprintf(stderr, "familia desconhecida\n");

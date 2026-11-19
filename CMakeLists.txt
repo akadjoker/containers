@@ -134,7 +134,8 @@ add_executable(ct_tests
   tests/test_string_ops.cpp
   tests/test_pq_hole.cpp
   tests/test_hash_iter.cpp
-  tests/test_hash_layout.cpp)
+  tests/test_hash_layout.cpp
+  tests/test_btree.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)
@@ -144,6 +145,8 @@ set(CT_PUBLIC_HEADERS
   ct/arena.hpp
   ct/array.hpp
   ct/binary.hpp
+  ct/btreemap.hpp
+  ct/btreeset.hpp
   ct/deque.hpp
   ct/flatmap.hpp
   ct/function.hpp

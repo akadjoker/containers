@@ -28,7 +28,8 @@ namespace ct
         typedef typename Core::Loc Loc;
 
     public:
-        typedef typename Core::Item Entry; // { K key; V value; }
+        typedef typename Core::Item Item; // o que os nos guardam (o Entry e a mesma memoria com a chave const)
+        typedef typename Core::View Entry; // { const K key; V value; }: o que os iteradores e first/last mostram (a chave nunca se altera)
         typedef typename Core::size_type size_type;
         typedef typename Core::raw_iterator iterator;
         typedef typename Core::raw_const_iterator const_iterator;
@@ -41,12 +42,12 @@ namespace ct
 
         V *find(const K &k) noexcept
         {
-            Entry *e = this->find_item(k);
+            Item *e = this->find_item(k);
             return e ? &e->value : nullptr;
         }
         const V *find(const K &k) const noexcept
         {
-            const Entry *e = this->find_item(k);
+            const Item *e = this->find_item(k);
             return e ? &e->value : nullptr;
         }
 
@@ -54,7 +55,7 @@ namespace ct
 
         const V &get(const K &k, const V &fallback) const noexcept
         {
-            const Entry *e = this->find_item(k);
+            const Item *e = this->find_item(k);
             return e ? e->value : fallback;
         }
 
@@ -67,12 +68,12 @@ namespace ct
             this->locate(kk, loc);
             if (loc.found)
             {
-                Entry *e = this->located_item(loc);
+                Item *e = this->located_item(loc);
                 e->value = detail::forward<VV>(v);
                 return e->value;
             }
             // o item e construido antes de mexer na arvore: k e v podem apontar para dentro dela
-            Entry tmp{detail::forward<KK>(k), detail::forward<VV>(v)};
+            Item tmp{detail::forward<KK>(k), detail::forward<VV>(v)};
             return this->insert_located(loc, tmp)->value;
         }
 
@@ -82,7 +83,7 @@ namespace ct
             this->locate(k, loc);
             if (loc.found)
                 return this->located_item(loc)->value;
-            Entry tmp{k, V()};
+            Item tmp{k, V()};
             return this->insert_located(loc, tmp)->value;
         }
 
@@ -101,10 +102,10 @@ namespace ct
         iterator lower_bound_it(const K &k) noexcept { return this->iter_lower(k); } // como no TreeMap
 
         // O item de menor e o de maior chave (nullptr se vazio)
-        Entry *first() noexcept { return this->first_item(); }
-        const Entry *first() const noexcept { return this->first_item(); }
-        Entry *last() noexcept { return this->last_item(); }
-        const Entry *last() const noexcept { return this->last_item(); }
+        Entry *first() noexcept { return reinterpret_cast<Entry *>(this->first_item()); }
+        const Entry *first() const noexcept { return reinterpret_cast<const Entry *>(this->first_item()); }
+        Entry *last() noexcept { return reinterpret_cast<Entry *>(this->last_item()); }
+        const Entry *last() const noexcept { return reinterpret_cast<const Entry *>(this->last_item()); }
 
         // Apaga os itens de first (inclusive) a last (exclusive) e devolve quantos; ambos tem de ser iteradores de agora.
         // Invalida todos os iteradores.

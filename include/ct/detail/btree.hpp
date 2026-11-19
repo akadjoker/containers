@@ -152,7 +152,9 @@ namespace ct
             bt_move_n(dst, src, n, is_trivially_copyable_t<T>());
         }
 
-        // Os itens de um BTreeMap: chave e valor lado a lado (o iterador da uma Entry como o do TreeMap).
+        // Os itens de um BTreeMap: chave e valor lado a lado. O Item e o que os nos guardam e movem; o iterador mostra a mesma
+        // memoria como View (a Entry do BTreeMap), com a chave const: uma chave alterada por um iterador deixa o item fora do
+        // sitio da arvore. O View tem o tamanho, o alinhamento e a posicao dos membros do Item (verificado com static_assert).
         template <typename K, typename V>
         struct BTreeMapTraits
         {
@@ -161,6 +163,12 @@ namespace ct
                 K key;
                 V value;
             };
+            struct View
+            {
+                const K key;
+                V value;
+            };
+            static_assert(sizeof(View) == sizeof(Item) && alignof(View) == alignof(Item), "ct::BTreeMap: a vista tem de ter o layout do item");
             static const K &key(const Item &i) { return i.key; }
             template <typename S>
             static const K &src_key(const S &s) { return s.key; }
@@ -172,6 +180,7 @@ namespace ct
         struct BTreeSetTraits
         {
             typedef K Item;
+            typedef K View; // os elementos de um BTreeSet so se mostram const (o iterador e sempre const)
             static const K &key(const Item &i) { return i; }
             template <typename S>
             static const K &src_key(const S &s) { return s; }
@@ -189,6 +198,7 @@ namespace ct
         {
         public:
             typedef typename Traits::Item Item;
+            typedef typename Traits::View View;
             typedef size_t size_type;
 
         protected:
@@ -234,7 +244,7 @@ namespace ct
             class Iter
             {
                 friend class BTreeCore;
-                typedef typename bt_pick<Const, const Item, Item>::type Ref;
+                typedef typename bt_pick<Const, const View, View>::type Ref; // o Item visto com a chave const
                 Node *leaf_;
                 unsigned idx_;
 #if defined(CT_DEBUG_ITERATORS)
@@ -271,14 +281,14 @@ namespace ct
 #if defined(CT_DEBUG_ITERATORS)
                     check();
 #endif
-                    return items(leaf_)[idx_];
+                    return *reinterpret_cast<Ref *>(items(leaf_) + idx_);
                 }
                 Ref *operator->() const
                 {
 #if defined(CT_DEBUG_ITERATORS)
                     check();
 #endif
-                    return items(leaf_) + idx_;
+                    return reinterpret_cast<Ref *>(items(leaf_) + idx_);
                 }
                 Iter &operator++()
                 {

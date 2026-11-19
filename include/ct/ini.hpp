@@ -1,53 +1,35 @@
 #pragma once
 
 #include <cerrno>
-#include <clocale>
-#include <cstdio>
 #include <cstdlib>
 
+#include "numconv.hpp"
 #include "stream.hpp"
 
 namespace ct
 {
     namespace detail
     {
-        inline char ini_decimal_point() noexcept
-        {
-            const lconv *lc = std::localeconv();
-            return lc && lc->decimal_point && lc->decimal_point[0] ? lc->decimal_point[0] : '.';
-        }
-
+        // Como o strtod: salta os espacos do principio e tem de consumir o texto todo. ct/numconv.hpp: arredondamento
+        // correcto, '.' em qualquer locale.
         inline bool ini_parse_double(const char *text, double &out)
         {
-            char *end = nullptr;
-            out = std::strtod(text, &end);
-            if (end && *end == '\0' && end != text)
-                return true;
-            const char dp = ini_decimal_point();
-            if (dp == '.')
-                return false;
-            String local(text);
-            for (char &c : local)
-                if (c == '.')
-                    c = dp;
-            out = std::strtod(local.c_str(), &end);
-            return end && *end == '\0' && end != local.c_str();
+            const char *p = text;
+            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\v' || *p == '\f' || *p == '\r')
+                ++p;
+            const char *last = p;
+            while (*last)
+                ++last;
+            const char *e = parse_double(p, last, out);
+            return e != p && e == last;
         }
 
+        // O texto mais curto que volta ao mesmo double; o expoente aparece a partir de 10^max(15, algarismos) (era
+        // %.15g, ou %.17g se aquele nao voltava ao mesmo valor)
         inline void ini_format_double(double v, String &out)
         {
-            char buf[64];
-            int n = std::snprintf(buf, sizeof(buf), "%.15g", v);
-            double back = 0.0;
-            if (n <= 0 || !ini_parse_double(buf, back) || back != v)
-                n = std::snprintf(buf, sizeof(buf), "%.17g", v);
-            if (n <= 0)
-                n = 0;
-            if (static_cast<std::size_t>(n) >= sizeof(buf))
-                n = static_cast<int>(sizeof(buf) - 1);
-            for (int i = 0; i < n; ++i)
-                if (buf[i] == ',')
-                    buf[i] = '.';
+            char buf[48];
+            const int n = static_cast<int>(write_shortest_at_least(v, buf, 15) - buf);
             out.assign(buf, static_cast<std::size_t>(n));
         }
 

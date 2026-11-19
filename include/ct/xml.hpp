@@ -1,9 +1,8 @@
 #pragma once
 
-#include <clocale> 
-
 #include "detail/utils.hpp"
 #include "hashset.hpp"
+#include "numconv.hpp"
 #include "string.hpp"
 #include "vector.hpp"
 
@@ -150,12 +149,6 @@ namespace ct
             return true;
         }
 
-        inline char xml_decimal_point()
-        {
-            const char *dp = std::localeconv()->decimal_point;
-            return (dp && *dp) ? *dp : '.';
-        }
-
         inline bool xml_parse_digits(const char *&p, std::uint64_t &mag)
         {
             bool fits = true;
@@ -181,25 +174,17 @@ namespace ct
             return d == d && d >= 0.0 && d < 18446744073709551616.0;
         }
 
-        inline double xml_strtod_locale(const char *s)
+        // Como o strtod: salta os espacos do principio e le o prefixo numerico mais longo; end e onde parou (ou s se
+        // nao havia numero). ct/numconv.hpp: arredondamento correcto, '.' em qualquer locale.
+        inline double xml_strtod(const char *s, const char **end)
         {
-            const char dp = xml_decimal_point();
-            if (dp == '.')
-                return std::strtod(s, nullptr);
-            char small[64];
-            char *buf = small;
-            String big;
-            const std::size_t n = std::strlen(s);
-            if (n + 1 > sizeof(small))
-            {
-                big.resize(n + 1);
-                buf = big.data();
-            }
-            std::memcpy(buf, s, n + 1);
-            for (std::size_t i = 0; i < n; ++i)
-                if (buf[i] == '.')
-                    buf[i] = dp;
-            return std::strtod(buf, nullptr);
+            const char *p = s;
+            while (*p == ' ' || *p == '\t' || *p == '\n' || *p == '\v' || *p == '\f' || *p == '\r')
+                ++p;
+            double d = 0.0;
+            const char *e = parse_double(p, p + std::strlen(p), d);
+            *end = e == p ? s : e;
+            return d;
         }
     } 
 
@@ -234,7 +219,8 @@ namespace ct
         }
         if (*p == '.' || *p == 'e' || *p == 'E')
         {
-            const double d = detail::xml_strtod_locale(v->c_str());
+            const char *real_end = nullptr;
+            const double d = detail::xml_strtod(v->c_str(), &real_end);
             return detail::xml_real_fits_int(d) ? static_cast<std::int64_t>(d) : def;
         }
         return def;
@@ -256,7 +242,8 @@ namespace ct
             return fits ? mag : def;
         if (*p == '.' || *p == 'e' || *p == 'E')
         {
-            const double d = detail::xml_strtod_locale(v->c_str());
+            const char *real_end = nullptr;
+            const double d = detail::xml_strtod(v->c_str(), &real_end);
             return detail::xml_real_fits_uint(d) ? static_cast<std::uint64_t>(d) : def;
         }
         return def;
@@ -267,15 +254,10 @@ namespace ct
         const String *v = attr(name);
         if (!v || v->empty())
             return def;
-        char *end = nullptr;
-        const char dp = detail::xml_decimal_point();
-        double d;
-        if (dp == '.')
-            d = std::strtod(v->c_str(), &end);
-        else
-            return detail::xml_strtod_locale(v->c_str()); 
+        const char *end = nullptr;
+        const double d = detail::xml_strtod(v->c_str(), &end);
         if (end == v->c_str())
-            return def; 
+            return def;
         return d;
     }
 

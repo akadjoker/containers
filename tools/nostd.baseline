@@ -244,24 +244,13 @@ include/ct/http_server.hpp	std::size_t
 include/ct/http_server.hpp	std::uint64_t
 include/ct/http_server.hpp	std::uint8_t
 include/ct/ini.hpp	include <cerrno>
-include/ct/ini.hpp	include <clocale>
-include/ct/ini.hpp	include <cstdio>
 include/ct/ini.hpp	include <cstdlib>
-include/ct/ini.hpp	std::localeconv
 include/ct/ini.hpp	std::size_t
-include/ct/ini.hpp	std::snprintf
-include/ct/ini.hpp	std::strtod
 include/ct/ini.hpp	std::strtoll
-include/ct/json.hpp	include <cfloat>
-include/ct/json.hpp	include <clocale>
-include/ct/json.hpp	include <cmath>
-include/ct/json.hpp	std::floor
 include/ct/json.hpp	std::int64_t
 include/ct/json.hpp	std::is_floating_point
 include/ct/json.hpp	std::is_integral
 include/ct/json.hpp	std::is_signed
-include/ct/json.hpp	std::localeconv
-include/ct/json.hpp	std::log10
 include/ct/json.hpp	std::memcmp
 include/ct/json.hpp	std::memcpy
 include/ct/json.hpp	std::nullptr_t
@@ -270,7 +259,6 @@ include/ct/json.hpp	std::ptrdiff_t
 include/ct/json.hpp	std::size_t
 include/ct/json.hpp	std::snprintf
 include/ct/json.hpp	std::strlen
-include/ct/json.hpp	std::strtod
 include/ct/json.hpp	std::uint32_t
 include/ct/json.hpp	std::uint64_t
 include/ct/json.hpp	std::uint8_t
@@ -384,7 +372,6 @@ include/ct/text.hpp	std::is_integral
 include/ct/text.hpp	std::isspace
 include/ct/text.hpp	std::memcpy
 include/ct/text.hpp	std::size_t
-include/ct/text.hpp	std::strtod
 include/ct/text.hpp	std::strtoll
 include/ct/text.hpp	std::vsnprintf
 include/ct/thread.hpp	std::conditional
@@ -438,17 +425,13 @@ include/ct/vector.hpp	std::numeric_limits
 include/ct/vector.hpp	std::ptrdiff_t
 include/ct/vector.hpp	std::size_t
 include/ct/vector.hpp	std::uintptr_t
-include/ct/xml.hpp	include <clocale>
 include/ct/xml.hpp	std::int64_t
-include/ct/xml.hpp	std::localeconv
 include/ct/xml.hpp	std::memcmp
-include/ct/xml.hpp	std::memcpy
 include/ct/xml.hpp	std::numeric_limits
 include/ct/xml.hpp	std::ptrdiff_t
 include/ct/xml.hpp	std::size_t
 include/ct/xml.hpp	std::snprintf
 include/ct/xml.hpp	std::strlen
-include/ct/xml.hpp	std::strtod
 include/ct/xml.hpp	std::uint32_t
 include/ct/xml.hpp	std::uint64_t
 tests/ct_jsregex_cli.cpp	include <cstdio>

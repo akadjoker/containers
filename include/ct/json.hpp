@@ -1,10 +1,7 @@
 #pragma once
 
-#include <cmath>   
-#include <cfloat>  
-#include <clocale> 
-
 #include "detail/utils.hpp"
+#include "numconv.hpp"
 #include "string.hpp"
 #include "vector.hpp"
 
@@ -15,249 +12,25 @@ namespace ct
 
         inline bool json_is_digit(char c) { return c >= '0' && c <= '9'; }
 
-        inline double json_pow10(int e)
-        {
-            static const double kTable[23] = {
-                1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9, 1e10, 1e11,
-                1e12, 1e13, 1e14, 1e15, 1e16, 1e17, 1e18, 1e19, 1e20, 1e21, 1e22};
-            return kTable[e];
-        }
-
-        inline char json_decimal_point()
-        {
-            const char *dp = std::localeconv()->decimal_point;
-            return (dp && *dp) ? *dp : '.';
-        }
-
-        inline double json_strtod_locale(const char *p, std::size_t n)
-        {
-            char small[64];
-            char *buf = small;
-            String big;
-            if (n + 1 > sizeof(small))
-            {
-                big.resize(n + 1);
-                buf = big.data();
-            }
-            std::memcpy(buf, p, n);
-            buf[n] = '\0';
-            const char dp = json_decimal_point();
-            if (dp != '.')
-                for (std::size_t i = 0; i < n; ++i)
-                    if (buf[i] == '.')
-                        buf[i] = dp;
-            return std::strtod(buf, nullptr);
-        }
-
+        // O texto de um numero ja validado pelo analisador (so tem o que a gramatica do JSON deixa): ct/numconv.hpp, com
+        // arredondamento correcto e sem depender do locale
         inline double json_to_double(const char *p, const char *end)
         {
-            const char *const start = p;
-            bool neg = false;
-            if (p != end && (*p == '-' || *p == '+'))
-                neg = (*p++ == '-');
-
-            std::uint64_t mant = 0;
-            int digits = 0;   
-            int exp10 = 0;    
-            bool truncated = false;
-
-            for (; p != end && json_is_digit(*p); ++p)
-            {
-                if (digits < 19)
-                {
-                    mant = mant * 10 + static_cast<unsigned>(*p - '0');
-                    if (mant != 0)
-                        ++digits;
-                }
-                else
-                {
-                    ++exp10; 
-                    truncated = true;
-                }
-            }
-            if (p != end && *p == '.')
-            {
-                ++p;
-                for (; p != end && json_is_digit(*p); ++p)
-                {
-                    if (digits < 19)
-                    {
-                        mant = mant * 10 + static_cast<unsigned>(*p - '0');
-                        if (mant != 0)
-                            ++digits;
-                        --exp10;
-                    }
-                    else
-                        truncated = true;
-                }
-            }
-            if (p != end && (*p == 'e' || *p == 'E'))
-            {
-                ++p;
-                bool eneg = false;
-                if (p != end && (*p == '+' || *p == '-'))
-                    eneg = (*p++ == '-');
-                int e = 0;
-                for (; p != end && json_is_digit(*p); ++p)
-                    if (e < 100000)
-                        e = e * 10 + (*p - '0');
-                exp10 += eneg ? -e : e;
-            }
-
-            if (!truncated && mant <= (std::uint64_t(1) << 53) && exp10 >= -22 && exp10 <= 22)
-            {
-                double d = static_cast<double>(mant);
-                d = exp10 >= 0 ? d * json_pow10(exp10) : d / json_pow10(-exp10);
-                return neg ? -d : d;
-            }
-            return json_strtod_locale(start, static_cast<std::size_t>(end - start));
+            double d = 0.0;
+            parse_double(p, end, d);
+            return d;
         }
 
-#if defined(LDBL_MANT_DIG) && LDBL_MANT_DIG >= 64
-        inline long double json_pow10l(int e)
-        {
-            static const long double kSmall[10] = {1e0L, 1e1L, 1e2L, 1e3L, 1e4L,
-                                                   1e5L, 1e6L, 1e7L, 1e8L, 1e9L};
-            static const long double kBig[36] = {
-                1e0L,   1e10L,  1e20L,  1e30L,  1e40L,  1e50L,  1e60L,  1e70L,  1e80L,
-                1e90L,  1e100L, 1e110L, 1e120L, 1e130L, 1e140L, 1e150L, 1e160L, 1e170L,
-                1e180L, 1e190L, 1e200L, 1e210L, 1e220L, 1e230L, 1e240L, 1e250L, 1e260L,
-                1e270L, 1e280L, 1e290L, 1e300L, 1e310L, 1e320L, 1e330L, 1e340L, 1e350L};
-            return kSmall[e % 10] * kBig[e / 10];
-        }
-#endif
-
-        inline int json_format_digits(char *buf, bool neg, std::uint64_t d, int digits,
-                                      int k, int prec)
-        {
-            char tmp[24];
-            for (int i = digits - 1; i >= 0; --i)
-            {
-                tmp[i] = static_cast<char>('0' + d % 10);
-                d /= 10;
-            }
-            int nd = digits;
-            while (nd > 1 && tmp[nd - 1] == '0')
-                --nd;
-
-            int p = 0;
-            if (neg)
-                buf[p++] = '-';
-            if (k < -4 || k >= prec)
-            {
-                buf[p++] = tmp[0];
-                if (nd > 1)
-                {
-                    buf[p++] = '.';
-                    for (int i = 1; i < nd; ++i)
-                        buf[p++] = tmp[i];
-                }
-                buf[p++] = 'e';
-                int e = k;
-                if (e < 0)
-                {
-                    buf[p++] = '-';
-                    e = -e;
-                }
-                else
-                    buf[p++] = '+';
-                if (e >= 100)
-                {
-                    buf[p++] = static_cast<char>('0' + e / 100);
-                    e %= 100;
-                }
-                buf[p++] = static_cast<char>('0' + e / 10);
-                buf[p++] = static_cast<char>('0' + e % 10);
-            }
-            else if (k >= 0)
-            {
-                for (int i = 0; i <= k; ++i)
-                    buf[p++] = (i < nd) ? tmp[i] : '0';
-                if (nd > k + 1)
-                {
-                    buf[p++] = '.';
-                    for (int i = k + 1; i < nd; ++i)
-                        buf[p++] = tmp[i];
-                }
-            }
-            else
-            {
-                buf[p++] = '0';
-                buf[p++] = '.';
-                for (int i = 0; i < -k - 1; ++i)
-                    buf[p++] = '0';
-                for (int i = 0; i < nd; ++i)
-                    buf[p++] = tmp[i];
-            }
-            buf[p] = '\0';
-            return p;
-        }
-
-#if defined(LDBL_MANT_DIG) && LDBL_MANT_DIG >= 64
-#define CT_JSON_FAST_DTOA 1
-
-        inline int json_dtoa_fast(char *buf, double v)
-        {
-            const bool neg = v < 0;
-            const double a = neg ? -v : v;
-
-            int k = static_cast<int>(std::floor(std::log10(a)));
-            if (k < -324 || k > 308)
-                return -1;
-
-            long double scaled;
-            for (int tentativa = 0; tentativa < 3; ++tentativa)
-            {
-                const int shift = 16 - k;
-                scaled = (shift >= 0) ? static_cast<long double>(a) * json_pow10l(shift)
-                                      : static_cast<long double>(a) / json_pow10l(-shift);
-                if (scaled >= 1e16L && scaled < 1e17L)
-                    break;
-                k += (scaled >= 1e17L) ? 1 : -1; 
-                if (tentativa == 2)
-                    return -1;
-            }
-
-            std::uint64_t n = static_cast<std::uint64_t>(scaled + 0.5L);
-            if (n >= 100000000000000000ull) 
-            {
-                n /= 10;
-                ++k;
-            }
-            if (n < 10000000000000000ull)
-                return -1;
-
-            static const std::uint64_t kDiv[3] = {100, 10, 1}; 
-            for (int i = 0; i < 3; ++i)
-            {
-                const int digits = 15 + i;
-                std::uint64_t d = n;
-                int ke = k;
-                if (kDiv[i] > 1)
-                    d = (n + kDiv[i] / 2) / kDiv[i];
-                std::uint64_t limite = 1;
-                for (int j = 0; j < digits; ++j)
-                    limite *= 10;
-                if (d >= limite) 
-                {
-                    d /= 10;
-                    ++ke;
-                }
-                const int len = json_format_digits(buf, neg, d, digits, ke, digits);
-                if (json_to_double(buf, buf + len) == v)
-                    return len;
-            }
-            return -1;
-        }
-#endif
-
+        // O texto mais curto que volta exactamente ao mesmo double (ct/numconv.hpp), com ".0" se nao tiver ponto nem expoente
+        // (para continuar a ser um real ao voltar a ler). O expoente aparece a partir de 10^max(15, algarismos), como com
+        // o %.{15,16,17}g que se usava antes.
         inline void json_append_double(String &out, double v)
         {
             std::uint64_t bits;
             std::memcpy(&bits, &v, sizeof(bits));
             const bool neg = (bits >> 63) != 0;
 
-            if (v == 0.0) 
+            if (v == 0.0)
             {
                 if (neg)
                     out.append("-0.0", 4);
@@ -278,54 +51,10 @@ namespace ct
             }
 
             char buf[48];
-            int n = 0;
-#if defined(CT_JSON_FAST_DTOA)
-            n = json_dtoa_fast(buf, v);
-            if (n > 0)
-            {
-                out.append(buf, static_cast<std::size_t>(n));
-                bool tem_marca = false;
-                for (int k = 0; k < n; ++k)
-                    if (buf[k] == '.' || buf[k] == 'e')
-                        tem_marca = true;
-                if (!tem_marca)
-                    out.append(".0", 2);
-                return;
-            }
-            n = 0;
-#endif
-            const char dp = json_decimal_point();
-            for (int prec = 15; prec <= 17; ++prec)
-            {
-                n = std::snprintf(buf, sizeof(buf), "%.*g", prec, v);
-                if (n <= 0 || static_cast<std::size_t>(n) >= sizeof(buf))
-                {
-                    n = std::snprintf(buf, sizeof(buf), "%.17g", v);
-                    if (n <= 0)
-                    {
-                        out.append("0.0", 3);
-                        return;
-                    }
-                    if (static_cast<std::size_t>(n) >= sizeof(buf))
-                        n = static_cast<int>(sizeof(buf)) - 1;
-                    break;
-                }
-                if (dp != '.')
-                    for (int k = 0; k < n; ++k)
-                        if (buf[k] == dp)
-                            buf[k] = '.';
-                if (json_to_double(buf, buf + n) == v)
-                    break;
-            }
-            if (dp != '.')
-                for (int k = 0; k < n; ++k)
-                    if (buf[k] == dp)
-                        buf[k] = '.';
-
+            const int n = static_cast<int>(write_shortest_at_least(v, buf, 15) - buf);
             bool marcado = false;
             for (int k = 0; k < n; ++k)
-                if (buf[k] == '.' || buf[k] == 'e' || buf[k] == 'E' || buf[k] == 'n' ||
-                    buf[k] == 'i')
+                if (buf[k] == '.' || buf[k] == 'e' || buf[k] == 'n' || buf[k] == 'i')
                     marcado = true;
             out.append(buf, static_cast<std::size_t>(n));
             if (!marcado)

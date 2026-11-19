@@ -3,6 +3,7 @@
 #include <cstdarg>
 #include <cctype>
 
+#include "numconv.hpp"
 #include "stream.hpp"
 
 namespace ct
@@ -81,9 +82,9 @@ namespace ct
         bool read_double(double &out)
         {
             String word; if (!read_word(word)) return false;
-            const char dp = detail::decimal_point();
-            if (dp != '.') for (std::size_t i = 0; i < word.size(); ++i) if (word[i] == '.') word[i] = dp;
-            char *end = nullptr; out = std::strtod(word.c_str(), &end); return end && *end == '\0';
+            const char *first = word.data(), *last = first + word.size();
+            const char *end = parse_double(first, last, out); // ct/numconv.hpp: arredondamento correcto, '.' em qualquer locale
+            return end != first && end == last;
         }
         int peek() { init(); if (pending_begin_ < pending_end_) return pending_[pending_begin_]; if (begin_ == end_ && !fill()) return -1; return static_cast<unsigned char>(buffer_[begin_]); }
         int get() { int c = peek(); if (c == -1) return -1; if (pending_begin_ < pending_end_) ++pending_begin_; else ++begin_; return c; }

@@ -136,7 +136,8 @@ add_executable(ct_tests
   tests/test_hash_iter.cpp
   tests/test_hash_layout.cpp
   tests/test_btree.cpp
-  tests/test_sort_blocks.cpp)
+  tests/test_sort_blocks.cpp
+  tests/test_parser_numbers.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)

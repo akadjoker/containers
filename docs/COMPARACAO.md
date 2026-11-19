@@ -6,30 +6,32 @@ alternativas conhecidas, mais os casos limite que se testaram a seguir. Tudo o q
 
 ## 1. Resumo
 
-- **Onde a ct ganha**: `Vector` sem reserve (2 a 4 vezes mais depressa que `std::vector` em tipos triviais a 1e5 e 1e7, porque
-  cresce com `realloc`, que o glibc faz em sitio ou com `mremap`), `HashMap` contra `std::unordered_map` em procura (1,2 a 3,3
-  vezes), remocao (1,6 a 15), copia (ate 9,7) e construcao com valores pequenos (ate 5,9), `HashMap` nas instrucoes por
-  operacao de `hit`, `miss` e `build` com chaves `int` (menos que absl, boost e ankerl), `HashMap` a 1e7 elementos (mais depressa que
-  todas em `build` e `hit`), `TreeMap` nas instrucoes (`hit` 85 contra 146 do `std::map`), `String` ate 23 caracteres (cabe no SSO de
-  24 bytes da ct e nao no de 32 do libstdc++: criar 1,3 a 9,5 vezes mais depressa e copiar ate 11,7; so copiar 40 caracteres, heap nos dois, perde 14 %), `String::append`, `Deque` em
-  `push_back`, acesso por indice e fila, `Function` a construir e copiar, compilacao (a unidade de teste compila em dois tercos do
-  tempo e com dois tercos da memoria do equivalente em `std`).
-- **Onde empata**: leitura sequencial e acesso aleatorio de `Vector`, `String::find`, `String` a concatenar, `sort` com comparador
-  (`ct::sort` e `std::sort` no tempo em `int` aleatorio (65 contra 65 ns a 1e5; mas 25 % mais instrucoes); ordenado e invertido a ct ganha depois da correcao), `TreeMap`
-  contra `std::map` ate 1e5.
-- **Onde ainda perde** (seccao 5, com causa e proposta): `HashMap` com chaves `int` e tabelas de tamanho medio contra boost e absl
-  (`miss` 2 vezes, `build` 1,8) e com valores de 256 bytes (2,4 vezes mais lento que `std::unordered_map` a 1e5: a tabela
-  fica a 38 % de carga e gasta 700 B por elemento); bytes por elemento do `HashMap` (carga maxima de 75 %); `String ==` e `<` de 40
-  caracteres (1,3 a 2,3 vezes no tempo; as instrucoes dizem 28 % mais); `TreeMap` a 1e6 elementos (`build` +38 %, `miss` +43 %
-  contra `std::map`, apesar de menos instrucoes) e muito atras da `btree` do abseil; `Deque::push_front` e `PriorityQueue`; `ct::sort` com comparador em entrada aleatoria (25 % mais instrucoes que `std::sort`, o preco de nao ler fora do
-  intervalo com um comparador mau); formatar
-  `double` (`snprintf`, 3 vezes mais instrucoes que `to_chars` e fmt) e ler `float` (`strtof`, 3,6 vezes); iterar um `HashMap`
-  (17 contra 5 instrucoes da ankerl).
-- **Corrigido nesta ronda** (seccao 6, cada um com antes e depois): `HashSet` com capacidade 2 ficava 100 % cheio e o
-  terceiro `insert` nunca acabava (defeito real); `HeapAlloc` gastava 8 bytes por alocacao; o `introsort` caia no heapsort com
-  repetidos e gastava 3 vezes mais em entradas invertidas, e ordenada ou invertida custa agora uma passagem; iterar um
-  `HashMap`/`HashSet` custava os buracos da tabela; copiar um `HashMap` refazia o hash de tudo; `String::to_int` custa
-  menos 40 % das instrucoes.
+Duas rondas. A **ronda 1** mediu a `ct` contra `std`, abseil, boost e ankerl e deixou a lista de perdas das seccoes 5.x; a
+**ronda 2** fecha o que se podia fechar e diz com provas o que nao. Os numeros desta ronda estao nas seccoes 3.1 (instrucoes
+de todos os cenarios), 3.5 (antes e depois) e 3.6 (`-O3`); o tempo da ct desta ronda so se mediu na `HashMap` (3.2b) e no `==` de `String` (5.5); o resumo de cada ponto e a seccao 5.
+
+- **Onde a ct ganha agora** (instrucoes por operacao a N = 1e5; ct contra o melhor dos outros, e o que era antes): `String::number(double)`
+  307 contra 849 de `std::to_chars` (antes 2572); `String::to_float` 133 contra 185 de `from_chars` (antes 659); `String::to_int` 90 contra 141 (antes 175);
+  `String::number` de inteiros 126 contra 147 de `fmt::format_int` (antes 186); texto mais curto de `double` 477 contra 929; `PriorityQueue` 273 contra 309
+  de `std::priority_queue` (antes 358); `a + b + c` de strings 392 contra 516 (antes 629); `Vector::resize_for_overwrite` 5 instrucoes por elemento contra 9 do
+  `resize` (como o `default_init` do boost); `HashMap` com chaves de texto (`miss` -15 %, `build` -15 %, `erase` -9 %, `churn` -21 % com 8 caracteres);
+  e, em bytes, `HashMap` com valores de 256 bytes: 296 por elemento contra 302 do `std::unordered_map` (antes 695). Do que ja ganhava na ronda 1: `Vector`
+  sem reserve (2 a 4 vezes mais depressa que `std::vector`), `HashMap` contra `std::unordered_map`, `HashMap` a 1e7 elementos, `TreeMap` nas instrucoes, `String`
+  ate 23 caracteres, `Variant` e fila circular (seccao 5.11), compilacao.
+- **Onde empata**: o que ja empatava (leitura e acesso de `Vector`, `String::find`, `sort` com comparador em tempo) e,
+  nesta ronda, `append_char` (20 contra 19 instrucoes), `Arena` (28 contra 27) e `==` de 40 caracteres (54 contra 46: as instrucoes do SSO).
+- **Onde ainda perde** (seccao 5, com causa e prova): `HashMap` com chaves `int` em tabelas de tamanho medio contra abseil e
+  boost (o `miss` custa 0,84 mispredicoes de salto por operacao contra 0,40 e 0,18: e o salto do ciclo de sondagem, e subir a
+  carga maxima com sondagem linear rebenta o `miss` 3 a 5 vezes); bytes por elemento de `HashMap` com chaves `int` (23,6 contra 11,8 do abseil, carga maxima de
+  75 %); iterar um `HashMap` (17 contra 5 da ankerl, que guarda os pares densos); `HashMap` com valores grandes **sobe** nas instrucoes (uma alocacao por elemento:
+  `build` 351 para 788, `hit` 31 para 37, `miss` 28 para 31, `erase` 57 para 291, `copy` 58 para 566; em tempo `build` 2,8 vezes mais rapido, `hit` +49 %, `miss` +59 %, `erase` 5,7 vezes mais
+  lento) como preco de metade da memoria, e perde para o abseil e o boost nas instrucoes (`CT_HASH_INLINE_MAX` desliga-o); `hit` de `HashMap` com chaves de texto sobe 1 a 3 % (o preco da distancia na meta, que paga o resto); `Pool` (718 contra 583 de `new`/`delete`)
+  e `Span::subspan` (6,4 contra 3,5); `TreeMap` a 1e6 contra a `btree` do abseil, `ct::sort` com comparador (25 % mais instrucoes que `std::sort`) e
+  `Deque::push_front` (21 contra 13): nao se tentaram.
+- **Corrigido** (seccao 6): rondas 1 e 2. Os defeitos reais da ronda 2: `String::to_int` dava a volta fora do intervalo
+  (3000000000 dava -1294967296), apagar durante um ciclo num `HashMap` nao se detectava, e dois defeitos do codigo novo apanhados
+  pelos testes antes de entrar. **Mudancas que se notam**: seccao 5.4 (`to_int` satura, `to_float` ja nao aceita a virgula do locale), 5.2 (referencias a
+  valores de `HashMap` de mais de 128 bytes sobrevivem ao rehash), 5.5 (a capacidade de `a + b` e a exacta) e 7 (apagar durante um ciclo aborta em depuracao).
 
 ## 2. Metodo
 
@@ -39,7 +41,7 @@ A maquina estava partilhada com outros trabalhos durante todas as medicoes (carg
 repeticoes e ainda tem ruido de 10 a 30 %. Quando o tempo e a instrucao discordam, a seccao 5 diz qual e a causa.
 
 **Compilador**: g++ 13.3.0, `-std=c++17 -O2` (sem `-march=native`; C++17 so porque `std::string_view`, `to_chars` e os
-tipos das outras bibliotecas o pedem, a ct e C++14). `-O3` nao se corre nesta ronda. Mesmo compilador e mesmas
+tipos das outras bibliotecas o pedem, a ct e C++14). `-O3` so se corre na seccao 3.6 (um subconjunto das instrucoes). Mesmo compilador e mesmas
 opcoes para todas as bibliotecas.
 
 **Bibliotecas**: libstdc++ 13.3; abseil 20220623.1 (`flat_hash_map`, `btree_map`; os cabecalhos do pacote Ubuntu e as
@@ -48,14 +50,17 @@ bibliotecas ja instaladas); Boost 1.83 (`unordered_flat_map`, `container::vector
 cabecalhos); valgrind 3.22. Os pacotes Ubuntu de abseil, Boost, fmt e valgrind foram descarregados com `apt-get download` e
 extraidos para uma pasta propria (`dpkg -x`), sem instalar nada no sistema; o repositorio nao os guarda
 (`tools/bench_compare.sh fetch` repete o passo). **Nao corridos**: EASTL (precisa de dois repositorios e de compilar a
-biblioteca), RE2 e `std::regex` (a ct tem `bench/bench_regex.cpp` contra `std::regex`; nao se repetiu aqui), `std::variant`,
-`std::pmr` e os alocadores (`Arena`, `Pool`) ficaram de fora desta ronda; `Variant` nao se mediu.
+biblioteca) e RE2 e `std::regex` (a ct tem `bench/bench_regex.cpp` contra `std::regex`; nao se repetiu aqui). A ronda 2
+mediu `Variant`, `Arena`, `Pool`, fila circular e `Span` (`bench/compare/cmp_extra.cpp`, familia `extra`).
 
 **Programas** (`bench/compare`, so compilam com `-DCT_BUILD_COMPARE=ON`, que vem desligado; esta pasta e a excecao
 declarada ao "sem std": inclui a biblioteca standard e as outras, e `tools/check.sh` nostd nao a olha):
 
-- `cmp_vector`, `cmp_map`, `cmp_string`, `cmp_sort`, `cmp_misc` (deque, mapas ordenados, `PriorityQueue`, `Function`);
-  `compile_unit.cpp` para o custo de compilacao.
+- `cmp_vector`, `cmp_map`, `cmp_string`, `cmp_sort`, `cmp_misc` (deque, mapas ordenados, `PriorityQueue`, `Function`),
+  `cmp_extra` (ronda 2: `Variant`, `Arena`, `Pool`, fila circular, `Span`); `compile_unit.cpp` para o custo de compilacao.
+  A ronda 2 acrescentou aos de antes: `d2short` e `s2f64` em `cmp_string` (texto mais curto de `double`, texto para `double`),
+  `resize_fill` e `resize_overwrite` em `cmp_vector`, e `CMP_CPUTIME=1` (tempo de CPU do processo em vez do relogio, que numa
+  maquina com carga de 25 a 60 mede quem mais corre).
 - Cada processo faz um cenario (`impl cenario tipo N`) e imprime uma linha: ns por operacao (melhor de 3 a 7 repeticoes),
   operacoes, alocacoes, bytes pedidos, pico e bytes vivos no fim, RSS maximo, `sizeof` e um somatorio de verificacao.
   Todos os cenarios para todas as bibliotecas dao o mesmo somatorio (e o programa de conferencia): o trabalho e igual.
@@ -63,7 +68,13 @@ declarada ao "sem std": inclui a biblioteca standard e as outras, e `tools/check
   pedidos, numero de chamadas e bytes vivos = tamanho utilizavel mais 8 bytes de cabecalho do glibc, que e o que
   a memoria custa de verdade. Vale para todas as bibliotecas, porque todas acabam em `malloc`.
 - As instrucoes vem de `valgrind --tool=callgrind`, ligando a coleccao so dentro da regiao medida
-  (`CALLGRIND_TOGGLE_COLLECT`), uma execucao, N = 1e5, a dividir pelo numero de operacoes. `perf` nao se usou.
+  (`CALLGRIND_TOGGLE_COLLECT`), uma execucao, N = 1e5, a dividir pelo numero de operacoes. `perf` nao se usou. As falhas de
+  cache e as mispredicoes de salto (seccao 5.1) vem do mesmo callgrind com `--cache-sim=yes --D1=32768,8,64 --LL=8388608,16,64` e
+  `--branch-sim=yes`. A correccao dos numeros (seccao 7) tem um diferencial a parte, `tests/numconv_diff.cpp`.
+- **Ronda 2**: a arvore "antes" e a de origin/main de 7fef995 (o fim da ronda 1) e a "depois" e a deste ramo, compiladas da
+  mesma maneira (g++ 13.3 `-O2 -DNDEBUG`); cada mudanca foi medida em todas as operacoes do contentor afectado, nos dois N (1e3 e
+  1e5) e em todos os tipos de chave e de valor (seccao 3.5), e uma mudanca so ficou se nenhuma instrucao subiu, ou se a subida esta
+  dita com a causa e o saldo.
 - Tipos: `int`, `P16` (16 bytes triviais), `B256` (256 bytes triviais), `MO` (so move, destrutor nao trivial); chaves
   `int`, `s8` (8 caracteres, SSO nos dois lados), `s20` (SSO da ct, heap do libstdc++), `s40` (heap nos dois). Chaves
   distintas e de aspecto aleatorio (uma permutacao de `uint32`). N de 1e3, 1e5 e 1e7; `B256` e as chaves de texto so ate
@@ -72,7 +83,8 @@ declarada ao "sem std": inclui a biblioteca standard e as outras, e `tools/check
   `std::hash<int>` e a identidade.
 
 **O que nao e igual** (por isso um empate ou uma vitoria nao e sempre um merito): `HashMap` da ct e enderecamento aberto
-com sondagem linear e remocao por deslocamento (sem marcadores), as referencias nao sobrevivem a `put`; `std::unordered_map`
+com sondagem linear e remocao por deslocamento (sem marcadores), as referencias nao sobrevivem a `put` (excepto nas entradas de mais
+de 128 bytes, que ficam fora da tabela); `std::unordered_map`
 garante estabilidade de referencias (e por isso aloca um no por elemento); `absl` e `boost` sao tabelas SIMD com
 etiquetas; ankerl guarda os valores densos num vetor e por isso itera mais depressa e usa menos memoria por valor; `Vector`
 da ct so move por copia de bytes quando o tipo e trivialmente copiavel e usa `realloc` (o `std::vector` nunca pode);
@@ -83,10 +95,11 @@ excecoes, e `std` e as outras tem de se preparar para elas.
 
 ## 3. Resultados
 
-### 3.1 Instrucoes por operacao (callgrind, N = 1e5, arvore final)
+### 3.1 Instrucoes por operacao (callgrind, N = 1e5, arvore final da ronda 2)
 
-Menos e melhor. A ultima coluna e `ct` a dividir pelo melhor dos outros; a negrito quando `ct` perde mais de 10 %. No `sort` as colunas sao `impl:algoritmo`.
-
+Menos e melhor. A ultima coluna e `ct` a dividir pelo melhor dos outros; a negrito quando `ct` perde mais de 10 %. No `sort` as
+colunas sao `impl:algoritmo`. As colunas das outras bibliotecas vem da corrida da ronda 1 (mesmas bibliotecas, mesmo compilador,
+as instrucoes sao deterministicas); as da `ct` sao desta ronda. A familia `extra` e nova (`Variant`, `Arena`, `Pool`, fila, `Span`).
 
 #### Ir por operacao, vector
 
@@ -106,6 +119,12 @@ Menos e melhor. A ultima coluna e `ct` a dividir pelo melhor dos outros; a negri
 | build_reserved | mo | 100000 | 25.0 | 23.0 | 27.0 | 1.09 |
 | iterate | mo | 100000 | 6.0 | 6.0 | 6.0 | 1.00 |
 | insert_mid | mo | 100000 | 404063.0 | 404036.0 | 404588.8 | 1.00 |
+| resize_fill | int | 100000 | 9.0 | 9.0 | 9.0 | 1.00 |
+| resize_overwrite | int | 100000 | 5.0 | 9.0 | 5.0 | 1.00 |
+| resize_fill | p16 | 100000 | 9.5 | 12.0 | 12.0 | 0.79 |
+| resize_overwrite | p16 | 100000 | 7.0 | 12.0 | 7.0 | 1.00 |
+| resize_fill | mo | 100000 | 21.0 | 20.0 | 22.0 | 1.05 |
+| resize_overwrite | mo | 100000 | 21.0 | 20.0 | 22.0 | 1.05 |
 
 #### Ir por operacao, map
 
@@ -117,18 +136,30 @@ Menos e melhor. A ultima coluna e `ct` a dividir pelo melhor dos outros; a negri
 | erase | int-int | 100000 | 41.9 | 213.4 | 78.4 | 52.3 | 110.1 | 0.80 |
 | iterate | int-int | 100000 | 17.4 | 5.0 | 14.0 | 16.9 | 5.0 | **3.47** |
 | copy | int-int | 100000 | 23.0 | 453.5 | 53.5 | 12.5 | 12.7 | **1.84** |
-| build | s8-int | 100000 | 391.8 | 735.1 | 536.3 | 368.6 | 375.4 | 1.06 |
-| hit | s8-int | 100000 | 122.7 | 133.3 | 149.6 | 149.0 | 151.1 | 0.92 |
-| miss | s8-int | 100000 | 97.3 | 94.0 | 101.7 | 109.5 | 124.5 | 1.03 |
-| erase | s8-int | 100000 | 153.4 | 328.1 | 176.0 | 198.5 | 308.5 | 0.87 |
+| build | s8-int | 100000 | 332.1 | 735.1 | 536.3 | 368.6 | 375.4 | 0.90 |
+| hit | s8-int | 100000 | 125.0 | 133.3 | 149.6 | 149.0 | 151.1 | 0.94 |
+| miss | s8-int | 100000 | 83.1 | 94.0 | 101.7 | 109.5 | 124.5 | 0.88 |
+| erase | s8-int | 100000 | 139.4 | 328.1 | 176.0 | 198.5 | 308.5 | 0.79 |
 | iterate | s8-int | 100000 | 18.8 | 5.0 | 14.2 | 17.9 | 5.0 | **3.74** |
-| copy | s8-int | 100000 | 60.7 | 516.5 | 160.2 | 88.4 | 54.5 | **1.11** |
-| build | s40-int | 100000 | 910.2 | 1200.5 | 1098.3 | 849.7 | 817.5 | **1.11** |
-| hit | s40-int | 100000 | 160.6 | 178.8 | 221.9 | 182.2 | 170.2 | 0.94 |
-| miss | s40-int | 100000 | 134.7 | 142.0 | 175.7 | 144.8 | 146.1 | 0.95 |
-| erase | s40-int | 100000 | 360.3 | 519.4 | 400.5 | 377.8 | 475.1 | 0.95 |
+| copy | s8-int | 100000 | 60.0 | 516.5 | 160.2 | 88.4 | 54.5 | **1.10** |
+| build | s40-int | 100000 | 882.0 | 1200.5 | 1098.3 | 849.7 | 817.5 | 1.08 |
+| hit | s40-int | 100000 | 165.0 | 178.8 | 221.9 | 182.2 | 170.2 | 0.97 |
+| miss | s40-int | 100000 | 124.9 | 142.0 | 175.7 | 144.8 | 146.1 | 0.88 |
+| erase | s40-int | 100000 | 329.2 | 519.4 | 400.5 | 377.8 | 475.1 | 0.87 |
 | iterate | s40-int | 100000 | 18.8 | 5.0 | 14.2 | 17.9 | 5.0 | **3.74** |
-| copy | s40-int | 100000 | 483.8 | 937.5 | 655.2 | 507.5 | 475.8 | 1.02 |
+| copy | s40-int | 100000 | 483.0 | 937.5 | 655.2 | 507.5 | 475.8 | 1.02 |
+| build | s20-int | 100000 | 466.9 | 1195.1 | 1074.4 | 799.2 | 794.7 | 0.59 |
+| hit | s20-int | 100000 | 169.4 | 176.6 | 214.1 | 161.1 | 163.2 | 1.05 |
+| miss | s20-int | 100000 | 127.3 | 137.1 | 166.0 | 121.3 | 136.3 | 1.05 |
+| erase | s20-int | 100000 | 186.8 | 517.3 | 392.6 | 356.8 | 458.2 | 0.52 |
+| iterate | s20-int | 100000 | 18.8 | 5.0 | 14.2 | 17.9 | 5.0 | **3.74** |
+| copy | s20-int | 100000 | 60.0 | 936.5 | 643.2 | 506.5 | 474.8 | 0.13 |
+| build | int-b256 | 100000 | 788.1 | 824.0 | 432.5 | 328.4 | 416.0 | **2.40** |
+| hit | int-b256 | 100000 | 36.7 | 31.8 | 53.6 | 44.6 | 53.2 | **1.15** |
+| miss | int-b256 | 100000 | 31.0 | 23.4 | 48.1 | 38.0 | 48.3 | **1.32** |
+| erase | int-b256 | 100000 | 291.3 | 306.9 | 78.4 | 54.3 | 149.4 | **5.36** |
+| iterate | int-b256 | 100000 | 19.4 | 6.0 | 15.5 | 19.0 | 6.0 | **3.23** |
+| copy | int-b256 | 100000 | 565.7 | 595.8 | 87.0 | 30.6 | 48.5 | **18.47** |
 
 #### Ir por operacao, string
 
@@ -138,13 +169,18 @@ Menos e melhor. A ultima coluna e `ct` a dividir pelo melhor dos outros; a negri
 | create | len16 | 100000 | 50.0 | 323.0 | - | - | - | 0.15 |
 | create | len24 | 100000 | 262.0 | 323.0 | - | - | - | 0.81 |
 | create | len40 | 100000 | 263.0 | 324.0 | - | - | - | 0.81 |
-| append_char | char | 100000 | 24.1 | 19.3 | - | - | - | **1.25** |
-| eq | len40 | 100000 | 58.6 | 45.6 | - | - | - | **1.28** |
-| concat | len30 | 100000 | 629.0 | 516.1 | - | - | - | **1.22** |
-| int2s | full | 100000 | 185.6 | 218.9 | 230.5 | 665.8 | 146.5 | **1.27** |
-| s2int | full | 100000 | 175.3 | 306.2 | 141.3 | 290.2 | - | **1.24** |
-| dbl2s | d | 100000 | 2572.2 | - | 849.0 | 2450.2 | 1036.1 | **3.03** |
-| s2f32 | f | 100000 | 659.3 | 549.3 | 184.5 | 537.3 | - | **3.57** |
+| append_char | char | 100000 | 20.1 | 19.3 | - | - | - | 1.04 |
+| eq | len40 | 100000 | 53.6 | 45.6 | - | - | - | **1.18** |
+| concat | len30 | 100000 | 392.0 | 516.1 | - | - | - | 0.76 |
+| int2s | full | 100000 | 126.3 | 218.9 | 230.5 | 665.8 | 146.5 | 0.86 |
+| s2int | full | 100000 | 90.0 | 306.2 | 141.3 | 290.2 | - | 0.64 |
+| dbl2s | d | 100000 | 306.5 | - | 849.0 | 2450.2 | 1036.1 | 0.36 |
+| s2f32 | f | 100000 | 132.3 | 549.3 | 184.5 | 537.3 | - | 0.72 |
+| d2short | d | 100000 | 476.6 | - | 929.2 | 4037.5 | 1212.4 | 0.51 |
+| d2short | wide | 100000 | 453.5 | - | 837.7 | 3696.2 | 1281.0 | 0.54 |
+| s2f64 | f | 100000 | 134.2 | 554.3 | 187.3 | 542.3 | - | 0.72 |
+| s2f64 | long | 100000 | 240.2 | 1151.1 | 290.3 | 1139.1 | - | 0.83 |
+| s2f64 | wide | 100000 | 325.7 | 1212.8 | 350.4 | 1200.8 | - | 0.93 |
 
 #### Ir por operacao, sort
 
@@ -176,11 +212,25 @@ Menos e melhor. A ultima coluna e `ct` a dividir pelo melhor dos outros; a negri
 | build | int | 10000 | - | - | - | 397.2 | 2100.1 | 628.3 | 442.6 | 15343.2 |  |
 | hit | int | 10000 | - | - | - | 85.0 | 152.5 | 145.6 | 269.7 | 149.5 |  |
 | erase | int | 10000 | - | - | - | 298.9 | 18883.6 | 374.3 | 498.0 | 12517.1 |  |
-| pushpop | int | 100000 | 358.4 | 308.8 | - | - | - | - | - | - | **1.16** |
+| pushpop | int | 100000 | 272.7 | 308.8 | - | - | - | - | - | - | 0.88 |
 | construct_small | int(int) | 100000 | 28.0 | 27.0 | - | - | - | - | - | - | 1.04 |
 | construct_big | int(int) | 100000 | 269.0 | 297.0 | - | - | - | - | - | - | 0.91 |
 | call | int(int) | 100000 | 18.0 | 17.0 | - | - | - | - | - | - | 1.06 |
 | copy | int(int) | 100000 | 298.0 | 326.0 | - | - | - | - | - | - | 0.91 |
+
+#### Ir por operacao, extra
+
+| cenario | tipo | N | ct | std | raw | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|
+| construct | mix3 | 100000 | 68.7 | 70.4 | - | 0.98 |
+| visit | mix3 | 100000 | 17.0 | 18.4 | - | 0.93 |
+| copy_assign | mix3 | 100000 | 34.1 | 36.3 | - | 0.94 |
+| alloc64 | node16 | 100000 | 28.0 | 27.1 | - | 1.03 |
+| create_nodes | node16 | 100000 | 32.0 | 33.1 | - | 0.97 |
+| cycle | node16 | 100000 | 718.3 | 582.5 | - | **1.23** |
+| fifo | int | 100000 | 18.0 | 22.6 | - | 0.80 |
+| sum | int | 100000 | 5.0 | - | 5.0 | 1.00 |
+| sub | int | 100000 | 6.4 | - | 3.5 | **1.85** |
 
 ### 3.2 Tempo por operacao em ns (melhor de varias repeticoes; maquina carregada, ver o metodo)
 
@@ -369,118 +419,212 @@ Todas as colunas, `ct` incluida, sao da mesma execucao (a ct de origin/main, ant
 | call | int(int) | 100000 | 14.52 | 9.77 | - | - | - | - | - | - | **1.49** |
 | copy | int(int) | 100000 | 45.26 | 57.47 | - | - | - | - | - | - | 0.79 |
 
+### 3.2b Tempo da ct nesta ronda (HashMap; ns por operacao, tempo de CPU do processo, minimo de 3 execucoes alternadas)
+
+Antes (cabecalhos de origin/main) e depois, o mesmo `cmp_map` compilado com os dois conjuntos de cabecalhos, `CMP_CPUTIME=1`, N = 1e5, `-O2`.
+A maquina estava com carga de 20 a 25 durante estas celulas (antes e depois disso chegou a 250, e nessas condicoes nao se mediu mais nada), por isso **o ruido e
+grande**: as celulas de `int-int`, que tem o mesmo codigo nos dois lados (o assembler de `find` e `erase` e igual), variam de -37 % a +9 %. Le-se uma diferenca de menos de 30 %
+como empate, e so as grandes contam. A linha `std` e o `std::unordered_map` do binario de antes e do de depois (o mesmo codigo: a diferenca entre as duas colunas e ruido).
+O tempo de `String` e dos numeros nao se mediu desta maneira (as instrucoes estao em 3.5; a seccao 5.5 tem o `==` medido em tempo de CPU da thread).
+
+| impl | cenario | tipo | N | antes | depois | variacao |
+|---|---|---|---:|---:|---:|---:|
+| ct | build | int-b256 | 100000 | 1544.1 | 557.2 | -64% |
+| ct | hit | int-b256 | 100000 | 60.6 | 90.1 | +49% |
+| ct | miss | int-b256 | 100000 | 33.0 | 52.6 | +59% |
+| ct | erase | int-b256 | 100000 | 79.8 | 451.3 | +466% |
+| std | build | int-b256 | 100000 | 597.2 | 689.5 | +15% |
+| std | hit | int-b256 | 100000 | 127.0 | 127.3 | +0% |
+| ct | build | s8-int | 100000 | 297.2 | 291.7 | -2% |
+| ct | hit | s8-int | 100000 | 129.9 | 137.5 | +6% |
+| ct | miss | s8-int | 100000 | 98.3 | 83.1 | -16% |
+| ct | erase | s8-int | 100000 | 142.6 | 138.2 | -3% |
+| ct | build | s40-int | 100000 | 734.3 | 709.0 | -3% |
+| ct | hit | s40-int | 100000 | 317.3 | 316.1 | -0% |
+| ct | miss | s40-int | 100000 | 261.6 | 234.8 | -10% |
+| ct | erase | s40-int | 100000 | 619.6 | 568.2 | -8% |
+| ct | hit | int-int | 100000 | 23.4 | 22.6 | -3% |
+| ct | miss | int-int | 100000 | 20.5 | 22.4 | +9% |
+| ct | build | int-int | 100000 | 86.4 | 88.8 | +3% |
+| ct | erase | int-int | 100000 | 50.0 | 31.6 | -37% |
+
+O que se le: `int-b256` constroi 2,8 vezes mais depressa (1544 para 557 ns, contra 597 a 689 do `std::unordered_map`: de 2,6 vezes mais lento a empate) e o `hit` de `int-b256` fica
+mais rapido que o do std (90 contra 127) mas 49 % mais lento que o de antes, o `miss` 59 % e o `erase` 5,7 vezes mais lentos: o preco da alocacao por elemento e do ponteiro a seguir. Com chaves de texto `miss` e `erase` ficam 3 a 16 %
+mais rapidos e o `hit` (+6 %, 0 %) empata; com `int` empata.
+
 ### 3.3 Memoria
 
-`layout` (tamanho do contentor vazio, slots, fator de carga e bytes vivos por elemento depois de construir N elementos; o total vem do contador de alocacoes: tamanho utilizavel mais 8 bytes de cabecalho do malloc), arvore final:
+`layout` (tamanho do contentor vazio, slots, fator de carga e bytes vivos por elemento depois de construir N elementos; o total vem do contador de alocacoes: tamanho utilizavel mais 8 bytes de cabecalho do malloc), arvore final da ronda 2. `int-b256` mudou: as entradas de mais de 128 bytes ficam fora da tabela, que guarda ponteiros.
 
 ```
-ct int-int 100000  sizeof_empty=32  size=100000  slots=262144  load=0.381  bytes_per_elem=23.63  heap_bytes=2363384
-std int-int 100000  sizeof_empty=56  size=100000  slots=172933  load=0.578  bytes_per_elem=45.85  heap_bytes=4584520
-absl int-int 100000  sizeof_empty=40  size=100000  slots=131071  load=0.763  bytes_per_elem=11.84  heap_bytes=1183736
-boost int-int 100000  sizeof_empty=48  size=100000  slots=122879  load=0.814  bytes_per_elem=11.18  heap_bytes=1118200
-ankerl int-int 100000  sizeof_empty=64  size=100000  slots=131072  load=0.763  bytes_per_elem=21.05  heap_bytes=2105328
-ct int-int 1000000  sizeof_empty=32  size=1000000  slots=2097152  load=0.477  bytes_per_elem=18.88  heap_bytes=18878456
-std int-int 1000000  sizeof_empty=56  size=1000000  slots=1447153  load=0.691  bytes_per_elem=43.58  heap_bytes=43579464
-absl int-int 1000000  sizeof_empty=40  size=1000000  slots=2097151  load=0.477  bytes_per_elem=18.88  heap_bytes=18878456
-boost int-int 1000000  sizeof_empty=48  size=1000000  slots=1966079  load=0.509  bytes_per_elem=17.83  heap_bytes=17829880
-ankerl int-int 1000000  sizeof_empty=64  size=1000000  slots=2097152  load=0.477  bytes_per_elem=25.17  heap_bytes=25174000
-ct int-b256 100000  sizeof_empty=32  size=100000  slots=262144  load=0.381  bytes_per_elem=694.72  heap_bytes=69472248
-std int-b256 100000  sizeof_empty=56  size=100000  slots=172933  load=0.578  bytes_per_elem=301.84  heap_bytes=30184456
-absl int-b256 100000  sizeof_empty=40  size=100000  slots=131071  load=0.763  bytes_per_elem=347.34  heap_bytes=34734072
-boost int-b256 100000  sizeof_empty=48  size=100000  slots=122879  load=0.814  bytes_per_elem=325.71  heap_bytes=32571384
-ankerl int-b256 100000  sizeof_empty=64  size=100000  slots=131072  load=0.763  bytes_per_elem=356.56  heap_bytes=35655688
-ct int-b256 1000000  sizeof_empty=32  size=1000000  slots=2097152  load=0.477  bytes_per_elem=555.75  heap_bytes=555749368
-std int-b256 1000000  sizeof_empty=56  size=1000000  slots=1447153  load=0.691  bytes_per_elem=299.58  heap_bytes=299579400
-absl int-b256 1000000  sizeof_empty=40  size=1000000  slots=2097151  load=0.477  bytes_per_elem=555.75  heap_bytes=555745272
-boost int-b256 1000000  sizeof_empty=48  size=1000000  slots=1966079  load=0.509  bytes_per_elem=521.14  heap_bytes=521142264
-ankerl int-b256 1000000  sizeof_empty=64  size=1000000  slots=2097152  load=0.477  bytes_per_elem=293.61  heap_bytes=293605384
-ct s8-int 100000  sizeof_empty=32  size=100000  slots=262144  load=0.381  bytes_per_elem=86.55  heap_bytes=8654840
-std s8-int 100000  sizeof_empty=56  size=100000  slots=172933  load=0.578  bytes_per_elem=77.84  heap_bytes=7784472
-absl s8-int 100000  sizeof_empty=40  size=100000  slots=131071  load=0.763  bytes_per_elem=53.74  heap_bytes=5373944
-boost s8-int 100000  sizeof_empty=48  size=100000  slots=122879  load=0.814  bytes_per_elem=50.50  heap_bytes=5050360
-ankerl s8-int 100000  sizeof_empty=64  size=100000  slots=131072  load=0.763  bytes_per_elem=62.96  heap_bytes=6295560
-ct s8-int 1000000  sizeof_empty=32  size=1000000  slots=2097152  load=0.477  bytes_per_elem=69.21  heap_bytes=69210104
-std s8-int 1000000  sizeof_empty=56  size=1000000  slots=1447153  load=0.691  bytes_per_elem=75.58  heap_bytes=75579416
-absl s8-int 1000000  sizeof_empty=40  size=1000000  slots=2097151  load=0.477  bytes_per_elem=85.98  heap_bytes=85983224
-boost s8-int 1000000  sizeof_empty=48  size=1000000  slots=1966079  load=0.509  bytes_per_elem=80.74  heap_bytes=80744440
-ankerl s8-int 1000000  sizeof_empty=64  size=1000000  slots=2097152  load=0.477  bytes_per_elem=58.72  heap_bytes=58724360
-ct s40-int 100000  sizeof_empty=32  size=100000  slots=262144  load=0.381  bytes_per_elem=150.55  heap_bytes=15054936
-std s40-int 100000  sizeof_empty=56  size=100000  slots=172933  load=0.578  bytes_per_elem=141.84  heap_bytes=14184472
-absl s40-int 100000  sizeof_empty=40  size=100000  slots=131071  load=0.763  bytes_per_elem=117.74  heap_bytes=11773960
-boost s40-int 100000  sizeof_empty=48  size=100000  slots=122879  load=0.814  bytes_per_elem=114.50  heap_bytes=11450392
-ankerl s40-int 100000  sizeof_empty=64  size=100000  slots=131072  load=0.763  bytes_per_elem=126.96  heap_bytes=12695816
-ct s40-int 1000000  sizeof_empty=32  size=1000000  slots=2097152  load=0.477  bytes_per_elem=133.21  heap_bytes=133210200
-std s40-int 1000000  sizeof_empty=56  size=1000000  slots=1447153  load=0.691  bytes_per_elem=139.58  heap_bytes=139579416
-absl s40-int 1000000  sizeof_empty=40  size=1000000  slots=2097151  load=0.477  bytes_per_elem=149.98  heap_bytes=149983240
-boost s40-int 1000000  sizeof_empty=48  size=1000000  slots=1966079  load=0.509  bytes_per_elem=144.74  heap_bytes=144744472
-ankerl s40-int 1000000  sizeof_empty=64  size=1000000  slots=2097152  load=0.477  bytes_per_elem=122.72  heap_bytes=122724680
-ctree int 100000  sizeof_empty=104  bytes_per_elem=41.22  allocs=251
-cflat int 100000  sizeof_empty=24  bytes_per_elem=10.53  allocs=15
-stdmap int 100000  sizeof_empty=48  bytes_per_elem=48.00  allocs=100000
-btree int 100000  sizeof_empty=24  bytes_per_elem=11.06  allocs=3943
-bflat int 100000  sizeof_empty=24  bytes_per_elem=8.19  allocs=26
-ctree s20 100000  sizeof_empty=104  bytes_per_elem=65.29  allocs=398
-cflat s20 100000  sizeof_empty=24  bytes_per_elem=41.98  allocs=15
-stdmap s20 100000  sizeof_empty=48  bytes_per_elem=112.00  allocs=200000
-btree s20 100000  sizeof_empty=24  bytes_per_elem=91.06  allocs=121064
-bflat s20 100000  sizeof_empty=24  bytes_per_elem=72.80  allocs=100026
+layout	ct	int-int	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=18.45	heap_bytes=18448
+layout	std	int-int	1000	sizeof_empty=56	size=1000	slots=1109	load=0.902	bytes_per_elem=40.91	heap_bytes=40912
+layout	absl	int-int	1000	sizeof_empty=40	size=1000	slots=2047	load=0.489	bytes_per_elem=18.45	heap_bytes=18448
+layout	boost	int-int	1000	sizeof_empty=48	size=1000	slots=1919	load=0.521	bytes_per_elem=17.42	heap_bytes=17424
+layout	ankerl	int-int	1000	sizeof_empty=64	size=1000	slots=2048	load=0.488	bytes_per_elem=24.61	heap_bytes=24608
+layout	ct	int-int	100000	sizeof_empty=32	size=100000	slots=262144	load=0.381	bytes_per_elem=23.63	heap_bytes=2363384
+layout	std	int-int	100000	sizeof_empty=56	size=100000	slots=172933	load=0.578	bytes_per_elem=45.85	heap_bytes=4584520
+layout	absl	int-int	100000	sizeof_empty=40	size=100000	slots=131071	load=0.763	bytes_per_elem=11.84	heap_bytes=1183736
+layout	boost	int-int	100000	sizeof_empty=48	size=100000	slots=122879	load=0.814	bytes_per_elem=11.18	heap_bytes=1118200
+layout	ankerl	int-int	100000	sizeof_empty=64	size=100000	slots=131072	load=0.763	bytes_per_elem=21.05	heap_bytes=2105328
+layout	ct	int-int	1000000	sizeof_empty=32	size=1000000	slots=2097152	load=0.477	bytes_per_elem=18.88	heap_bytes=18878456
+layout	std	int-int	1000000	sizeof_empty=56	size=1000000	slots=1447153	load=0.691	bytes_per_elem=43.58	heap_bytes=43579464
+layout	absl	int-int	1000000	sizeof_empty=40	size=1000000	slots=2097151	load=0.477	bytes_per_elem=18.88	heap_bytes=18878456
+layout	boost	int-int	1000000	sizeof_empty=48	size=1000000	slots=1966079	load=0.509	bytes_per_elem=17.83	heap_bytes=17829880
+layout	ankerl	int-int	1000000	sizeof_empty=64	size=1000000	slots=2097152	load=0.477	bytes_per_elem=25.17	heap_bytes=25174000
+layout	ct	int-p16	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=51.22	heap_bytes=51216
+layout	std	int-p16	1000	sizeof_empty=56	size=1000	slots=1109	load=0.902	bytes_per_elem=56.90	heap_bytes=56896
+layout	absl	int-p16	1000	sizeof_empty=40	size=1000	slots=2047	load=0.489	bytes_per_elem=51.20	heap_bytes=51200
+layout	boost	int-p16	1000	sizeof_empty=48	size=1000	slots=1919	load=0.521	bytes_per_elem=48.13	heap_bytes=48128
+layout	ankerl	int-p16	1000	sizeof_empty=64	size=1000	slots=2048	load=0.488	bytes_per_elem=40.99	heap_bytes=40992
+layout	ct	int-p16	100000	sizeof_empty=32	size=100000	slots=262144	load=0.381	bytes_per_elem=65.58	heap_bytes=6557688
+layout	std	int-p16	100000	sizeof_empty=56	size=100000	slots=172933	load=0.578	bytes_per_elem=61.84	heap_bytes=6184472
+layout	absl	int-p16	100000	sizeof_empty=40	size=100000	slots=131071	load=0.763	bytes_per_elem=32.81	heap_bytes=3280888
+layout	boost	int-p16	100000	sizeof_empty=48	size=100000	slots=122879	load=0.814	bytes_per_elem=30.84	heap_bytes=3084280
+layout	ankerl	int-p16	100000	sizeof_empty=64	size=100000	slots=131072	load=0.763	bytes_per_elem=42.02	heap_bytes=4202480
+layout	ct	int-p16	1000000	sizeof_empty=32	size=1000000	slots=2097152	load=0.477	bytes_per_elem=52.43	heap_bytes=52432888
+layout	std	int-p16	1000000	sizeof_empty=56	size=1000000	slots=1447153	load=0.691	bytes_per_elem=59.58	heap_bytes=59579416
+layout	absl	int-p16	1000000	sizeof_empty=40	size=1000000	slots=2097151	load=0.477	bytes_per_elem=52.43	heap_bytes=52432888
+layout	boost	int-p16	1000000	sizeof_empty=48	size=1000000	slots=1966079	load=0.509	bytes_per_elem=49.29	heap_bytes=49287160
+layout	ankerl	int-p16	1000000	sizeof_empty=64	size=1000000	slots=2097152	load=0.477	bytes_per_elem=41.95	heap_bytes=41951216
+layout	ct	int-b256	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=290.45	heap_bytes=290448
+layout	std	int-b256	1000	sizeof_empty=56	size=1000	slots=1109	load=0.902	bytes_per_elem=296.90	heap_bytes=296896
+layout	absl	int-b256	1000	sizeof_empty=40	size=1000	slots=2047	load=0.489	bytes_per_elem=544.76	heap_bytes=544760
+layout	boost	int-b256	1000	sizeof_empty=48	size=1000	slots=1919	load=0.521	bytes_per_elem=511.99	heap_bytes=511992
+layout	ankerl	int-b256	1000	sizeof_empty=64	size=1000	slots=2048	load=0.488	bytes_per_elem=290.82	heap_bytes=290824
+layout	ct	int-b256	100000	sizeof_empty=32	size=100000	slots=262144	load=0.381	bytes_per_elem=295.63	heap_bytes=29563384
+layout	std	int-b256	100000	sizeof_empty=56	size=100000	slots=172933	load=0.578	bytes_per_elem=301.84	heap_bytes=30184456
+layout	absl	int-b256	100000	sizeof_empty=40	size=100000	slots=131071	load=0.763	bytes_per_elem=347.34	heap_bytes=34734072
+layout	boost	int-b256	100000	sizeof_empty=48	size=100000	slots=122879	load=0.814	bytes_per_elem=325.71	heap_bytes=32571384
+layout	ankerl	int-b256	100000	sizeof_empty=64	size=100000	slots=131072	load=0.763	bytes_per_elem=356.56	heap_bytes=35655688
+layout	ct	int-b256	1000000	sizeof_empty=32	size=1000000	slots=2097152	load=0.477	bytes_per_elem=290.88	heap_bytes=290878456
+layout	std	int-b256	1000000	sizeof_empty=56	size=1000000	slots=1447153	load=0.691	bytes_per_elem=299.58	heap_bytes=299579400
+layout	absl	int-b256	1000000	sizeof_empty=40	size=1000000	slots=2097151	load=0.477	bytes_per_elem=555.75	heap_bytes=555745272
+layout	boost	int-b256	1000000	sizeof_empty=48	size=1000000	slots=1966079	load=0.509	bytes_per_elem=521.14	heap_bytes=521142264
+layout	ankerl	int-b256	1000000	sizeof_empty=64	size=1000000	slots=2097152	load=0.477	bytes_per_elem=293.61	heap_bytes=293605384
+layout	ct	s8-int	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=67.60	heap_bytes=67600
+layout	std	s8-int	1000	sizeof_empty=56	size=1000	slots=1109	load=0.902	bytes_per_elem=72.90	heap_bytes=72896
+layout	absl	s8-int	1000	sizeof_empty=40	size=1000	slots=2047	load=0.489	bytes_per_elem=83.95	heap_bytes=83952
+layout	boost	s8-int	1000	sizeof_empty=48	size=1000	slots=1919	load=0.521	bytes_per_elem=78.85	heap_bytes=78848
+layout	ankerl	s8-int	1000	sizeof_empty=64	size=1000	slots=2048	load=0.488	bytes_per_elem=57.38	heap_bytes=57376
+layout	ct	s8-int	100000	sizeof_empty=32	size=100000	slots=262144	load=0.381	bytes_per_elem=86.55	heap_bytes=8654840
+layout	std	s8-int	100000	sizeof_empty=56	size=100000	slots=172933	load=0.578	bytes_per_elem=77.84	heap_bytes=7784472
+layout	absl	s8-int	100000	sizeof_empty=40	size=100000	slots=131071	load=0.763	bytes_per_elem=53.74	heap_bytes=5373944
+layout	boost	s8-int	100000	sizeof_empty=48	size=100000	slots=122879	load=0.814	bytes_per_elem=50.50	heap_bytes=5050360
+layout	ankerl	s8-int	100000	sizeof_empty=64	size=100000	slots=131072	load=0.763	bytes_per_elem=62.96	heap_bytes=6295560
+layout	ct	s8-int	1000000	sizeof_empty=32	size=1000000	slots=2097152	load=0.477	bytes_per_elem=69.21	heap_bytes=69210104
+layout	std	s8-int	1000000	sizeof_empty=56	size=1000000	slots=1447153	load=0.691	bytes_per_elem=75.58	heap_bytes=75579416
+layout	absl	s8-int	1000000	sizeof_empty=40	size=1000000	slots=2097151	load=0.477	bytes_per_elem=85.98	heap_bytes=85983224
+layout	boost	s8-int	1000000	sizeof_empty=48	size=1000000	slots=1966079	load=0.509	bytes_per_elem=80.74	heap_bytes=80744440
+layout	ankerl	s8-int	1000000	sizeof_empty=64	size=1000000	slots=2097152	load=0.477	bytes_per_elem=58.72	heap_bytes=58724360
+layout	ct	s20-int	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=67.60	heap_bytes=67600
+layout	std	s20-int	1000	sizeof_empty=56	size=1000	slots=1109	load=0.902	bytes_per_elem=104.91	heap_bytes=104912
+layout	absl	s20-int	1000	sizeof_empty=40	size=1000	slots=2047	load=0.489	bytes_per_elem=115.97	heap_bytes=115968
+layout	boost	s20-int	1000	sizeof_empty=48	size=1000	slots=1919	load=0.521	bytes_per_elem=110.86	heap_bytes=110864
+layout	ankerl	s20-int	1000	sizeof_empty=64	size=1000	slots=2048	load=0.488	bytes_per_elem=89.46	heap_bytes=89456
+layout	ct	s20-int	100000	sizeof_empty=32	size=100000	slots=262144	load=0.381	bytes_per_elem=86.55	heap_bytes=8654840
+layout	std	s20-int	100000	sizeof_empty=56	size=100000	slots=172933	load=0.578	bytes_per_elem=109.85	heap_bytes=10984520
+layout	absl	s20-int	100000	sizeof_empty=40	size=100000	slots=131071	load=0.763	bytes_per_elem=85.74	heap_bytes=8573960
+layout	boost	s20-int	100000	sizeof_empty=48	size=100000	slots=122879	load=0.814	bytes_per_elem=82.50	heap_bytes=8250376
+layout	ankerl	s20-int	100000	sizeof_empty=64	size=100000	slots=131072	load=0.763	bytes_per_elem=94.96	heap_bytes=9495720
+layout	ct	s20-int	1000000	sizeof_empty=32	size=1000000	slots=2097152	load=0.477	bytes_per_elem=69.21	heap_bytes=69210104
+layout	std	s20-int	1000000	sizeof_empty=56	size=1000000	slots=1447153	load=0.691	bytes_per_elem=107.58	heap_bytes=107579464
+layout	absl	s20-int	1000000	sizeof_empty=40	size=1000000	slots=2097151	load=0.477	bytes_per_elem=117.98	heap_bytes=117983240
+layout	boost	s20-int	1000000	sizeof_empty=48	size=1000000	slots=1966079	load=0.509	bytes_per_elem=112.74	heap_bytes=112744456
+layout	ankerl	s20-int	1000000	sizeof_empty=64	size=1000000	slots=2097152	load=0.477	bytes_per_elem=90.72	heap_bytes=90724568
+layout	ct	s40-int	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=131.66	heap_bytes=131664
+layout	std	s40-int	1000	sizeof_empty=56	size=1000	slots=1109	load=0.902	bytes_per_elem=136.90	heap_bytes=136896
+layout	absl	s40-int	1000	sizeof_empty=40	size=1000	slots=2047	load=0.489	bytes_per_elem=147.97	heap_bytes=147968
+layout	boost	s40-int	1000	sizeof_empty=48	size=1000	slots=1919	load=0.521	bytes_per_elem=142.88	heap_bytes=142880
+layout	ankerl	s40-int	1000	sizeof_empty=64	size=1000	slots=2048	load=0.488	bytes_per_elem=121.50	heap_bytes=121504
+layout	ct	s40-int	100000	sizeof_empty=32	size=100000	slots=262144	load=0.381	bytes_per_elem=150.55	heap_bytes=15054936
+layout	std	s40-int	100000	sizeof_empty=56	size=100000	slots=172933	load=0.578	bytes_per_elem=141.84	heap_bytes=14184472
+layout	absl	s40-int	100000	sizeof_empty=40	size=100000	slots=131071	load=0.763	bytes_per_elem=117.74	heap_bytes=11773960
+layout	boost	s40-int	100000	sizeof_empty=48	size=100000	slots=122879	load=0.814	bytes_per_elem=114.50	heap_bytes=11450392
+layout	ankerl	s40-int	100000	sizeof_empty=64	size=100000	slots=131072	load=0.763	bytes_per_elem=126.96	heap_bytes=12695816
+layout	ct	s40-int	1000000	sizeof_empty=32	size=1000000	slots=2097152	load=0.477	bytes_per_elem=133.21	heap_bytes=133210200
+layout	std	s40-int	1000000	sizeof_empty=56	size=1000000	slots=1447153	load=0.691	bytes_per_elem=139.58	heap_bytes=139579416
+layout	absl	s40-int	1000000	sizeof_empty=40	size=1000000	slots=2097151	load=0.477	bytes_per_elem=149.98	heap_bytes=149983240
+layout	boost	s40-int	1000000	sizeof_empty=48	size=1000000	slots=1966079	load=0.509	bytes_per_elem=144.74	heap_bytes=144744472
+layout	ankerl	s40-int	1000000	sizeof_empty=64	size=1000000	slots=2097152	load=0.477	bytes_per_elem=122.72	heap_bytes=122724680
+growth	ct	int	cap: 8 16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536	reallocs=18	final_cap=1048576	final_size=1000000
+growth	std	int	cap: 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192	reallocs=21	final_cap=1048576	final_size=1000000
+growth	boost	int	cap: 1 2 3 4 6 9 14 22 35 56 89 142 227 363	reallocs=31	final_cap=1068729	final_size=1000000
+growth	ct	p16	cap: 8 16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536	reallocs=18	final_cap=1048576	final_size=1000000
+growth	std	p16	cap: 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192	reallocs=21	final_cap=1048576	final_size=1000000
+growth	boost	p16	cap: 1 2 3 4 6 9 14 22 35 56 89 142 227 363	reallocs=31	final_cap=1068729	final_size=1000000
+growth	ct	b256	cap: 8 16 32 64 128 256 512 1024 2048 4096 8192 16384 32768 65536	reallocs=18	final_cap=1048576	final_size=1000000
+growth	std	b256	cap: 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 8192	reallocs=21	final_cap=1048576	final_size=1000000
+growth	boost	b256	cap: 1 2 3 4 6 9 14 22 35 56 89 142 227 363	reallocs=31	final_cap=1068729	final_size=1000000
+layout	ctree	int	100000	sizeof_empty=104	bytes_per_elem=41.22	allocs=251
+layout	cflat	int	100000	sizeof_empty=24	bytes_per_elem=10.53	allocs=15
+layout	stdmap	int	100000	sizeof_empty=48	bytes_per_elem=48.00	allocs=100000
+layout	btree	int	100000	sizeof_empty=24	bytes_per_elem=11.06	allocs=3943
+layout	bflat	int	100000	sizeof_empty=24	bytes_per_elem=8.19	allocs=26
+layout	ctree	s20	100000	sizeof_empty=104	bytes_per_elem=65.29	allocs=398
+layout	cflat	s20	100000	sizeof_empty=24	bytes_per_elem=41.98	allocs=15
+layout	stdmap	s20	100000	sizeof_empty=48	bytes_per_elem=112.00	allocs=200000
+layout	btree	s20	100000	sizeof_empty=24	bytes_per_elem=91.06	allocs=121064
+layout	bflat	s20	100000	sizeof_empty=24	bytes_per_elem=72.80	allocs=100026
 ```
 
-Crescimento do `Vector` (capacidades por que passa ao fazer `push_back` ate 1e6): ct 8, 16, 32, ... (fator 2, 18 realocacoes, primeiro bloco de 8 elementos); `std::vector` 1, 2, 4, ... (fator 2, 21 realocacoes); `boost::container::vector` 1, 2, 3, 4, 6, 9, 14, ... (fator 1,5 a 1,6, 31 realocacoes). `sizeof` do contentor vazio: `Vector` 24 em todos (tres ponteiros), `HashMap` da ct 32 contra 56 do `std::unordered_map`, 40 do absl, 48 do boost, 64 da ankerl; `String` 24 (SSO de 23) contra 32 (SSO de 15) do libstdc++; `TreeMap` 104, `FlatMap` 24, contra 48 do `std::map`.
+Crescimento do `Vector` (capacidades por que passa ao fazer `push_back` ate 1e6): ct 8, 16, 32, ... (fator 2, 18 realocacoes, primeiro bloco de 8 elementos); `std::vector` 1, 2, 4, ... (fator 2, 21 realocacoes); `boost::container::vector` 1, 2, 3, 4, 6, 9, 14, ... (fator 1,5 a 1,6, 31 realocacoes). `sizeof` do contentor vazio: `Vector` 24 em todos (tres ponteiros), `HashMap` da ct 32 contra 56 do `std::unordered_map`, 40 do absl, 48 do boost, 64 da ankerl (em depuracao, com `CT_DEBUG_ITERATORS`, o `HashMap` ganha 8 bytes); `String` 24 (SSO de 23) contra 32 (SSO de 15) do libstdc++; `TreeMap` 104, `FlatMap` 24, contra 48 do `std::map`.
 
 Alocacoes para construir 1e5 `int` por `push_back`: ct 15, std 18, boost 26; um `unordered_map<int,int>` de 1e5 faz 100014 contra 15 da ct, e o pico de memoria de uma construcao de `Vector<int>` e 524 KB (ct, que usa `realloc`) contra 786 KB (std).
 
-
-#### Memoria na construcao (bytes vivos por elemento, alocacoes por construcao, pico por elemento)
+#### Memoria na construcao (bytes vivos por elemento, alocacoes por construcao, pico por elemento; a ct de N = 1e5 e desta ronda, as outras linhas da ronda 1)
 
 | familia | cenario | tipo | N | impl | vivo B/elem | pico B/elem | alocacoes | RSS KiB |
 |---|---|---|---:|---|---:|---:|---:|---:|
-| vector | build | int | 100000 | ct | 5.28 | 5.28 | 15 | 44528 |
-| vector | build | int | 100000 | std | 5.28 | 7.95 | 18 | 44592 |
-| vector | build | int | 100000 | boost | 4.10 | 6.68 | 26 | 44784 |
-| vector | build_reserved | int | 100000 | ct | 4.01 | 4.01 | 1 | 44520 |
-| vector | build_reserved | int | 100000 | std | 4.01 | 4.01 | 1 | 44616 |
-| vector | build_reserved | int | 100000 | boost | 4.01 | 4.01 | 1 | 44688 |
-| vector | build | p16 | 100000 | ct | 21.01 | 21.01 | 15 | 44804 |
-| vector | build | p16 | 100000 | std | 21.01 | 31.54 | 18 | 44796 |
-| vector | build | p16 | 100000 | boost | 16.34 | 26.54 | 26 | 44496 |
-| vector | build_reserved | p16 | 100000 | ct | 16.02 | 16.02 | 1 | 44716 |
-| vector | build_reserved | p16 | 100000 | std | 16.02 | 16.02 | 1 | 44544 |
-| vector | build_reserved | p16 | 100000 | boost | 16.02 | 16.02 | 1 | 44664 |
-| vector | build | mo | 100000 | ct | 31.50 | 47.27 | 15 | 44672 |
-| vector | build | mo | 100000 | std | 31.50 | 47.27 | 18 | 44580 |
-| vector | build | mo | 100000 | boost | 24.49 | 39.81 | 26 | 44300 |
-| vector | build_reserved | mo | 100000 | ct | 24.00 | 24.00 | 1 | 44844 |
-| vector | build_reserved | mo | 100000 | std | 24.00 | 24.00 | 1 | 44848 |
-| vector | build_reserved | mo | 100000 | boost | 24.00 | 24.00 | 1 | 44392 |
-| map | build | int-int | 100000 | ct | 23.63 | 35.47 | 15 | 44844 |
-| map | build | int-int | 100000 | std | 45.85 | 47.96 | 100014 | 45052 |
-| map | build | int-int | 100000 | absl | 11.84 | 17.78 | 17 | 44744 |
-| map | build | int-int | 100000 | boost | 11.18 | 16.79 | 13 | 44452 |
-| map | build | int-int | 100000 | ankerl | 21.05 | 26.34 | 34 | 44716 |
-| map | build | s8-int | 100000 | ct | 86.55 | 129.84 | 15 | 53480 |
-| map | build | s8-int | 100000 | std | 77.84 | 77.84 | 100014 | 48828 |
-| map | build | s8-int | 100000 | absl | 53.74 | 80.61 | 17 | 49548 |
-| map | build | s8-int | 100000 | boost | 50.50 | 75.78 | 13 | 48840 |
-| map | build | s8-int | 100000 | ankerl | 62.96 | 89.21 | 34 | 47444 |
-| map | build | s40-int | 100000 | ct | 150.55 | 192.76 | 100015 | 65496 |
-| map | build | s40-int | 100000 | std | 141.84 | 141.84 | 200014 | 61092 |
-| map | build | s40-int | 100000 | absl | 117.74 | 117.74 | 100017 | 58708 |
-| map | build | s40-int | 100000 | boost | 114.50 | 114.50 | 100013 | 58224 |
-| map | build | s40-int | 100000 | ankerl | 126.96 | 131.16 | 100034 | 58328 |
-| string | append_char | char | 100000 | ct | 1.88 | 1.88 | 13 | 44824 |
-| string | append_char | char | 100000 | std | 1.23 | 1.84 | 13 | 44468 |
-| misc | push_back | int | 100000 | ct | 5.28 | 5.28 | 15 | 44420 |
-| misc | push_back | int | 100000 | std | 4.23 | 4.23 | 790 | 44780 |
-| misc | push_back | int | 100000 | boost | 4.23 | 4.23 | 790 | 44904 |
-| misc | push_back | p16 | 100000 | ct | 21.01 | 21.01 | 15 | 44520 |
-| misc | push_back | p16 | 100000 | std | 16.91 | 16.91 | 3136 | 44452 |
-| misc | push_back | p16 | 100000 | boost | 16.91 | 16.91 | 3136 | 44680 |
-| misc | build | int | 10000 | ctree | 42.07 | 42.07 | 28 | 44416 |
-| misc | build | int | 10000 | cflat | 13.52 | 13.52 | 12 | 44492 |
-| misc | build | int | 10000 | stdmap | 48.00 | 48.00 | 10000 | 44536 |
-| misc | build | int | 10000 | btree | 11.10 | 11.10 | 400 | 44472 |
-| misc | build | int | 10000 | bflat | 12.44 | 20.22 | 22 | 44736 |
+| vector | build | int | 1000 | ct | 4.11 | 4.11 | 8 | 7088 |
+| vector | build | int | 100000 | ct | 5.28 | 5.28 | 15 | 44816 |
+| vector | build_reserved | int | 1000 | ct | 4.02 | 4.02 | 1 | 7276 |
+| vector | build_reserved | int | 100000 | ct | 4.00 | 4.00 | 1 | 7136 |
+| vector | build | int | 10000000 | ct | 6.71 | 6.71 | 22 | 43244 |
+| vector | build_reserved | int | 10000000 | ct | 4.00 | 4.00 | 1 | 43028 |
+| vector | build | p16 | 1000 | ct | 16.40 | 16.40 | 8 | 6892 |
+| vector | build | p16 | 100000 | ct | 21.01 | 21.01 | 15 | 44380 |
+| vector | build_reserved | p16 | 1000 | ct | 16.02 | 16.02 | 1 | 7120 |
+| vector | build_reserved | p16 | 100000 | ct | 16.00 | 16.00 | 1 | 7104 |
+| vector | build | p16 | 10000000 | ct | 26.84 | 26.84 | 22 | 160344 |
+| vector | build_reserved | p16 | 10000000 | ct | 16.00 | 16.00 | 1 | 160004 |
+| vector | build | mo | 1000 | ct | 24.59 | 36.90 | 8 | 7108 |
+| vector | build | mo | 100000 | ct | 31.50 | 47.27 | 15 | 44808 |
+| vector | build_reserved | mo | 1000 | ct | 24.02 | 24.02 | 1 | 7012 |
+| vector | build_reserved | mo | 100000 | ct | 24.00 | 24.00 | 1 | 7124 |
+| vector | build | mo | 10000000 | ct | 40.27 | 60.40 | 22 | 397320 |
+| vector | build_reserved | mo | 10000000 | ct | 24.00 | 24.00 | 1 | 238348 |
+| vector | build | b256 | 1000 | ct | 262.16 | 262.16 | 8 | 7148 |
+| vector | build | b256 | 100000 | ct | 335.59 | 335.59 | 15 | 28916 |
+| vector | build_reserved | b256 | 1000 | ct | 256.02 | 256.02 | 1 | 7212 |
+| vector | build_reserved | b256 | 100000 | ct | 256.00 | 256.00 | 1 | 29080 |
+| vector | build | b256 | 1000000 | ct | 268.44 | 268.44 | 18 | 253864 |
+| vector | build_reserved | b256 | 1000000 | ct | 256.00 | 256.00 | 1 | 254016 |
+| map | build | int-int | 100000 | ct | 23.63 | 35.47 | 15 | 45352 |
+| map | build | int-p16 | 100000 | ct | 65.54 | 98.30 | 15 | 17320 |
+| map | build | int-mo | 100000 | ct | 86.51 | 129.76 | 15 | 21452 |
+| map | build | int-b256 | 100000 | ct | 295.63 | 302.86 | 100015 | 68000 |
+| map | build | s8-int | 100000 | ct | 86.55 | 129.84 | 15 | 54072 |
+| map | build | s20-int | 100000 | ct | 86.55 | 129.84 | 15 | 53448 |
+| map | build | s40-int | 100000 | ct | 150.55 | 192.76 | 100015 | 66144 |
+| string | append_char | char | 100000 | ct | 1.88 | 1.88 | 13 | 44904 |
+| misc | push_back | int | 1000 | ct | 4.11 | 4.11 | 8 | 7260 |
+| misc | push_back | int | 100000 | ct | 5.28 | 5.28 | 15 | 44792 |
+| misc | push_back | p16 | 1000 | ct | 16.40 | 16.40 | 8 | 7120 |
+| misc | push_back | p16 | 100000 | ct | 21.01 | 21.01 | 15 | 44768 |
+| misc | push_back | b256 | 1000 | ct | 262.16 | 262.16 | 8 | 6796 |
+| misc | push_back | b256 | 100000 | ct | 335.59 | 335.59 | 15 | 29252 |
+| misc | push_back | int | 1000000 | ct | 4.19 | 4.19 | 18 | 7928 |
+| misc | build | int | 1000 | ctree | 50.53 | 50.53 | 4 | 6744 |
+| misc | build | int | 1000 | cflat | 8.21 | 8.21 | 8 | 7092 |
+| misc | build | int | 100000 | ctree | 41.22 | 41.22 | 251 | 8616 |
+| misc | build | int | 100000 | cflat | 10.49 | 10.49 | 15 | 7132 |
+| misc | build | int | 1000000 | ctree | 41.15 | 41.15 | 2455 | 51848 |
+| misc | build | s20 | 1000 | ctree | 66.83 | 66.83 | 5 | 7220 |
+| misc | build | s20 | 1000 | cflat | 32.78 | 49.18 | 8 | 7212 |
+| misc | build | s20 | 100000 | ctree | 65.29 | 65.29 | 398 | 15376 |
+| misc | build | int | 10000 | ctree | 42.07 | 42.07 | 28 | 44920 |
+| misc | build | int | 10000 | cflat | 13.52 | 13.52 | 12 | 44808 |
 
 ### 3.4 Custo de compilacao (uma unidade com 10 tipos por contentor)
 
@@ -499,210 +643,231 @@ Alocacoes para construir 1e5 `int` por `push_back`: ct 15, std 18, boost 26; um 
 
 Tempo em segundos de relogio com a maquina carregada (por isso mais alto que numa maquina livre, onde a unidade da ct fez 4,0 s e a do std 6,4 s, e a razao e a mesma), memoria de pico do compilador, tamanho do ficheiro objeto. `syntax` e `-fsyntax-only` (so analise e instanciacao), `obj` e `-c`. A unidade instancia `Vector` e `Deque` com 10 tipos, `HashMap<int, T>` e o mapa ordenado com 10 tipos, o conjunto de hash com 6 tipos, mais `Function` e a fila de prioridade; as colunas `absl` e `boost` so tem os seus mapas e vetores. `std` nao tem mapa de vetor plano.
 
-### 3.5 Antes e depois das correcoes (so ct)
 
-Instrucoes (callgrind) e bytes pedidos ao malloc, o que e deterministico; o tempo esta na seccao 4.
+Ronda 2 (a mesma unidade, as quatro bibliotecas outra vez, com a ct de agora, que tem o `numconv.hpp`, o `HashMap` e o `HashSet` novos e o `Vector` com duas funcoes a mais):
 
-
-#### ct: instrucoes por operacao
-
-| familia | cenario | tipo | N | antes | depois | variacao |
-|---|---|---|---:|---:|---:|---:|
-| vector | build_reserved | int | 100000 | 11.02 | 12.02 | +9.1% |
-| vector | build_reserved | p16 | 100000 | 13.02 | 14.02 | +7.7% |
-| map | iterate | int-int | 100000 | 23.37 | 17.43 | -25.4% |
-| map | copy | int-int | 100000 | 59.03 | 23.00 | -61.0% |
-| map | build | s8-int | 100000 | 398.85 | 391.77 | -1.8% |
-| map | erase | s8-int | 100000 | 151.47 | 153.35 | +1.2% |
-| map | iterate | s8-int | 100000 | 23.37 | 18.75 | -19.8% |
-| map | copy | s8-int | 100000 | 145.77 | 60.73 | -58.3% |
-| map | build | s40-int | 100000 | 928.27 | 910.18 | -1.9% |
-| map | erase | s40-int | 100000 | 355.36 | 360.26 | +1.4% |
-| map | iterate | s40-int | 100000 | 23.37 | 18.75 | -19.8% |
-| map | copy | s40-int | 100000 | 612.60 | 483.75 | -21.0% |
-| string | create | len8 | 100000 | 50.02 | 52.02 | +4.0% |
-| string | create | len16 | 100000 | 48.02 | 50.02 | +4.2% |
-| string | create | len24 | 100000 | 272.02 | 262.02 | -3.7% |
-| string | create | len40 | 100000 | 273.02 | 263.02 | -3.7% |
-| string | concat | len30 | 100000 | 634.02 | 629.02 | -0.8% |
-| string | int2s | full | 100000 | 189.79 | 185.62 | -2.2% |
-| string | s2int | full | 100000 | 291.18 | 175.26 | -39.8% |
-| string | s2f32 | f | 100000 | 663.31 | 659.31 | -0.6% |
-| sort | ct:sort | int.random | 100000 | 158.30 | 163.14 | +3.1% |
-| sort | ct:stable | int.random | 100000 | 233.12 | 221.59 | -4.9% |
-| sort | ct:sort | p16.random | 100000 | 165.43 | 167.10 | +1.0% |
-| sort | ct:stable | p16.random | 100000 | 227.84 | 264.68 | +16.2% |
-| sort | ct:sort | int.sorted | 100000 | 109.62 | 7.02 | -93.6% |
-| sort | ct:stable | int.sorted | 100000 | 109.72 | 91.95 | -16.2% |
-| sort | ct:sort | p16.sorted | 100000 | 109.79 | 7.02 | -93.6% |
-| sort | ct:stable | p16.sorted | 100000 | 108.81 | 139.58 | +28.3% |
-| sort | ct:sort | int.reversed | 100000 | 288.29 | 10.02 | -96.5% |
-| sort | ct:stable | int.reversed | 100000 | 219.02 | 201.43 | -8.0% |
-| sort | ct:sort | p16.reversed | 100000 | 290.30 | 10.02 | -96.5% |
-| sort | ct:stable | p16.reversed | 100000 | 237.96 | 293.67 | +23.4% |
-| sort | ct:sort | int.dups | 100000 | 240.96 | 134.81 | -44.1% |
-| sort | ct:stable | int.dups | 100000 | 226.07 | 213.93 | -5.4% |
-| sort | ct:sort | p16.dups | 100000 | 247.94 | 134.75 | -45.7% |
-| sort | ct:stable | p16.dups | 100000 | 221.09 | 257.46 | +16.5% |
-| misc | construct_big | int(int) | 100000 | 273.02 | 269.02 | -1.5% |
-| misc | copy | int(int) | 100000 | 302.02 | 298.02 | -1.3% |
-
-#### ct: bytes pedidos ao malloc por execucao
-
-| familia | cenario | tipo | N | antes | depois | variacao |
-|---|---|---|---:|---:|---:|---:|
-| map | build | s40-int | 100000 | 22201096.00 | 21400976.00 | -3.6% |
-| map | copy | s40-int | 100000 | 13550760.00 | 12750752.00 | -5.9% |
-| string | create | len24 | 100000 | 3300000.00 | 2500000.00 | -24.2% |
-| string | create | len40 | 100000 | 4900000.00 | 4100000.00 | -16.3% |
-| string | concat | len30 | 100000 | 5500000.00 | 4700000.00 | -14.5% |
-| misc | fifo | int | 100000 | 1032.00 | 992.00 | -3.9% |
-| misc | fifo | p16 | 100000 | 4008.00 | 3968.00 | -1.0% |
-| misc | construct_big | int(int) | 100000 | 7200000.00 | 6400000.00 | -11.1% |
-| misc | copy | int(int) | 100000 | 7200000.00 | 6400000.00 | -11.1% |
-
-#### ct: alocacoes por execucao
-
-| familia | cenario | tipo | N | antes | depois | variacao |
-|---|---|---|---:|---:|---:|---:|
-
-## 4. Tempo antes e depois das correcoes (so ct, ns por operacao, N = 1e5)
-
-Para cada celula correm os binarios da ct de origin/main e da arvore final alternadamente quatro vezes (a carga da maquina afeta os dois por igual) e fica o minimo de cada lado. Mesmo assim o ruido e de uns 10 %: le-se uma diferenca menor que isso como empate. Uma primeira passagem com uma execucao de cada lado (feita com a maquina a carga 14 a 27) deu alguns saltos de 2 a 5 vezes que o minimo de quatro nao confirma (por exemplo `stable_sort` de `P16`), por isso nao se usa.
-
-| familia | celula | antes | depois | variacao |
+| biblioteca | modo | tempo s | memoria pico KiB | objeto B |
 |---|---|---:|---:|---:|
-| vector | vector ct build int 100000 | 1.99 | 2.02 | +1.7% |
-| vector | vector ct build p16 100000 | 10.07 | 9.25 | -8.1% |
-| vector | vector ct build_reserved int 100000 | 1.75 | 1.62 | -7.3% |
-| vector | vector ct build_reserved p16 100000 | 9.63 | 10.70 | +11.1% |
-| map | map ct build int-int 100000 | 101.43 | 105.09 | +3.6% |
-| map | map ct hit int-int 100000 | 10.00 | 13.51 | +35.1% |
-| map | map ct miss int-int 100000 | 15.85 | 15.91 | +0.4% |
-| map | map ct erase int-int 100000 | 26.11 | 24.48 | -6.2% |
-| map | map ct iterate int-int 100000 | 10.11 | 5.33 | -47.3% |
-| map | map ct copy int-int 100000 | 16.84 | 11.73 | -30.4% |
-| map | map ct build s8-int 100000 | 246.22 | 241.05 | -2.1% |
-| map | map ct hit s8-int 100000 | 102.02 | 105.25 | +3.2% |
-| map | map ct miss s8-int 100000 | 76.36 | 117.41 | +53.8% |
-| map | map ct erase s8-int 100000 | 179.11 | 174.61 | -2.5% |
-| map | map ct iterate s8-int 100000 | 13.23 | 10.14 | -23.4% |
-| map | map ct copy s8-int 100000 | 43.65 | 34.55 | -20.9% |
-| string | string ct create len8 100000 | 6.17 | 6.39 | +3.5% |
-| string | string ct create len24 100000 | 21.98 | 22.58 | +2.7% |
-| string | string ct concat len30 100000 | 100.34 | 69.04 | -31.2% |
-| string | string ct s2int full 100000 | 38.15 | 27.05 | -29.1% |
-| string | string ct int2s full 100000 | 26.04 | 21.85 | -16.1% |
-| sort | sort ct sort int.random 100000 | 73.78 | 78.42 | +6.3% |
-| sort | sort ct stable int.random 100000 | 100.56 | 117.34 | +16.7% |
-| sort | sort ct sort p16.random 100000 | 83.17 | 101.65 | +22.2% |
-| sort | sort ct stable p16.random 100000 | 100.63 | 101.53 | +0.9% |
-| sort | sort ct sort int.sorted 100000 | 15.21 | 0.45 | -97.0% |
-| sort | sort ct stable int.sorted 100000 | 13.82 | 10.46 | -24.3% |
-| sort | sort ct sort p16.sorted 100000 | 18.50 | 1.55 | -91.6% |
-| sort | sort ct stable p16.sorted 100000 | 17.27 | 22.74 | +31.7% |
-| sort | sort ct sort int.reversed 100000 | 104.76 | 1.22 | -98.8% |
-| sort | sort ct stable int.reversed 100000 | 32.97 | 23.56 | -28.5% |
-| sort | sort ct sort p16.reversed 100000 | 61.08 | 2.02 | -96.7% |
-| sort | sort ct stable p16.reversed 100000 | 32.69 | 27.39 | -16.2% |
-| sort | sort ct sort int.dups 100000 | 105.80 | 49.80 | -52.9% |
-| sort | sort ct stable int.dups 100000 | 46.61 | 33.80 | -27.5% |
-| sort | sort ct sort p16.dups 100000 | 53.64 | 34.72 | -35.3% |
-| sort | sort ct stable p16.dups 100000 | 41.55 | 41.72 | +0.4% |
-| misc | misc deque ct push_back int 100000 | 1.49 | 1.04 | -30.3% |
-| misc | misc deque ct push_front int 100000 | 2.19 | 2.20 | +0.5% |
-| misc | misc deque ct iterate int 100000 | 0.71 | 1.27 | +78.0% |
-| misc | misc deque ct fifo int 100000 | 2.83 | 2.27 | -19.6% |
-| misc | misc ordered ctree build int 100000 | 313.83 | 306.89 | -2.2% |
-| misc | misc ordered ctree hit int 100000 | 164.18 | 159.10 | -3.1% |
-| misc | misc ordered ctree erase int 100000 | 220.09 | 220.64 | +0.3% |
-| misc | misc pq ct pushpop int 100000 | 122.41 | 121.76 | -0.5% |
-| misc | misc function ct copy x 100000 | 29.09 | 33.37 | +14.7% |
+| ct | syntax | 2.70 | 91940 | 0 |
+| ct | obj | 25.68 | 225468 | 290712 |
+| std | syntax | 8.67 | 183856 | 0 |
+| std | obj | 36.98 | 332888 | 392688 |
+| absl | syntax | 12.26 | 319764 | 0 |
+| absl | obj | 30.51 | 445144 | 1212704 |
+| boost | syntax | 6.68 | 328404 | 0 |
+| boost | obj | 34.69 | 486020 | 751488 |
 
-## 5. Onde a ct ainda perde, a causa e o que fazer
+A maquina estava a carga de 50 a 250 (outros trabalhos), por isso os segundos nao se comparam com os de cima; a razao da ct para o `std` foi de 0,31 em `syntax` (0,40 na ronda 1) e de 0,69 em `obj` (0,64 na ronda 1), e o objeto da ct passou de 279040 para 290712 bytes (+4 %): o `numconv.hpp` (as tabelas de 683 potencias de 5 de 128 bits) e o caminho novo do `HashMap` custam compilacao.
 
-Cada ponto diz o que se mediu, a causa (com a prova) e, quando nao se corrigiu, a proposta e o ganho esperado.
+### 3.5 Antes e depois (so ct, ronda 2: de origin/main 7fef995 a este ramo)
 
-**5.1 `HashMap` com chaves `int`: tempo de `miss`, `hit` e `erase` em tabelas de tamanho medio contra boost e absl.**
-Com 1e5 elementos, `miss` custa 11 ns na ct e 5,5 ns no `boost::unordered_flat_map` (2 vezes), `build` 53 contra 29 (1,8
-vezes), `erase` 17 contra 10. As instrucoes nao dizem o mesmo: a ct gasta menos (`hit` 25 contra 41 de boost, `miss` 24 contra
-38). A diferenca e de cache: a sondagem da ct le o byte de meta e, se o slot esta ocupado, **vai ler a chave ao slot**
-(uma linha de cache de uma tabela de 2 MiB) para comparar; as tabelas SIMD guardam 7 bits do hash em cada byte de meta
-e so tocam no slot quando a etiqueta bate (um `miss` nunca toca nos slots). A 1e7 a ct ja ganha a todas (`build` 95 ns contra
-105 de boost, `hit` 57 contra 88): ai todas estao limitadas pela memoria.
-*Prova*: um prototipo com etiquetas de 7 bits na meta (`meta = 0x80 | hash >> 57`, comparada antes da chave) baixou o `miss` de 62
-para 44 ns a 1e6 e de 54 para 21 ns com chaves `s8`, e o `build` 2 a 13 %. *Porque nao entrou*: o proprio prototipo subiu as
-instrucoes de `hit` com chaves `int` de 25 para 33, as de `erase` de 42 para 50 (e o `erase` de `String` de 151 para 180: a remocao
-por deslocamento tem de mover a etiqueta), e o tempo de `hit` e `erase` subiu 7 a 12 % a 1e6; "nada pode ficar mais lento"
-mandou voltar atras (o commit de reversao esta no historico).
-*Proposta*: etiquetas so para chaves de comparacao cara (`String` e compostas), que e onde mais ganham (`miss` -31 % de instrucoes e
--61 % de tempo, `build` -27 % de instrucoes com `s8`), e deixar as chaves de tipos primitivos como estao; mais deslocar a etiqueta
-no `erase` sem recalcular o hash. Ganho esperado: `miss` de chaves de texto 2 a 3 vezes mais depressa.
+Instrucoes (callgrind) e bytes pedidos ao malloc, o que e deterministico; so aparecem as celulas que mudaram 0,5 % ou mais. O tempo
+da ct desta ronda so se mediu na `HashMap` (3.2b). Fora do que esta aqui (todas as familias, N = 1e5) nada mudou: `Vector`, `Deque`, `sort`, `Function`,
+`TreeMap` e `FlatMap` com as mesmas instrucoes. A matriz da `HashMap` e a de `String` a N = 1e3 e 1e5 inteiras (todos os tipos
+e cenarios, antes e depois) esta em `docs/comparacao-tabelas.md`.
 
-**5.2 `HashMap`: bytes por elemento.** Com chaves `int` e valores `int` a ct gasta 19 a 24 B por elemento (1e5 e 1e6), absl 12 a 19,
-boost 11 a 18, ankerl 21 a 25, `std::unordered_map` 44 a 46 (ver 3.3). Um slot custa 9 bytes (8 do par mais 1 de meta), a carga
-maxima e 75 % (absl e boost 87,5 %, ankerl 80 %) e a tabela dobra, por isso a carga fica entre 37,5 % e 75 %: 12 a 24 B por elemento conforme o
-N calhe (1e5 calha mal: 38 %). Com valores de 256 bytes isto pesa: 100000 elementos ocupam 262144 slots de 265 bytes (69 MB, pico de
-104 MB com a tabela antiga durante o rehash) contra 30 MB do `std::unordered_map`; `build` mede 925 ns por elemento contra 384
-do std e 443 a 569 das tabelas de abseil, boost e ankerl (callgrind: a ct gasta 351 instrucoes por elemento e o std 824: o tempo e
-trafego de memoria). Proposta: subir a carga maxima para 87,5 % com etiquetas (5.1), o que da 10 a 20 B; sem etiquetas
-a sondagem linear com 87 % de carga fica cara.
+#### ct: instrucoes por operacao, antes e depois das correcoes
 
-**5.3 Iterar um `HashMap`.** Depois da correcao (iterador por grupos de 8 slots) custa 17 instrucoes por elemento a
-1e5 (antes 23); ankerl, que guarda os valores densos num vetor, custa 5, e absl 14. Os slots livres que ficam pelo meio (a carga e 38 %)
-continuam a custar. Proposta: um vetor denso de entradas mais uma tabela de indices (o que a ankerl faz) mudaria a estabilidade
-das referencias e o custo de `erase`; nao se tentou.
+| familia | cenario | tipo | N | antes | depois | variacao |
+|---|---|---|---:|---:|---:|---:|
+| map | build | s8-int | 100000 | 391.77 | 332.12 | -15.2% |
+| map | hit | s8-int | 100000 | 122.66 | 125.04 | +1.9% |
+| map | miss | s8-int | 100000 | 97.26 | 83.13 | -14.5% |
+| map | erase | s8-int | 100000 | 153.35 | 139.35 | -9.1% |
+| map | copy | s8-int | 100000 | 60.73 | 59.97 | -1.2% |
+| map | build | s40-int | 100000 | 910.18 | 882.00 | -3.1% |
+| map | hit | s40-int | 100000 | 160.64 | 165.03 | +2.7% |
+| map | miss | s40-int | 100000 | 134.74 | 124.88 | -7.3% |
+| map | erase | s40-int | 100000 | 360.26 | 329.18 | -8.6% |
+| string | append_char | char | 100000 | 24.06 | 20.07 | -16.6% |
+| string | eq | len40 | 100000 | 58.63 | 53.63 | -8.5% |
+| string | concat | len30 | 100000 | 629.02 | 392.02 | -37.7% |
+| string | int2s | full | 100000 | 185.62 | 126.32 | -31.9% |
+| string | s2int | full | 100000 | 175.26 | 90.03 | -48.6% |
+| string | dbl2s | d | 100000 | 2572.24 | 306.51 | -88.1% |
+| string | s2f32 | f | 100000 | 659.31 | 132.27 | -79.9% |
+| misc | pushpop | int | 100000 | 358.44 | 272.74 | -23.9% |
 
-**5.4 Formatar e ler numeros.** `String::number(double)` usa `snprintf("%.*g")`: 2572 instrucoes contra 849 de `to_chars` e 1036 de
-fmt (3 vezes), e 2450 do `snprintf` puro (e o mesmo). `String::to_float` usa `strtof`: 659 contra 185 de `from_chars` (3,6 vezes).
-`to_int` desceu de 291 para 175 (agora sem `strtol`) e `from_chars` faz 141. Inteiros para texto: 186 contra 147 de
-`fmt::format_int`. Proposta: `append_number(double)` poderia usar o caminho rapido de `json_append_double` (que ja existe,
-com `long double`) quando a precisao pedida e a mais curta que volta ao mesmo valor, e `to_float` um Eisel-Lemire (cerca de 150
-instrucoes). Nao se fez: sao 200 linhas de codigo numerico que precisam de um diferencial de 1e8 valores contra `strtof`/`snprintf`.
+#### ct: alocacoes por execucao, antes e depois
 
-**5.5 `String`: `append_char`, `==`, `<`, concatenacao.** 1,2 a 1,3 vezes as instrucoes do `std::string` (`push_back` 24 contra 19, `==` de 40
-caracteres 59 contra 46, `a + b + c` 629 contra 516). A ct decide SSO ou heap em cada `size()` e `data()` (a marca esta no ultimo byte);
-o `std::string` guarda o ponteiro sempre. No tempo `append_char` e a concatenacao empatam, mas `==` e `<` de 40 caracteres
-sao 1,3 a 2,3 vezes mais lentos (12 contra 5 ns a 1e5; 11 contra 8 a 1e6): a diferenca de instrucoes (13) nao a explica toda e nao
-se encontrou o resto (os dois chamam o mesmo `memcmp`). A concatenacao pede `reserve(30)` e o `reserve` da ct dobra a
-partir do SSO (23 vezes 2 mais 1: 47 bytes, contra 31 do libstdc++, que dobra a partir de 15). Proposta: `operator+` com capacidade exata.
-Ganho pequeno (uma alocacao de 48 em vez de 64 bytes).
+| familia | cenario | tipo | N | antes | depois | variacao |
+|---|---|---|---:|---:|---:|---:|
 
-**5.6 `Deque` e `PriorityQueue`.** `push_front` custa 21 instrucoes contra 13 do `std::deque` (a ct dobra um anel de potencia de 2
-e copia; o `std::deque` aloca blocos fixos e nunca move); percorrer 10 contra 8. `PriorityQueue` faz `pushpop` com 358 contra 309
-instrucoes do `std::priority_queue`: o `siftDown` troca a cada nivel em vez de descer ate a folha e subir (a tecnica do buraco do
-libstdc++, menos comparacoes). Proposta para a segunda: copiar a tecnica do buraco, ganho de cerca de 15 %. No tempo `Deque`
-ganha em `push_back` e `fifo`.
+#### ct: bytes pedidos ao malloc por execucao, antes e depois
 
-**5.7 `sort` com comparador em entrada aleatoria.** Depois da correcao `ct::sort` faz 163 instrucoes por elemento em `int` aleatorio
-(158 antes; `std::sort` 128, pdqsort de boost 118; em `P16` aleatorio 167, 165 antes, 136 e 121): **+3 % e +1 % de
-instrucoes** a mais que antes e cerca de 25 % mais que `std::sort`. E o preco das guardas `lo`/`hi` da particao, que mantem a
-leitura dentro do intervalo com um comparador que nao e uma ordem fraca estrita (`<=`; a versao sem guardas, como a do libstdc++, le
-fora da memoria nesse caso, e o `introsort` anterior nao lia): aceitou-se, a troca e -45 % nos repetidos e -96 % nas entradas
-ordenadas ou invertidas. No relogio nao se consegue resolver nesta maquina: um micro-programa isolado a 1e6 `P16` aleatorios mede
-88,8 para 70,4 ns por elemento, e a passagem alternada da seccao 4 (1e5, minimo de 4) mede +6 % em `int` e +22 % em `P16`; so se
-pode dizer que a diferenca esta dentro do ruido. `stable_sort` nao mudou de codigo, mas as instrucoes de `p16` subiram 16 a
-28 %: o GCC passou a ver o buffer de `malloc` sem o cabecalho e trocou o ciclo de copia por `memcpy`, e o callgrind conta cada
-passo do `rep movsb` como uma instrucao (45 % do total esta no `memcpy`); isolado e a tempo de relogio, `stable_sort` de 1e6 `P16`
-mede 57 contra 56 ns/elemento (aleatorio) e 37 contra 32 (ordenado) antes e depois, e a passagem alternada de `p16.random` da empate.
+| familia | cenario | tipo | N | antes | depois | variacao |
+|---|---|---|---:|---:|---:|---:|
+| string | concat | len30 | 100000 | 4700000.00 | 3100000.00 | -34.0% |
 
-**5.8 `Vector`.** Empate em tudo menos em construcao sem reserve, que ganha (3 a 4 vezes a 1e5, 2 vezes a 1e7, porque
-`realloc` cresce sem copiar). Tres notas: (a) `build_reserved` mede +1 instrucao por elemento depois das correcoes em `int` e
-`P16` (11 para 12): e o ciclo do `push_back` que o GCC compilou com a carga do fim da capacidade a parte em vez de dentro do `cmp`
-(o codigo da ct nao mudou; as duas formas tem as mesmas microoperacoes). (b) O primeiro bloco de um `Vector` tem 8 elementos: um
-`Vector<B256>` de 1 elemento aloca 2 KiB (o do std aloca 256 B); cresce por 2 como o std. (c) `build` de `MO` (tipo so move com destrutor)
-a 1e5: ct 53 ns, std 58, boost 15: nas instrucoes a ct e o std empatam (36 contra 34) e a boost gasta mais (52), por isso e o
-comportamento de paginas do `malloc` na sequencia de tamanhos de 1,6 que a boost usa, nao codigo.
+#### ct: bytes vivos no fim da regiao medida, antes e depois
 
-**5.9 `TreeMap` a 1e6 elementos.** Nas instrucoes ganha ao `std::map` (`hit` 85 contra 146 a 1e4, `build` 397 contra 628, `erase` 299
-contra 374), mas a 1e6 elementos `build` custa 2076 ns contra 1506, `miss` 1547 contra 1079 e `hit` 1253 contra 1060: e trafego de cache
-numa arvore de 40 bytes por no que o `Pool` entrega pela ordem de insercao. A `btree_map` do abseil faz o mesmo em 229 a 336 ns (4 a 6
-vezes mais depressa que as duas). Iterar a arvore custa 27 ns por elemento contra 66 do `std::map` e 2 da btree. Proposta: uma btree
-(chaves agrupadas por no) no lugar da rubro-negra; e uma mudanca de estrutura, nao se tentou.
+| familia | cenario | tipo | N | antes | depois | variacao |
+|---|---|---|---:|---:|---:|---:|
 
-**5.10 `String` com chave `s40` no `HashMap`.** `build` a 1e6: ct 797 ns contra 534 (boost) e 243 (ankerl). A ankerl guarda os pares
-densos e nao move as chaves ao crescer; a ct move o par (`String` + `int`) a cada rehash. E o preco do enderecamento aberto com
-as entradas dentro da tabela.
+### 3.6 `-O3` (instrucoes por operacao, N = 1e5, um subconjunto)
+
+Mesmo compilador e opcoes (`g++ 13.3 -std=c++17 -O3 -DNDEBUG`), 72 cenarios: o `HashMap` com chaves `int` e de 8 caracteres, `Vector`, `String`, `sort` com comparador, `Deque`, `PriorityQueue` e os numeros. A razao da ct para o melhor dos outros a `-O3`
+contra a `-O2` (as mesmas colunas nos dois): **mudam de lado de 1** `build_reserved` de `int` do `Vector` (1,09 para 1,00, passa a empatar), e perde onde a `-O2` ganhava: `build` de `int-int` (0,94 para 1,15), `build`, `hit` e `miss` de `s8-int` (0,90 para 1,19, 0,94 para 1,08 e 0,88 para 1,11); e a ct perde vantagem, sem mudar de lado de 1, em `erase` de `int-int` e de `s8-int` (0,80 para 0,86 e 0,79 para 0,94), `create` de `len8` (0,71 para 1,00) e `int2s` (0,86 para 0,99). O `push_back` de `P16` do `Deque` ganha menos a `-O3` (0,41 para 0,58). A ordenacao
+(`sort` com comparador aleatorio de `int` 1,27 para 1,31, `P16` 1,38) e `push_front` (1,62 e 1,49) ficam como estavam. A razao nao e so a da ct: tambem o `-O3` muda o codigo das outras bibliotecas (a tabela mostra as instrucoes por operacao de todas).
+
+#### Ir por operacao com -O3, vector
+
+| cenario | tipo | N | ct | std | boost | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|
+| build | int | 100000 | 12.4 | 16.3 | 18.9 | 0.76 |
+| build_reserved | int | 100000 | 11.0 | 11.1 | - | 1.00 |
+
+#### Ir por operacao com -O3, map
+
+| cenario | tipo | N | ct | std | absl | boost | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|
+| build | int-int | 100000 | 130.5 | 582.8 | 142.7 | 114.0 | **1.15** |
+| hit | int-int | 100000 | 24.9 | 30.4 | 50.5 | 42.5 | 0.82 |
+| miss | int-int | 100000 | 24.5 | 24.1 | 46.4 | 38.0 | 1.01 |
+| erase | int-int | 100000 | 44.9 | 204.7 | 71.2 | 52.3 | 0.86 |
+| build | s8-int | 100000 | 329.5 | 710.6 | 344.4 | 277.5 | **1.19** |
+| hit | s8-int | 100000 | 125.1 | 119.4 | 115.5 | 140.8 | 1.08 |
+| miss | s8-int | 100000 | 83.1 | 74.9 | 81.2 | 95.7 | **1.11** |
+| erase | s8-int | 100000 | 144.9 | 333.1 | 172.1 | 154.2 | 0.94 |
+
+#### Ir por operacao com -O3, string
+
+| cenario | tipo | N | ct | std | charconv | fmt | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|
+| create | len8 | 100000 | 51.0 | 51.0 | - | - | 1.00 |
+| create | len16 | 100000 | 49.0 | 302.1 | - | - | 0.16 |
+| create | len24 | 100000 | 262.0 | 302.1 | - | - | 0.87 |
+| create | len40 | 100000 | 263.0 | 303.1 | - | - | 0.87 |
+| eq | len40 | 100000 | 50.6 | 41.6 | - | - | **1.22** |
+| concat | len30 | 100000 | 389.0 | 516.1 | - | - | 0.75 |
+| int2s | full | 100000 | 124.3 | - | 185.0 | 125.0 | 0.99 |
+| dbl2s | d | 100000 | 231.0 | - | 828.1 | 1090.2 | 0.28 |
+
+#### Ir por operacao com -O3, sort
+
+| cenario | tipo | N | ct:sort | std:sort | ct:stable | std:stable | boost:sort | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| - | int.random | 100000 | 163.2 | 124.1 | 202.9 | 182.5 | - | **1.31** |
+| - | p16.random | 100000 | 167.1 | 131.3 | - | - | 121.0 | **1.38** |
+
+#### Ir por operacao com -O3, misc
+
+| cenario | tipo | N | ct | std | ct / melhor outro |
+|---|---|---:|---:|---:|---:|
+| push_back | int | 100000 | 15.4 | 16.5 | 0.93 |
+| push_front | int | 100000 | 21.5 | 13.3 | **1.62** |
+| push_back | p16 | 100000 | 18.4 | 31.9 | 0.58 |
+| push_front | p16 | 100000 | 40.2 | 27.1 | **1.48** |
+| pushpop | int | 100000 | 271.8 | 308.8 | 0.88 |
+
+A mesma matriz a -O2 esta na seccao 3.1; a ordem entre a ct e as outras muda onde a razao da ultima coluna passa de um lado de 1 para o outro (por exemplo, compare-se `hit` e `miss` de `int-int` entre as duas).
+
+## 4. Tempo antes e depois (so ct)
+
+O tempo da ct desta ronda esta so na seccao 3.2b (a `HashMap`, tempo de CPU, 3 execucoes alternadas, maquina carregada) e na 5.5 (`String ==`). As celulas da ronda 1 (a primeira
+passagem, com a maquina a carga de 4 a 12) ficam na `docs/comparacao-tabelas.md`.
+
+## 5. Onde a ct ainda perde, a causa e o que se fez
+
+Cada ponto diz o que se mediu, a causa (com a prova), o que se fez nesta ronda e o que fica. As instrucoes sao do callgrind
+(N = 1e5, `-O2`, g++ 13.3), por operacao; os bytes sao os do contador de alocacoes.
+
+**5.1 `HashMap` com chaves `int`: `miss`, `hit` e `erase` em tabelas de tamanho medio contra boost e absl.** Nao se mudou.
+A causa que a ronda 1 deu (a sondagem le a chave ao slot) nao e a certa: com `valgrind --tool=callgrind --cache-sim=yes` (L1 de
+32 KiB, LL de 8 MiB, como o Ryzen 5 5500U) o `miss` de `int-int` a N = 1e5 da 2,43 falhas da D1 por operacao na ct, 2,11 no absl e 2,00
+no boost, e zero do LL nos tres (a tabela cabe), mas com `--branch-sim=yes` da **0,84 mispredicoes de salto por operacao na ct contra
+0,40 no absl e 0,18 no boost**: a 38 % de carga o slot esta ocupado ou livre ao acaso e o ciclo de sondagem fecha com um salto
+que falha; as tabelas SIMD compram um grupo de 16 etiquetas de uma vez e o salto passa a previsivel. A 1e7 a ct ja ganha a todas.
+O que se tentou: (a) subir a carga maxima de 75 para 87,5 % com a sondagem linear de sempre (o que o ponto 5.2 pedia): `miss`
+de `int-int` a N = 1e5 de 24,5 para 71,7 instrucoes (`hit` 24,9 para 33,0, `erase` 41,9 para 85,1), a 114000 elementos (87 %
+de carga) de 26,0 para 189,8, e com chaves de 8 caracteres de 97,3 para 486,6 e 111,3 para 1453,5: as sondagens deixam de ser curtas, que
+era o que o ponto pedia que se medisse; (b) etiquetas na meta so para chaves de texto, que e onde a ronda 1
+mostrou que pagam (feito, ver 5.2b); (c) um layout para inteiros que nao leia o slot num `miss` sem acrescentar instrucoes ao `hit`: nao existe com a
+chave e o valor no mesmo slot e sem etiqueta (a etiqueta de 7 bits que a ronda 1 mediu acrescenta 8 instrucoes ao `hit`); o
+caminho seria um grupo de 16 metas comparado de uma vez com SSE2 (o que o absl e o boost fazem, a 41 a 48 instrucoes por `hit`
+contra 25 da ct): troca o `miss` de 2 vezes de tempo por um `hit` de 1,7 a 1,9 vezes as instrucoes. Fica como esta.
+
+**5.2 `HashMap`: bytes por elemento.** Feito para valores grandes, nao para `int-int`.
+- Valores de 256 bytes (`int-b256`, N = 1e5): **694,7 para 295,6 bytes por elemento** (std 301,8, abseil 347,3, boost 325,7,
+  ankerl 356,6); N = 1e6: 555,8 para 290,9 (std 299,6, ankerl 293,6). As entradas com mais de 128 bytes ficam fora da tabela
+  (cada uma no seu bloco, a tabela guarda ponteiros: 9 bytes por slot em vez de 265). Preco: uma alocacao por elemento, e as instrucoes
+  por operacao sobem (N = 1e5, antes para depois; std, absl, boost): `build` 351 para 788 (824, 433, 328), `erase` 57 para 291 (307, 78, 54),
+  `copy` 58 para 566 (596, 87, 31), `hit` 31,1 para 36,7 (31,8, 53,6, 44,6), `miss` 27,7 para 31,0 (23,4, 48,1, 38,0), `churn` 302 para 496; so
+  `iterate` desce, 21,4 para 19,4. Fica acima do `std` no `hit` e no `miss` e abaixo nos outros, e muito acima das tabelas planas (que gastam
+  347 e 326 bytes por elemento para copiarem o valor para dentro da tabela). Uma referencia a um valor passa a sobreviver ao rehash. **Tempo** (3.2b, CPU, minimo de 3 alternados, ruido
+  de ate 30 %): `build` 1544 para 557 ns (o `std::unordered_map` 597 a 689: de 2,6 vezes mais lento a empate), `hit` 61 para 90 (+49 %; std 127), `miss` 33 para 53 (+59 %),
+  `erase` 80 para 451 (5,7 vezes). E uma troca de memoria e de `build` por `hit`, `miss` e `erase`, e e uma decisao do dono: `CT_HASH_INLINE_MAX` (128 por omissao) muda o limite
+  das entradas fora da tabela, e com um valor enorme a tabela volta a ser a de antes.
+- `int-int`: 23,6 bytes por elemento a N = 1e5 contra 11,8 do abseil e 11,2 do boost: so se fecha com carga maxima acima de
+  76 %, e isso nao e possivel sem perder (ver 5.1). Fica.
+- Chaves de texto: a distancia ao slot de origem na meta (ver abaixo) nao muda os bytes.
+
+**5.2b `HashMap` e `HashSet` com chaves que nao sao inteiros, enumeracoes nem ponteiros.** Feito. Cada slot ocupado guarda na meta 0x81 mais
+a distancia ao slot de origem (0xFF para 126 ou mais): a sondagem so compara chaves onde a distancia bate (um `miss` quase
+nunca compara strings) e a remocao desloca os seguintes sem recalcular o hash de cada um. Instrucoes por operacao, N = 1e5:
+`s8-int` build 391,8 para 332,1 (-15 %), miss 97,3 para 83,1 (-15 %), erase 153,4 para 139,4 (-9 %), `churn` 351,6 para 277,2 (-21 %); `s20-int` build 527,5
+para 466,9, miss 142,1 para 127,3, erase 222,7 para 186,8, `churn` 510,3 para 365,5; `s40-int` build 910,2 para 882,0, miss 134,7 para 124,9, erase
+360,3 para 329,2, `churn` 747,4 para 606,3; `hit` **sobe** 122,7 para 125,0 e 160,6 para 165,0 (2 a 3 %: o ciclo faz duas comparacoes e um
+contador a mais). Iterar e copiar ficam iguais (18,8 e 60,0). Os inteiros, enumeracoes e ponteiros usam o ciclo de sempre e o
+assembler de `find` e `erase` de `HashMap<int,int>` e igual ao de antes (conferido byte a byte): `int-int`, `int-p16` e `int-mo` com
+as mesmas instrucoes nos dois tamanhos medidos (a unica diferenca: `copy` de `int-p16` a N = 1e3, 19,2 para 19,3). Entre as chaves de texto o unico recuo medido e o `hit`; fica documentado e e a troca que
+a ronda 1 recusou nos inteiros e aqui se aceita porque o saldo (miss, build, erase, churn) e de 9 a 29 % a favor.
+
+**5.3 Iterar um `HashMap`.** Nao se mudou: 17,4 instrucoes por elemento a N = 1e5 com `int` (18,8 com chaves de texto; ankerl 5,0, absl 14,0, boost 16,9). Um vetor
+denso de entradas mais uma tabela de indices (o que a ankerl faz) daria 5, mas a remocao passaria a trocar com o ultimo
+(move um elemento que nao e o apagado), uma referencia a um valor so sobreviveria sem put nem erase de OUTRO elemento, e a ordem
+de iteracao passaria a ser a de insercao com a remocao a baralha-la: muda o que o `HashMap` documenta e o que `erase` faz, por isso nao se fez. Melhorar o
+varrimento por grupos (de 8 metas por palavra de 64 bits para 16 com `movemask`) nao se mediu.
+
+**5.4 Formatar e ler numeros.** Feito (e o maior ganho da ronda). `ct/numconv.hpp` (sem locale, sem a biblioteca standard):
+texto mais curto de `double` e `float` que volta ao mesmo valor (Schubfach, tabelas de potencias de 5 de 128 bits geradas por
+`tests/gen_numconv_tables.py`), leitura com arredondamento correcto (Clinger, Eisel-Lemire e, nos casos duvidosos, decimal de
+precisao arbitraria; hexadecimais, inf, nan), `%.*g` bit a bit igual ao `snprintf` por uma conta de 192 bits com margem de 2^-56
+(os empates e os casos que a conta nao decide caem no `snprintf`). Instrucoes por chamada, N = 1e5 (ct antes, depois, melhor dos outros):
+`number(double)` (`%.6g`) 2572 para 307 (to_chars 849, fmt 1036); `to_float` 659 para 133 (from_chars 185); `to_double` de 6 algarismos
+134 (from_chars 187), de ate 17 algarismos 240 (290) e de expoente espalhado 326 (350); texto mais curto de `double` 477 (to_chars 929, fmt 1212,
+`%.17g` 4038) e 454 (838, 1281) com expoente espalhado; `to_int` 175 para 90 (from_chars 141); `number` de inteiro 186 para 126 (fmt 147).
+Correccao (seccao 7): diferencial contra o `printf` e o `strtod` do sistema (ver 7), o locale nao conta. **Mudancas que se notam**: `String::to_int` fora do
+intervalo satura em `INT_MIN` e `INT_MAX` (3000000000 dava -1294967296) e `String::to_int(int &out)` diz se coube; `String::to_float` e `to_double` nao
+aceitam a virgula do locale (so '.'); `append_number(double, precision)` escreve o mesmo texto de sempre.
+
+**5.5 `String`: `append_char`, `==`, `<`, concatenacao.** Feito em grande parte. `operator==`, `compare` e `operator+` lem o ponteiro e o tamanho
+com um so teste do SSO (`String::raw_parts`) e `==` deixou de testar `n == 0` antes do `memcmp`; `push_back` tem o caso normal sem
+`size()`, `capacity()`, `data()` e `set_size()`; a concatenacao (`String::concat`) junta com capacidade exacta, sem `reserve` nem `append`.
+Instrucoes (ct antes, depois; std): `==` de 40 caracteres 58,6 para 53,6 (45,6); `<` 68,5 para 59,5 (56,2); `append_char` 24,1 para
+20,1 (19,3); `a + b + c` 629 para 392 (516). **Tempo** (minimo de 9 rondas alternadas, tempo de CPU da thread, maquina a carga 25 a 60):
+`==` de 8 caracteres 10,5 para 8,4 ns (std 7,4); de 40 caracteres 9,8 contra 7,6: a diferenca de 2,3 vezes da ronda 1 nao se reproduziu
+(1,3 vezes). A causa que se achou: as 8 instrucoes a mais de decodificar dois SSO (o `std::string` guarda sempre o ponteiro) e um
+`n == 0 ||` que o compilador deixava antes do `memcmp`; o `memcmp` e o mesmo (nos dois o mesmo `memcmp@plt`), e o que sobra de tempo nao
+se explicou. Uma dica de ramo para o caso da heap (`CT_UNLIKELY` no teste do SSO) deu uma diferenca dentro do ruido, e nao ficou.
+
+**5.6 `Deque` e `PriorityQueue`.** `PriorityQueue`: feito, 358 para 273 instrucoes por elemento (std 309), com a tecnica do buraco (um move por nivel em vez de
+um swap, o `pop` desce ate a folha e sobe). `Deque::push_front`: nao se tentou (21,5 contra 13,3 do `std::deque`: a ct dobra um anel de potencia de 2 e le
+`head_`, `cap_` e `size_` a cada `push_front`, o `std::deque` decrementa um ponteiro).
+
+**5.7 `sort` com comparador em entrada aleatoria.** Nao se tentou nesta ronda (163 instrucoes por elemento em `int` aleatorio contra 128 do
+`std::sort` e 118 do pdqsort do boost; 167 contra 136 e 121 em `P16`). O caminho (proposta, nao medida) seria a particao por blocos de 64 (BlockQuicksort/pdqsort),
+em que os indices dos elementos a trocar se juntam sem ramos e que le sempre dentro do intervalo, por isso as guardas que protegem um comparador
+mau (`<=`) ficariam de graca; so serve com comparador barato e tipo trivial (e e esse o caso que perde).
+
+**5.8 `Vector`.** Igual. Novo: `resize_for_overwrite(n)` e `append_uninitialized(n)` (ver 6): crescer sem preencher os elementos novos de um tipo que se
+constroi sem escrever nada (`int`: 9,0 para 5,0 instrucoes por elemento num ciclo de redimensionar e escrever tudo, como o `default_init` do boost; `P16`: 9,5 para 7,0).
+
+**5.9 `TreeMap` a 1e6 elementos.** Nao se tentou. Os iteradores e os ponteiros `Entry *` de `TreeMap` estao documentados como estaveis (a insercao e a remocao nao movem
+elementos), e uma btree move elementos entre nos; por isso o caminho e um `BTreeMap` e um `BTreeSet` a parte, com as garantias mais fracas ditas no cabecalho
+(a insercao e a remocao invalidam iteradores e referencias; a iteracao e a pesquisa por intervalo ficam), nos de 256 bytes com 15 chaves,
+`lower_bound`, `erase` com fusao e emprestimo. Estimativa: umas 600 linhas, mais os testes de ordem, de remocao em todos os casos e diferenciais contra o `TreeMap`.
+
+**5.10 `String` com chave `s40` no `HashMap`.** `build` a 1e6 mede, com a distancia na meta, menos 15 % de instrucoes a 1e5 (ver 5.2b); o resto (mover o par a cada
+rehash) fica.
+
+**5.11 Casos novos que a ronda 2 mediu (seccao 3.1, familia `extra`; ct contra o equivalente da biblioteca standard, instrucoes por operacao).**
+`Variant` (`std::variant`): construir 68,7 contra 70,4, visitar 17,0 contra 18,4, atribuir por copia 34,1 contra 36,3: empata ou ganha. `Arena`
+(`std::pmr::monotonic_buffer_resource`): `allocate(64)` 28,0 contra 27,1 (empate) e uma lista de nos 32,0 contra 33,1. Fila circular
+(`Queue` sobre `Deque` contra `std::queue`): 18,0 contra 22,6, ganha. `Span`: somar tudo 5,0 contra 5,0 de um ponteiro cru; **`subspan` em blocos de 16 perde, 6,4
+contra 3,5** (a verificacao de limites de `subspan` por chamada). **`Pool` perde, 718 contra 583 de `new` e `delete`** num ciclo de criar N, apagar metade e criar
+outra metade: cada `allocate`, `create`, `destroy` e `deallocate` acha o bloco do slot por busca binaria num indice de blocos (`state(p)`, varias vezes por `create` e por `destroy`) para detectar o duplo `destroy`, e e essa seguranca que custa; nao se
+mexeu (mudar a deteccao muda o que a `Pool` garante).
 
 ## 6. Defeitos e melhorias feitas (antes e depois)
 
@@ -713,8 +878,14 @@ as entradas dentro da tabela.
 | 3 | `introsort`: particao de Lomuto: os repetidos iam todos para o mesmo lado e uma entrada invertida trocava quase tudo | 100000 `int` com 16 valores: 3,49 milhoes de comparacoes e cai no heapsort; invertida 3,37 milhoes; instrucoes por elemento 241 (dups) e 288 (invertida) | 1,46 milhoes e 1,44 milhoes; 135 e 10 instrucoes por elemento | `EdgeSort.ManyDuplicatesStayNearNLogN` (< 2,2 milhoes), `SortedAndReversedInputCostOnePass` (<= 100000 e 200000): ambos falharam antes (3,49 M, 3,37 M, 1,29 M) e passam. Tempo de `P16` a 1e6: aleatorio 88,8 para 70,4 ns, invertido 60,7 para 24,1, repetidos 63,7 para 33,8. Mais um teste com comparador `<=` (nao le fora do intervalo, corre com ASan). |
 | 4 | Iterar um `HashMap`/`HashSet` passava slot a slot pelos buracos; copiar refazia hash e sondagem de cada elemento | iterar 23 instrucoes por elemento (1e5, `int`), copiar 59 | 17 e 23 | ver 3.5: iterar -25 %, copiar -61 % (`int`), -58 % (`s8`), -21 % (`s40`); o tempo esta na seccao 4. `EdgeHashMap.IterationVisitsExactlyTheOccupiedSlots`, `IterationAtTinyAndExactCapacities`, `CopyAndAssignKeepEveryEntry`. A copia por indice so se usa na copia construida (o hasher e o mesmo) e quando a capacidade que fica e a da origem. |
 | 5 | `String::to_int` e `String::number` | `strtol` e um algarismo por passo | analise propria com o mesmo resultado que `static_cast<int>(strtol(...))`; dois algarismos por passo | `EdgeNumbers.StringToIntMatchesStrtolOnRandomText` (1e6 textos, igual a `strtol`), `IntegerToTextMatchesPrintfOnRandomValues` (5e5 valores, igual a `printf`); ver 3.5: `s2int` -40 % de instrucoes, `int2s` -2 %. |
+| 6 | `String::to_int` fora do intervalo do `int` | `static_cast<int>(strtol(...))`: 3000000000 dava -1294967296, 4294967296 dava 0, -3000000000 dava 1294967296 | satura em `INT_MIN` e `INT_MAX`; `String::to_int(int &out)` devolve false se o texto nao for so espacos, sinal e algarismos ou se nao couber | `NumconvString.ToIntSaturates`, `ToIntChecked` e `ToIntMatchesSaturatedStrtolOnRandomText` (400000 textos, igual ao `strtol` preso ao intervalo): os que mudam de comportamento falham com o cabecalho de origin/main (3000000000 -> -1294967296) e passam; `EdgeNumbers.StringToIntMatchesStrtolOnRandomText` ganhou a mesma conta. |
+| 7 | apagar ou inserir num `HashMap`/`HashSet` durante um ciclo `for` (salta ou repete elementos, ou le uma tabela que mudou) | nao se detectava | `erase_if(pred)` visita cada elemento uma vez; em depuracao (`CT_DEBUG_ITERATORS`) o iterador aborta se for usado depois de a tabela mudar | `HashEraseIf.*` (4) e `HashDebugIterators.*` (3, EXPECT_DEATH com apagar e inserir durante o ciclo, depois de `clear`, com `const_iterator`). |
+| 8 | `String::to_float` e `String::number(double)` dependiam do locale (so tratados com uma copia do texto) | `snprintf` e `strtof` | `ct/numconv.hpp` nao tem locale: o separador e sempre '.' | `NumconvLocale.DecimalPointDoesNotDependOnLocale` (pt_BR, pt_PT; `1,5` le 1), diferencial com o programa em pt_BR (o oracle corre num locale "C" com `uselocale`). `Hardening.NumerosDeVirgulaFlutuanteNaoDependemDoLocale` mudou: `String("1,5").to_float()` era 1,5 em pt_PT e agora e 1. |
+| 9 | o codigo novo: o produto de 126 bits do Schubfach com g = floor + 1 dava resto nos limites de intervalo que caem num decimal curto | `0x4350000000000001` escrevia `1.801439850948199e+16`, que le o double seguinte (114 falhas em 200000 passos do diferencial, de ida e volta e de "nao e o mais curto") | o arredondamento para impar so olha os 63 bits de cima do resto (como o do JDK), de modo que o excesso do teto desaparece quando o produto exacto e inteiro | `NumconvShortest.IntervalBoundariesOnShortDecimals` e o diferencial: falhava (ida e volta e "nao e o mais curto") antes e passa. |
+| 10 | o codigo novo: a posicao do ponto do decimal exacto contava so os 800 algarismos guardados | uma entrada de mais de 800 algarismos dava um valor 10^k fora | conta os algarismos todos, guardados ou nao | `NumconvParse.LongInputs` (2000 textos de 20 a 920 algarismos contra o `strtod`) falhava (caminho exacto) e passa. |
+| 11 | `HashMap<int, B256>`: 695 bytes por elemento a N = 1e5 (a tabela a 38 % de carga com slots de 265 bytes) | 69,5 MB | 29,6 MB (so se paga uma alocacao por elemento) | `HashLayoutBig.BytesPerElementAreCloseToTheEntrySize`: o limite de 290 falha com o cabecalho de origin/main (694,7) e passa (295,6). |
 
-O que se tentou e se desfez: etiquetas de 7 bits na meta do `HashMap`/`HashSet` (5.1). Nao entram nesta lista as variacoes que
+O que se tentou e se desfez: etiquetas de 7 bits na meta do `HashMap`/`HashSet` para chaves inteiras (ronda 1, 5.1) e a carga maxima de 87,5 % com sondagem linear (ronda 2, 5.1): um prototipo a deixou o `miss` de `int-int` a 71,7 instrucoes (24,5 antes). Nao entram nesta lista as variacoes que
 vem so de o compilador ter escolhido outro codigo para o mesmo codigo da ct (5.7, 5.8).
 
 ## 7. Casos limite (parte 2): o que `tests/test_edge.cpp` cobre
@@ -731,10 +902,13 @@ O ficheiro nao usa a biblioteca standard (so o gtest e cabecalhos C) e corre em 
   `std::vector`, e uso invalido.
 - **Mover e reutilizar**: depois de mover, `HashMap`, `HashSet`, `Vector`, `Deque`, `String` ficam vazios e aceitam novos elementos.
 - **Apagar enquanto se percorre**: `Vector::erase` devolve o iterador seguinte (testado a apagar durante a iteracao); em `HashMap` e
-  `HashSet` a remocao desloca os elementos seguintes para tras e por isso **apagar o elemento atual durante um ciclo
-  `for` e invalido** (o ciclo pode saltar ou repetir elementos); o padrao correto e juntar as chaves e apagar depois, que e o que o teste faz.
-  Inserir durante a iteracao pode fazer rehash e invalida os iteradores e as referencias. A ct nao tem forma de o detetar; fica
-  documentado aqui e nao no codigo (a regra do projeto e nao ter comentarios nos cabecalhos).
+  `HashSet` a remocao desloca os elementos seguintes para tras e por isso **apagar o elemento actual durante um ciclo
+  `for` e invalido** (o ciclo pode saltar ou repetir elementos): o padrao correcto e `erase_if(pred)` (visita cada elemento uma
+  vez, `HashEraseIf.*`) ou juntar as chaves e apagar depois, que e o que o teste faz. Inserir durante a iteracao pode fazer rehash
+  e invalida os iteradores e as referencias. **A regra esta dita nos cabecalhos** (`hashmap.hpp` e `hashset.hpp`, ao pe de `begin`)
+  e, em compilacoes de depuracao (`CT_DEBUG_ITERATORS`, definido por omissao quando `NDEBUG` nao esta definido, e igual em todas
+  as unidades porque muda o tamanho da tabela), **o iterador aborta se for usado depois de a tabela mudar** (`HashDebugIterators.*`); em Release
+  nao ha verificacao nenhuma e o iterador e o de sempre.
 - **Crescimento nas fronteiras**: capacidades de 1 a 70 no `Vector`, a fronteira 23/24 do SSO do `String` (`is_small()` muda exatamente
   ai), tabelas de 2, 4 e 8 slots (grupo parcial do iterador) e `reserve(n)` de 0 a 70 em `HashMap` e `HashSet`.
 - **Tamanhos perto do maximo**: `reserve(max_size())`, `resize(max_size())`, `append(max_size(), c)`, `Deque::reserve(max_size())`,
@@ -759,24 +933,49 @@ O ficheiro nao usa a biblioteca standard (so o gtest e cabecalhos C) e corre em 
   `5e-324` (bits 1), `DBL_MIN`, `DBL_MAX`, `1e309`, `-0`, e 19 formas invalidas (`01`, `+1`, `.5`, `1.`, `0x10`, `NaN`, `Infinity`, ...);
   `Ini::get_int` recusa o que nao cabe. **Nao se mudou** `String::to_int` com um valor fora do intervalo do `int`
   (da a volta, ver docs/SUSPEITAS.md): precisa de uma decisao do dono e o teste de `to_int` compara com `strtol` precisamente para nao a mudar.
+- **Texto de numeros (`ct/numconv.hpp`, ronda 2)**: `tests/test_numconv.cpp` (19 testes) e o diferencial longo `tests/numconv_diff.cpp`, contra o `printf` e o
+  `strtod` do sistema (o oracle corre sempre no locale "C", com a ct num locale de virgula quando se pede). Cada iteracao experimenta um `double` ao acaso (expoente
+  uniforme, subnormais, quocientes, decimais curtos, inteiros grandes) e um `float` ao acaso por todos os caminhos: o texto mais curto volta ao mesmo valor, nenhum decimal mais curto
+  volta (confere-se D-1, D e D+1 do `%.*e` com um algarismo a menos) e entre os da mesma largura e o mais proximo; `%.*g` de 1 a 17 algarismos igual ao `snprintf`; a leitura de
+  `%.17g`, `%.*g`, `%.*e`, `%a`, `%.*a`, de textos ao acaso de ate 40 algarismos com expoente de -350 a 350 e de hexadecimais ao acaso igual ao `strtod` e ao `strtof` em bits e no fim do
+  texto, e o caminho exacto (decimal de precisao arbitraria) sozinho tambem; de 1 em 4 iteracoes os limites de intervalo que caem em decimais curtos e os pontos medios exactos entre
+  dois doubles vizinhos escritos com ate 780 algarismos (empates e a vizinhanca). Mais todas as potencias de 2 e de 10 com duas vizinhas de cada lado. Corridas desta ronda:
+  **102 milhoes de iteracoes** em 5 corridas de semente diferente (A em C e B em pt_BR pararam aos 15 milhoes cada, com o oracle de antes; D em C, E em pt_BR e F em C correram 24 milhoes cada, com o oracle corrigido), **3 falhas, todas do oracle** (nas corridas A e B): tres hexadecimais subnormais de
+  mais de 53 bits em que o `strtod` da glibc arredonda mal (`0X5EdD31.8F9BE4E6p-1045`, `0XcDc.Bf866f417D4p-1035`, `0X98A382a242e7eCp-1078`; aritmetica exacta em Python da a razao
+  a `ct::parse_double`); com o oracle corrigido (salta o valor nesses casos) 72 milhoes de iteracoes sem falhas; e 1 140 850 687 dos 2^32 `float` (26,6 %) escritos e lidos de volta sem
+  falhas (parou por falta de tempo, a maquina estava a carga 250). Alem do que o `ctest` corre (200000 iteracoes por teste, `CT_NUMCONV_ITERS` muda-o).
 - **Diferenciais com 1e6 de operacoes e semente fixa**: `Vector` contra um vetor de capacidade fixa (push, pop, insert, erase de
   intervalos, resize, assign, copia, move, swap, erase durante o ciclo), `Deque` contra um modelo com deslocamento (push e pop dos dois lados, resize, copia),
   `String` contra um vetor de `char` (push, append, insert, erase, resize, `append(s)`, copia, `substr`, `find`), `TreeMap` e `FlatMap` contra
   um vetor direto de 2048 chaves (ordem ascendente na iteracao, `validate()`), `HashMap` e `HashSet` contra um vetor direto de 4096 chaves
   (com copias, atribuicoes e moves pelo caminho).
 
-**Resultado**: um defeito real (6.1) e as melhorias de eficiencia de 6.2 a 6.5. Todos os outros testes passaram sem mexer em codigo.
-Tudo corre com ASan + UBSan.
+**Resultado da ronda 1**: um defeito real (6.1) e as melhorias de eficiencia de 6.2 a 6.5. Todos os outros testes passaram sem mexer em codigo.
+Tudo corre com ASan + UBSan. A ronda 2 acrescentou 45 testes (seccao 6, linhas 6 a 11, e `test_numconv`, `test_string_ops`, `test_pq_hole`, `test_hash_iter`, `test_hash_layout`, `test_vector_overwrite`) e o diferencial longo de `numconv.hpp`.
 
 ## 8. O que ficou por fazer
 
-- Etiquetas no `HashMap` so para chaves de texto (5.1) e carga de 87,5 %.
-- `to_float` rapido, `append_number(double)` rapido (5.4), `PriorityQueue` com a tecnica do buraco (5.6).
-- `Variant`, `Arena`, `Pool`, `Regex` contra `std::pmr`, RE2 e `std::regex`; EASTL.
-- `-O3` (nao se mediu se muda a ordem); `-march=native`.
+Da ronda 2 (cada ponto diz porque, ver a seccao 5):
+
+- **`BTreeMap` e `BTreeSet`** (5.9): nao se fez. `TreeMap` fica como esta (rubro-negra com `Pool`); 4 a 6 vezes atras da `btree_map` do abseil a 1e6.
+- **Carga maxima de 87,5 % no `HashMap`** (5.1, 5.2): medida com um prototipo e recusada (o `miss` de `int-int` passa de 24,5 para 71,7 instrucoes). O que a faria
+  possivel e uma tabela de grupos de 16 metas comparados de uma vez (SSE2/NEON e uma alternativa portatil), com o custo de 41 a 48 instrucoes por `hit` do absl e do boost
+  contra 25 da ct. Os bytes por elemento de `int-int` ficam em 23,6 (absl 11,8).
+- **Iterar um `HashMap` a 5 instrucoes por elemento** (5.3): pede armazenamento denso, que muda o `erase` e as referencias; nao se fez.
+- **`ct::sort` com comparador em entrada aleatoria** (5.7): 25 % mais instrucoes que `std::sort`; a particao por blocos nao se tentou.
+- **`Deque::push_front`** (5.6): 21,5 contra 13,3 instrucoes; nao se tentou.
+- **O tempo da ct desta ronda** so se mediu na `HashMap` (3.2b, 3 execucoes alternadas com a maquina a carga de 20 a 25 e ruido de ate 30 %) e no `==` de `String`: falta o tempo de `String` e dos numeros, e repetir a `HashMap` com a maquina livre. O tempo das outras bibliotecas e o da ronda 1.
+- **EASTL e RE2** (nao se compilaram: a EASTL pede dois repositorios, e o RE2 so tem o pacote desempacotado); `std::regex` nao se repetiu. Nao ha vector com armazenamento
+  interno (small vector) na ct para medir. `Span` mede-se so contra um ponteiro cru (o `std::span` e C++20 e esta bateria compila em C++17).
+- **Json, Ini, Xml e TextReader** continuam a ler e a escrever `double` com `strtod` e `snprintf` e a tratar o locale a mao: podiam usar `ct::parse_double` e
+  `ct::write_shortest`, mas o texto que o `Json::dump` escreve mudaria (o Json escolhe 15, 16 ou 17 algarismos e o limite do expoente depende deles; o mais curto
+  escreve `5e-324` onde o Json escreve `4.9406564584124654e-324`), por isso nao se mexeu. O caminho lento de `json_append_double` continua por exercitar (docs/SUSPEITAS.md).
+
+Das anteriores:
+
 - Falha de alocacao (nao ha caminho de erro, ver 7).
-- `Vector` de 1 elemento com capacidade 8; `reserve` do `String` a dobrar a partir do SSO (5.5, 5.8).
-- `String::to_int` fora do intervalo (docs/SUSPEITAS.md).
+- `Vector` de 1 elemento com capacidade 8; `reserve` do `String` a dobrar a partir do SSO.
+- `-march=native`.
 
 ## 9. Como repetir
 
@@ -789,6 +988,18 @@ tools/bench_compare.sh layout     # sizeof vazio, carga, bytes por elemento, cre
 tools/bench_compare.sh compile    # tempo e memoria do compilador, tamanho do objeto
 tools/bench_compare.sh tables     # junta tudo em build-compare/out/tables.md (tools/bench_tables.py)
 ```
+
+Os numeros da ronda 2 repetem-se assim (g++ 13.3, `-O2`; `CT_COMPARE_OPT=-O3` para a seccao 3.6):
+
+```sh
+CT_COMPARE_BUILD=/tmp/antes CT_COMPARE_OPT="-O2" tools/bench_compare.sh build   # com os cabecalhos de origin/main (7fef995) em include/
+CMP_CPUTIME=1 /tmp/antes/cmp_map ct build int-b256 100000                      # tempo de CPU em vez do relogio
+cmake -S . -B build && cmake --build build --target ct_numconv_diff              # o diferencial longo de numconv.hpp
+build/ct_numconv_diff 50000000 1                                                # 5e7 doubles ao acaso, semente 1
+build/ct_numconv_diff 24000000 2 pt_BR.utf8                                     # o mesmo com a ct num locale de virgula
+build/ct_numconv_diff --float-all 1 0                                           # os 2^32 floats, texto mais curto
+```
+
 
 `CT_COMPARE_QUICK=1` so faz N = 1e3 e 1e5; `CT_COMPARE_ONLY=map` so a familia `map` na etapa `time`; `CT_COMPARE_THIRD`,
 `CT_COMPARE_OUT`, `CT_COMPARE_BUILD` mudam as pastas. Todos os comandos correm num scope do systemd com `MemoryMax=4G` e a

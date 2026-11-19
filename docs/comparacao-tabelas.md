@@ -1,7 +1,320 @@
 # Tabelas completas da comparacao
 
-Geradas por `tools/bench_compare.sh tables` (ver docs/COMPARACAO.md). Tempo = uma execucao completa com a ct de origin/main (antes das correcoes).
+Geradas por `tools/bench_compare.sh tables` (ver docs/COMPARACAO.md). Esta ronda refez as **instrucoes** (deterministicas) de todos os
+cenarios da `ct`, as da familia nova `extra` e os cenarios novos de `string` e `vector`, a **memoria** e o **layout**; o **tempo** das
+bibliotecas e o da primeira passagem da ronda 1 (uma execucao completa com a ct de origin/main de 7fef995, a maquina a carga de 4 a 12) e nao se
+refez, porque nesta ronda a carga foi de 25 a 60 e os relogios nao se comparam: o da ct nova so se mediu na `HashMap` (seccao 3.2b do COMPARACAO.md).
 
+### Instrucoes por operacao (callgrind, N = 1e5, ronda 2; as outras bibliotecas da ronda 1)
+
+#### Ir por operacao, vector
+
+| cenario | tipo | N | ct | std | boost | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|
+| build | int | 100000 | 13.4 | 16.2 | 18.8 | 0.82 |
+| build_reserved | int | 100000 | 12.0 | 11.0 | 13.0 | 1.09 |
+| iterate | int | 100000 | 5.0 | 5.0 | 5.0 | 1.00 |
+| copy | int | 100000 | 4.0 | 4.0 | 4.0 | 1.00 |
+| insert_mid | int | 100000 | 19007.6 | 18994.2 | 19184.8 | 1.00 |
+| build | p16 | 100000 | 15.4 | 24.6 | 43.2 | 0.62 |
+| build_reserved | p16 | 100000 | 14.0 | 13.0 | 16.0 | 1.07 |
+| iterate | p16 | 100000 | 6.0 | 6.0 | 6.0 | 1.00 |
+| copy | p16 | 100000 | 1.8 | 1.8 | 1.8 | 1.00 |
+| insert_mid | p16 | 100000 | 75822.0 | 75804.5 | 76581.9 | 1.00 |
+| build | mo | 100000 | 35.6 | 33.6 | 51.7 | 1.06 |
+| build_reserved | mo | 100000 | 25.0 | 23.0 | 27.0 | 1.09 |
+| iterate | mo | 100000 | 6.0 | 6.0 | 6.0 | 1.00 |
+| insert_mid | mo | 100000 | 404063.0 | 404036.0 | 404588.8 | 1.00 |
+| resize_fill | int | 100000 | 9.0 | 9.0 | 9.0 | 1.00 |
+| resize_overwrite | int | 100000 | 5.0 | 9.0 | 5.0 | 1.00 |
+| resize_fill | p16 | 100000 | 9.5 | 12.0 | 12.0 | 0.79 |
+| resize_overwrite | p16 | 100000 | 7.0 | 12.0 | 7.0 | 1.00 |
+| resize_fill | mo | 100000 | 21.0 | 20.0 | 22.0 | 1.05 |
+| resize_overwrite | mo | 100000 | 21.0 | 20.0 | 22.0 | 1.05 |
+
+#### Ir por operacao, map
+
+| cenario | tipo | N | ct | std | absl | boost | ankerl | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| build | int-int | 100000 | 129.5 | 583.8 | 223.8 | 137.9 | 199.0 | 0.94 |
+| hit | int-int | 100000 | 24.9 | 30.4 | 47.6 | 41.5 | 49.2 | 0.82 |
+| miss | int-int | 100000 | 24.5 | 24.1 | 45.7 | 37.9 | 48.3 | 1.01 |
+| erase | int-int | 100000 | 41.9 | 213.4 | 78.4 | 52.3 | 110.1 | 0.80 |
+| iterate | int-int | 100000 | 17.4 | 5.0 | 14.0 | 16.9 | 5.0 | **3.47** |
+| copy | int-int | 100000 | 23.0 | 453.5 | 53.5 | 12.5 | 12.7 | **1.84** |
+| build | s8-int | 100000 | 332.1 | 735.1 | 536.3 | 368.6 | 375.4 | 0.90 |
+| hit | s8-int | 100000 | 125.0 | 133.3 | 149.6 | 149.0 | 151.1 | 0.94 |
+| miss | s8-int | 100000 | 83.1 | 94.0 | 101.7 | 109.5 | 124.5 | 0.88 |
+| erase | s8-int | 100000 | 139.4 | 328.1 | 176.0 | 198.5 | 308.5 | 0.79 |
+| iterate | s8-int | 100000 | 18.8 | 5.0 | 14.2 | 17.9 | 5.0 | **3.74** |
+| copy | s8-int | 100000 | 60.0 | 516.5 | 160.2 | 88.4 | 54.5 | **1.10** |
+| build | s40-int | 100000 | 882.0 | 1200.5 | 1098.3 | 849.7 | 817.5 | 1.08 |
+| hit | s40-int | 100000 | 165.0 | 178.8 | 221.9 | 182.2 | 170.2 | 0.97 |
+| miss | s40-int | 100000 | 124.9 | 142.0 | 175.7 | 144.8 | 146.1 | 0.88 |
+| erase | s40-int | 100000 | 329.2 | 519.4 | 400.5 | 377.8 | 475.1 | 0.87 |
+| iterate | s40-int | 100000 | 18.8 | 5.0 | 14.2 | 17.9 | 5.0 | **3.74** |
+| copy | s40-int | 100000 | 483.0 | 937.5 | 655.2 | 507.5 | 475.8 | 1.02 |
+| build | s20-int | 100000 | 466.9 | 1195.1 | 1074.4 | 799.2 | 794.7 | 0.59 |
+| hit | s20-int | 100000 | 169.4 | 176.6 | 214.1 | 161.1 | 163.2 | 1.05 |
+| miss | s20-int | 100000 | 127.3 | 137.1 | 166.0 | 121.3 | 136.3 | 1.05 |
+| erase | s20-int | 100000 | 186.8 | 517.3 | 392.6 | 356.8 | 458.2 | 0.52 |
+| iterate | s20-int | 100000 | 18.8 | 5.0 | 14.2 | 17.9 | 5.0 | **3.74** |
+| copy | s20-int | 100000 | 60.0 | 936.5 | 643.2 | 506.5 | 474.8 | 0.13 |
+| build | int-b256 | 100000 | 788.1 | 824.0 | 432.5 | 328.4 | 416.0 | **2.40** |
+| hit | int-b256 | 100000 | 36.7 | 31.8 | 53.6 | 44.6 | 53.2 | **1.15** |
+| miss | int-b256 | 100000 | 31.0 | 23.4 | 48.1 | 38.0 | 48.3 | **1.32** |
+| erase | int-b256 | 100000 | 291.3 | 306.9 | 78.4 | 54.3 | 149.4 | **5.36** |
+| iterate | int-b256 | 100000 | 19.4 | 6.0 | 15.5 | 19.0 | 6.0 | **3.23** |
+| copy | int-b256 | 100000 | 565.7 | 595.8 | 87.0 | 30.6 | 48.5 | **18.47** |
+
+#### Ir por operacao, string
+
+| cenario | tipo | N | ct | std | charconv | libc | fmt | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| create | len8 | 100000 | 52.0 | 73.0 | - | - | - | 0.71 |
+| create | len16 | 100000 | 50.0 | 323.0 | - | - | - | 0.15 |
+| create | len24 | 100000 | 262.0 | 323.0 | - | - | - | 0.81 |
+| create | len40 | 100000 | 263.0 | 324.0 | - | - | - | 0.81 |
+| append_char | char | 100000 | 20.1 | 19.3 | - | - | - | 1.04 |
+| eq | len40 | 100000 | 53.6 | 45.6 | - | - | - | **1.18** |
+| concat | len30 | 100000 | 392.0 | 516.1 | - | - | - | 0.76 |
+| int2s | full | 100000 | 126.3 | 218.9 | 230.5 | 665.8 | 146.5 | 0.86 |
+| s2int | full | 100000 | 90.0 | 306.2 | 141.3 | 290.2 | - | 0.64 |
+| dbl2s | d | 100000 | 306.5 | - | 849.0 | 2450.2 | 1036.1 | 0.36 |
+| s2f32 | f | 100000 | 132.3 | 549.3 | 184.5 | 537.3 | - | 0.72 |
+| d2short | d | 100000 | 476.6 | - | 929.2 | 4037.5 | 1212.4 | 0.51 |
+| d2short | wide | 100000 | 453.5 | - | 837.7 | 3696.2 | 1281.0 | 0.54 |
+| s2f64 | f | 100000 | 134.2 | 554.3 | 187.3 | 542.3 | - | 0.72 |
+| s2f64 | long | 100000 | 240.2 | 1151.1 | 290.3 | 1139.1 | - | 0.83 |
+| s2f64 | wide | 100000 | 325.7 | 1212.8 | 350.4 | 1200.8 | - | 0.93 |
+
+#### Ir por operacao, sort
+
+| cenario | tipo | N | ct:sort | ct:sort_nocmp | std:sort | boost:sort | boost:spread | ct:stable | std:stable | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| - | int.random | 100000 | 163.1 | 76.1 | 128.2 | 118.0 | 95.5 | 221.6 | 193.4 | 0.80 |
+| - | p16.random | 100000 | 167.1 | - | 135.9 | 121.2 | - | 264.7 | 206.6 | **1.38** |
+| - | int.sorted | 100000 | 7.0 | 7.0 | 117.2 | 11.0 | 8.0 | 92.0 | 119.4 | 0.88 |
+| - | p16.sorted | 100000 | 7.0 | - | 105.6 | 10.0 | - | 139.6 | 176.0 | 0.70 |
+| - | int.reversed | 100000 | 10.0 | 69.1 | 88.1 | 18.5 | 83.8 | 201.4 | 132.5 | 0.54 |
+| - | p16.reversed | 100000 | 10.0 | - | 84.4 | 18.5 | - | 293.7 | 205.4 | 0.54 |
+| - | int.dups | 100000 | 134.8 | 47.1 | 110.3 | 32.5 | 29.6 | 213.9 | 189.7 | **1.59** |
+| - | p16.dups | 100000 | 134.7 | - | 125.3 | 32.3 | - | 257.5 | 203.8 | **4.17** |
+
+#### Ir por operacao, misc
+
+| cenario | tipo | N | ct | std | boost | ctree | cflat | stdmap | btree | bflat | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| push_back | int | 100000 | 15.4 | 16.5 | 21.9 | - | - | - | - | - | 0.93 |
+| push_front | int | 100000 | 21.5 | 13.3 | 19.7 | - | - | - | - | - | **1.62** |
+| iterate | int | 100000 | 7.0 | 7.0 | 7.1 | - | - | - | - | - | 1.00 |
+| drain | int | 100000 | 6.0 | 12.1 | 12.1 | - | - | - | - | - | 0.50 |
+| fifo | int | 100000 | 18.0 | 29.5 | 27.9 | - | - | - | - | - | 0.65 |
+| push_back | p16 | 100000 | 18.4 | 44.4 | 41.5 | - | - | - | - | - | 0.44 |
+| push_front | p16 | 100000 | 40.2 | 27.0 | 38.5 | - | - | - | - | - | **1.49** |
+| iterate | p16 | 100000 | 10.0 | 8.1 | 8.2 | - | - | - | - | - | **1.23** |
+| drain | p16 | 100000 | 10.0 | 19.5 | 19.5 | - | - | - | - | - | 0.51 |
+| fifo | p16 | 100000 | 25.0 | 46.2 | 42.5 | - | - | - | - | - | 0.59 |
+| build | int | 10000 | - | - | - | 397.2 | 2100.1 | 628.3 | 442.6 | 15343.2 |  |
+| hit | int | 10000 | - | - | - | 85.0 | 152.5 | 145.6 | 269.7 | 149.5 |  |
+| erase | int | 10000 | - | - | - | 298.9 | 18883.6 | 374.3 | 498.0 | 12517.1 |  |
+| pushpop | int | 100000 | 272.7 | 308.8 | - | - | - | - | - | - | 0.88 |
+| construct_small | int(int) | 100000 | 28.0 | 27.0 | - | - | - | - | - | - | 1.04 |
+| construct_big | int(int) | 100000 | 269.0 | 297.0 | - | - | - | - | - | - | 0.91 |
+| call | int(int) | 100000 | 18.0 | 17.0 | - | - | - | - | - | - | 1.06 |
+| copy | int(int) | 100000 | 298.0 | 326.0 | - | - | - | - | - | - | 0.91 |
+
+#### Ir por operacao, extra
+
+| cenario | tipo | N | ct | std | raw | ct / melhor outro |
+|---|---|---:|---:|---:|---:|---:|
+| construct | mix3 | 100000 | 68.7 | 70.4 | - | 0.98 |
+| visit | mix3 | 100000 | 17.0 | 18.4 | - | 0.93 |
+| copy_assign | mix3 | 100000 | 34.1 | 36.3 | - | 0.94 |
+| alloc64 | node16 | 100000 | 28.0 | 27.1 | - | 1.03 |
+| create_nodes | node16 | 100000 | 32.0 | 33.1 | - | 0.97 |
+| cycle | node16 | 100000 | 718.3 | 582.5 | - | **1.23** |
+| fifo | int | 100000 | 18.0 | 22.6 | - | 0.80 |
+| sum | int | 100000 | 5.0 | - | 5.0 | 1.00 |
+| sub | int | 100000 | 6.4 | - | 3.5 | **1.85** |
+
+### Matriz da ct, antes e depois (instrucoes por operacao, N = 1e3 e 1e5, todos os tipos)
+
+Colunas: cenario, antes (origin/main), depois. HashMap (`ct`):
+
+```
+ct build int-int 1000                  112.2     112.2
+ct hit int-int 1000                     27.9      27.9
+ct miss int-int 1000                    31.3      31.3
+ct erase int-int 1000                   50.8      50.8
+ct iterate int-int 1000                 17.4      17.4
+ct copy int-int 1000                    17.2      17.2
+ct churn int-int 1000                  144.1     144.1
+ct build int-int 100000                129.5     129.5
+ct hit int-int 100000                   24.9      24.9
+ct miss int-int 100000                  24.5      24.5
+ct erase int-int 100000                 41.9      41.9
+ct iterate int-int 100000               17.4      17.4
+ct copy int-int 100000                  23.0      23.0
+ct churn int-int 100000                116.4     116.4
+ct build int-p16 1000                  118.4     118.4
+ct hit int-p16 1000                     31.8      31.8
+ct miss int-p16 1000                    34.5      34.5
+ct erase int-p16 1000                   52.9      52.9
+ct iterate int-p16 1000                 18.6      18.6
+ct copy int-p16 1000                    19.2      19.3
+ct churn int-p16 1000                  151.8     151.8
+ct build int-p16 100000                136.2     136.2
+ct hit int-p16 100000                   28.5      28.5
+ct miss int-p16 100000                  26.1      26.1
+ct erase int-p16 100000                 43.6      43.6
+ct iterate int-p16 100000               18.8      18.8
+ct copy int-p16 100000                  25.0      25.0
+ct churn int-p16 100000                122.3     122.3
+ct build int-mo 1000                   147.1     142.6
+ct hit int-mo 1000                      33.3      33.3
+ct miss int-mo 1000                     36.2      36.2
+ct erase int-mo 1000                    67.4      67.4
+ct iterate int-mo 1000                  18.6      18.6
+ct copy int-mo 1000                     -nan      -nan
+ct churn int-mo 1000                   166.1     166.1
+ct build int-mo 100000                 170.4     164.5
+ct hit int-mo 100000                    29.8      29.8
+ct miss int-mo 100000                   26.9      26.9
+ct erase int-mo 100000                  57.6      57.6
+ct iterate int-mo 100000                18.8      18.8
+ct copy int-mo 100000                   -nan      -nan
+ct churn int-mo 100000                 134.6     134.6
+ct build int-b256 1000                 318.7     769.0
+ct hit int-b256 1000                    34.8      40.6
+ct miss int-b256 1000                   37.8      42.0
+ct erase int-b256 1000                  69.3     302.0
+ct iterate int-b256 1000                21.1      19.4
+ct copy int-b256 1000                   52.2     558.0
+ct churn int-b256 1000                 345.7     519.5
+ct build int-b256 100000               351.4     788.1
+ct hit int-b256 100000                  31.1      36.7
+ct miss int-b256 100000                 27.7      31.0
+ct erase int-b256 100000                57.3     291.3
+ct iterate int-b256 100000              21.4      19.4
+ct copy int-b256 100000                 58.0     565.7
+ct churn int-b256 100000               302.4     496.1
+ct build s8-int 1000                   332.6     290.5
+ct hit s8-int 1000                     133.8     132.4
+ct miss s8-int 1000                    137.4      99.3
+ct erase s8-int 1000                   173.0     149.3
+ct iterate s8-int 1000                  18.6      18.6
+ct copy s8-int 1000                     51.9      49.9
+ct churn s8-int 1000                   443.4     313.5
+ct build s8-int 100000                 391.8     332.1
+ct hit s8-int 100000                   122.7     125.0
+ct miss s8-int 100000                   97.3      83.1
+ct erase s8-int 100000                 153.4     139.4
+ct iterate s8-int 100000                18.8      18.8
+ct copy s8-int 100000                   60.7      60.0
+ct churn s8-int 100000                 351.6     277.2
+ct build s20-int 1000                  443.1     403.7
+ct hit s20-int 1000                    179.9     176.2
+ct miss s20-int 1000                   176.6     140.3
+ct erase s20-int 1000                  250.7     196.2
+ct iterate s20-int 1000                 18.6      18.6
+ct copy s20-int 1000                    51.9      49.9
+ct churn s20-int 1000                  644.8     401.5
+ct build s20-int 100000                527.5     466.9
+ct hit s20-int 100000                  167.1     169.4
+ct miss s20-int 100000                 142.1     127.3
+ct erase s20-int 100000                222.7     186.8
+ct iterate s20-int 100000               18.8      18.8
+ct copy s20-int 100000                  60.7      60.0
+ct churn s20-int 100000                510.3     365.5
+ct build s40-int 1000                  906.0     890.6
+ct hit s40-int 1000                    169.9     171.3
+ct miss s40-int 1000                   157.8     136.2
+ct erase s40-int 1000                  383.7     337.3
+ct iterate s40-int 1000                 18.6      18.6
+ct copy s40-int 1000                   517.8     515.8
+ct churn s40-int 1000                  877.2     640.9
+ct build s40-int 100000                910.2     882.0
+ct hit s40-int 100000                  160.6     165.0
+ct miss s40-int 100000                 134.7     124.9
+ct erase s40-int 100000                360.3     329.2
+ct iterate s40-int 100000               18.8      18.8
+ct copy s40-int 100000                 483.8     483.0
+ct churn s40-int 100000                747.4     606.3
+```
+
+String (`ct` e `std` na mesma corrida):
+
+```
+ct create len8 1000                     54.0      54.0
+ct copy len8 100                        44.6      44.6
+ct create len16 1000                    52.0      52.0
+ct copy len16 100                       44.6      44.6
+ct create len24 1000                   264.1     264.1
+ct copy len24 100                      284.0     284.0
+ct create len40 1000                   265.1     265.1
+ct copy len40 100                      285.0     285.0
+ct eq len40 1000                        60.6      55.6
+ct lt len40 1000                        70.4      61.4
+ct concat len30 1000                   631.1     394.1
+ct append_char char 1000                27.7      23.9
+ct append_piece piece16 250             46.2      46.2
+std create len8 1000                    75.0      75.0
+std copy len8 100                       85.6      85.6
+std create len16 1000                  327.5     327.5
+std copy len16 100                     360.8     360.7
+std create len24 1000                  327.5     327.5
+std copy len24 100                     360.8     360.7
+std create len40 1000                  328.5     328.5
+std copy len40 100                     361.8     361.7
+std eq len40 1000                       47.6      47.6
+std lt len40 1000                       58.1      58.1
+std concat len30 1000                  526.0     532.0
+std append_char char 1000               31.5      31.5
+std append_piece piece16 250           129.1     127.0
+ct find needle8 1000                     4.6       4.6
+ct int2s full 1000                     187.5     128.2
+ct s2int full 1000                     176.9      91.7
+ct int2s small 1000                    126.8      65.1
+ct s2int small 1000                     75.3      67.1
+ct dbl2s d 1000                       2574.4     308.5
+ct s2f32 f 1000                        661.5     134.2
+ct create len8 100000                   52.0      52.0
+ct copy len8 10000                      25.2      25.2
+ct create len16 100000                  50.0      50.0
+ct copy len16 10000                     25.2      25.2
+ct create len24 100000                 262.0     262.0
+ct copy len24 10000                    263.2     263.2
+ct create len40 100000                 263.0     263.0
+ct copy len40 10000                    264.2     264.2
+ct eq len40 100000                      58.6      53.6
+ct lt len40 100000                      68.5      59.5
+ct concat len30 100000                 629.0     392.0
+ct append_char char 100000              24.1      20.1
+ct append_piece piece16 25000           36.8      36.8
+std create len8 100000                  73.0      73.0
+std copy len8 10000                     66.2      66.2
+std create len16 100000                323.0     323.0
+std copy len16 10000                   316.4     316.4
+std create len24 100000                323.0     323.0
+std copy len24 10000                   316.4     316.4
+std create len40 100000                324.0     324.0
+std copy len40 10000                   317.4     317.4
+std eq len40 100000                     45.6      45.6
+std lt len40 100000                     56.2      56.2
+std concat len30 100000                516.1     522.1
+std append_char char 100000             19.3      19.3
+std append_piece piece16 25000          79.9      77.9
+ct find needle8 100000                   2.7       2.7
+ct int2s full 100000                   185.6     126.3
+ct s2int full 100000                   175.3      90.0
+ct int2s small 100000                  124.9      63.2
+ct s2int small 100000                   73.4      65.1
+ct dbl2s d 100000                     2572.2     306.5
+ct s2f32 f 100000                      659.3     132.3
+```
+
+### Tempo (a ct de origin/main de 7fef995, antes das correcoes da ronda 1; ronda 1)
 
 #### ns por operacao (a ct de origin/main, antes das correcoes), vector
 

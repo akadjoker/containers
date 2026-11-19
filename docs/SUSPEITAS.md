@@ -27,6 +27,22 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
 - Tambem nunca corre `json_strtod_locale` com um numero de mais de 63 caracteres nos testes de antes; um diferencial
   contra `strtod` com 1000000 de numeros de ate 120 digitos, com expoente e sinal, nao deu nenhuma diferenca.
 
+### Json, Ini, Xml e TextReader leem e escrevem double por conta propria
+
+- `include/ct/json.hpp` (`json_append_double`, `json_to_double`), `ini.hpp`, `xml.hpp` e `text.hpp` usam `strtod` e `snprintf` e tratam o
+  locale a mao, cada um a sua maneira. Desde a ronda 2 existe `ct/numconv.hpp` (leitura correcta e texto mais curto, sem locale e
+  sem a biblioteca standard) e qualquer um podia usa-lo, mas o texto que o `Json::dump` escreve mudaria (escolhe 15, 16 ou 17
+  algarismos e o limite do expoente depende deles; o mais curto escreve `5e-324` onde o Json escreve `4.9406564584124654e-324`),
+  por isso nao se mexeu. Se se fizer, o caminho lento de `json_append_double` acima deixa de existir e esta suspeita com ele.
+
+### O strtod e o strtof da glibc arredondam mal alguns hexadecimais subnormais
+
+- Com mais de 53 bits de mantissa e um resultado subnormal: `0X5EdD31.8F9BE4E6p-1045`, `0XcDc.Bf866f417D4p-1035` e
+  `0X98A382a242e7eCp-1078` em double (o `strtod` da ...c, ...e e ...e; o certo e o valor mais um, confirmado com aritmetica exacta
+  em Python) e `0x1.8b9ff5p-128` em float (...fe, o certo e ...ff). A `ct::parse_double` e a `parse_float` dao o certo. Quem
+  compare a `ct` com o `strtod` nesses hexadecimais tem de contar com isto: `tests/numconv_check.hpp` salta o valor
+  nesses casos e compara so o fim do texto.
+
 ### Json aceita bytes que nao sao UTF-8
 
 - `parse_string_raw` copia os bytes a partir de 0x20 sem validar UTF-8 (rejeita surrogates soltos nos escapes `\u`).

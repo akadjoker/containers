@@ -289,9 +289,8 @@ namespace ct
             return o;
         }
 
-        // f > 0, valor f * 10^e; tira os zeros do fim e escreve. Com at_least o limite do expoente posicional e o maior de
-        // limit e do numero de algarismos (o de um %.{p}g com p = esse maior: 15 a 17 no Json e no Ini).
-        inline char *emit_decimal(char *o, uint64_t f, int e, int limit, bool at_least = false) noexcept
+        // f > 0, valor f * 10^e; tira os zeros do fim e escreve
+        inline char *emit_decimal(char *o, uint64_t f, int e, int limit) noexcept
         {
             while (f % 10 == 0)
             {
@@ -302,8 +301,6 @@ namespace ct
             char *end = dig + sizeof(dig);
             char *start = put_digits(end, f);
             const int nd = static_cast<int>(end - start);
-            if (at_least && nd > limit)
-                limit = nd;
             return emit_g(o, start, nd, e + nd - 1, limit);
         }
 
@@ -415,64 +412,48 @@ namespace ct
         }
     } // namespace detail
 
-    namespace detail
-    {
-        inline char *write_shortest_limit(double v, char *out, int limit, bool at_least) noexcept
-        {
-            uint64_t bits;
-            memcpy(&bits, &v, sizeof(bits));
-            const bool neg = (bits >> 63) != 0;
-            const int be = static_cast<int>((bits >> 52) & 0x7FF);
-            const uint64_t frac = bits & ((1ull << 52) - 1);
-            if (be == 0x7FF)
-                return write_special(neg, frac != 0, out);
-            char *o = out;
-            if (neg)
-                *o++ = '-';
-            uint64_t c, f;
-            int q, e;
-            if (be == 0)
-            {
-                if (frac == 0)
-                {
-                    *o++ = '0';
-                    return o;
-                }
-                c = frac;
-                q = -1074;
-            }
-            else
-            {
-                c = frac | (1ull << 52);
-                q = be - 1075;
-                const int mq = -q;
-                if (mq > 0 && mq < 53)
-                {
-                    f = c >> mq;
-                    if ((f << mq) == c)
-                        return emit_decimal(o, f, 0, limit, at_least);
-                }
-            }
-            schubfach(c, q, c == (1ull << 52) && be > 1, f, e);
-            return emit_decimal(o, f, e, limit, at_least);
-        }
-    } // namespace detail
-
-
     // Escreve em out (pelo menos 32 bytes) o texto mais curto de v que volta exactamente ao mesmo valor, com o
     // decimal mais proximo de v se houver varios da mesma largura: 0.1, 1e-05, 123456789, 1e+16, 5e-324. Posicional de
     // 1e-4 a 1e16 (exclusive), senao com expoente ('e', sinal, dois algarismos pelo menos). "nan", "inf", "-inf", "0",
     // "-0". Devolve o fim do texto (nao escreve o NUL). Nao depende do locale.
     inline char *write_shortest(double v, char *out) noexcept
     {
-        return detail::write_shortest_limit(v, out, 16, false);
-    }
-
-    // Como write_shortest, mas o expoente so aparece a partir de 10^max(min_limit, numero de algarismos) (como um %.{p}g com
-    // p de min_limit a 17, que e o que o Json e o Ini escreviam: write_shortest_at_least(v, out, 15)). Os algarismos sao os mesmos.
-    inline char *write_shortest_at_least(double v, char *out, int min_limit) noexcept
-    {
-        return detail::write_shortest_limit(v, out, min_limit, true);
+        uint64_t bits;
+        memcpy(&bits, &v, sizeof(bits));
+        const bool neg = (bits >> 63) != 0;
+        const int be = static_cast<int>((bits >> 52) & 0x7FF);
+        const uint64_t frac = bits & ((1ull << 52) - 1);
+        if (be == 0x7FF)
+            return detail::write_special(neg, frac != 0, out);
+        char *o = out;
+        if (neg)
+            *o++ = '-';
+        uint64_t c, f;
+        int q, e;
+        if (be == 0)
+        {
+            if (frac == 0)
+            {
+                *o++ = '0';
+                return o;
+            }
+            c = frac;
+            q = -1074;
+        }
+        else
+        {
+            c = frac | (1ull << 52);
+            q = be - 1075;
+            const int mq = -q;
+            if (mq > 0 && mq < 53)
+            {
+                f = c >> mq;
+                if ((f << mq) == c)
+                    return detail::emit_decimal(o, f, 0, 16);
+            }
+        }
+        detail::schubfach(c, q, c == (1ull << 52) && be > 1, f, e);
+        return detail::emit_decimal(o, f, e, 16);
     }
 
     inline char *write_shortest(float v, char *out) noexcept

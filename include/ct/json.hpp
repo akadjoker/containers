@@ -1,7 +1,7 @@
 #pragma once
 
 #include "detail/utils.hpp"
-#include "numconv.hpp"
+#include "detail/numconv_g.hpp"
 #include "string.hpp"
 #include "vector.hpp"
 

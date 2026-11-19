@@ -3,7 +3,7 @@
 #include <cerrno>
 #include <cstdlib>
 
-#include "numconv.hpp"
+#include "detail/numconv_g.hpp"
 #include "stream.hpp"
 
 namespace ct

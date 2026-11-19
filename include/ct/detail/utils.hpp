@@ -184,6 +184,11 @@ namespace ct
         using is_trivially_destructible_t =
             integral_constant<bool, std::is_trivially_destructible<T>::value>;
 
+        // Construir por omissao nao escreve nada (int, structs de tipos assim, arrays): __is_trivially_constructible e do
+        // GCC, do clang e do MSVC e evita juntar mais um nome do std
+        template <typename T>
+        using is_trivially_default_constructible_t = integral_constant<bool, __is_trivially_constructible(T)>;
+
         // Variant: T e "folha" se nao pode ser dona, directa ou por ponteiro, de um objecto que contenha o Variant de que
         // e alternativa. Atribuir ao Variant a partir de um membro do que ele guarda (cursor = cursor.get<Rc<No>>()->next)
         // so e perigoso quando a alternativa actual e dona da origem, porque destrui-la antes de copiar a origem e ler

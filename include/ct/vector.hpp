@@ -318,6 +318,39 @@ namespace ct
             end_ = data_ + n;
         }
 
+        // Como resize(n), mas os elementos novos de um tipo que se constroi sem escrever nada (int, float, structs de tipos
+        // assim) ficam como a memoria estava, sem os preencher com zeros: para buffers que se escrevem por inteiro logo
+        // a seguir. A capacidade cresce pelas mesmas regras do resize. Nos outros tipos (construcao nao trivial) constroi
+        // por omissao como o resize faz, por isso a chamada vale para qualquer T. Ler um elemento novo antes de o escrever
+        // e ler memoria nao inicializada (o MSan apanha-o).
+        void resize_for_overwrite(size_type n)
+        {
+            const size_type current = size();
+            if (n < current)
+            {
+                detail::destroy_n(data_ + n, current - n, trivial_dtor{});
+                end_ = data_ + n;
+                return;
+            }
+            if (n == current)
+                return;
+            reserve_for_growth(n);
+            default_init_new(current, n, detail::is_trivially_default_constructible_t<T>{});
+            end_ = data_ + n;
+        }
+
+        // Aumenta o tamanho de n e devolve o ponteiro para os n elementos novos (que ficam por escrever, como em
+        // resize_for_overwrite). Com n = 0 devolve end().
+        T *append_uninitialized(size_type n)
+        {
+            size_type target = 0;
+            if (!detail::checked_add(size(), n, target) || target > max_size())
+                detail::fatal("ct::Vector: capacidade invalida");
+            const size_type current = size();
+            resize_for_overwrite(target);
+            return data_ + current;
+        }
+
         void resize(size_type n, const T &value)
         {
             size_type sz = size();
@@ -484,6 +517,13 @@ namespace ct
             if (c > max_size() / 2)
                 detail::fatal("ct::Vector: capacidade invalida");
             change_capacity(c ? c * 2 : 8);
+        }
+
+        void default_init_new(size_type, size_type, detail::true_type) noexcept {}
+        void default_init_new(size_type from, size_type to, detail::false_type)
+        {
+            for (size_type i = from; i < to; ++i)
+                ::new (static_cast<void *>(data_ + i)) T();
         }
 
         void reserve_for_growth(size_type n)

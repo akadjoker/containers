@@ -175,6 +175,46 @@ template <class C, class T> static bool sc_resize(Runner &R, Result &out)
     return true;
 }
 
+// Redimensionar um vector reutilizado e escrever tudo a seguir (um buffer de indices ou de vertices por quadro): com o
+// resize que preenche com zeros, e sem preencher (ct::resize_for_overwrite, boost::container::default_init).
+template <class V> static auto resize_over(V &v, std::size_t n, int) -> decltype(v.resize_for_overwrite(n), void())
+{
+    v.resize_for_overwrite(n);
+}
+#ifdef CMP_BOOST
+template <class V> static auto resize_over(V &v, std::size_t n, long) -> decltype(v.resize(n, boost::container::default_init), void())
+{
+    v.resize(n, boost::container::default_init);
+}
+#endif
+template <class V> static void resize_over(V &v, std::size_t n, ...) { v.resize(n); } // sem equivalente (std::vector): o resize de sempre
+
+template <class C, class T> static bool sc_resize_fill_impl(Runner &R, Result &out, bool overwrite)
+{
+    const std::size_t N = R.n;
+    C v;
+    v.resize(N);
+    std::uint64_t chk = 0;
+    out = R.run(N, R.inner_for(N), [] {}, [&] {
+        v.clear();
+        if (overwrite)
+            resize_over(v, N, 0);
+        else
+            v.resize(N);
+        for (std::size_t i = 0; i < N; ++i)
+            v[i] = Mk<T>::make(i);
+        chk = Mk<T>::val(v[N / 2]) + v.size();
+        keep(v);
+    });
+    out.check = chk;
+    return true;
+}
+template <class C, class T> static bool sc_resize_fill(Runner &R, Result &out) { return sc_resize_fill_impl<C, T>(R, out, false); }
+template <class C, class T> static bool sc_resize_overwrite(Runner &R, Result &out)
+{
+    return sc_resize_fill_impl<C, T>(R, out, true);
+}
+
 template <class C, class T> static bool sc_insert_mid(Runner &R, Result &out)
 {
     const std::size_t N = R.n;
@@ -223,6 +263,8 @@ template <class C, class T> static int run_c(const char *impl, const char *scen,
     SC("move", sc_move)
     SC("clear", sc_clear)
     SC("resize", sc_resize)
+    SC("resize_fill", sc_resize_fill)
+    SC("resize_overwrite", sc_resize_overwrite)
     SC("insert_mid", sc_insert_mid)
     SC("erase_front", sc_erase_front)
 #undef SC

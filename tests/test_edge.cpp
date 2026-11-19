@@ -1173,7 +1173,17 @@ TEST(EdgeNumbers, StringToIntKnownValues)
     EXPECT_EQ(to_i("007"), 7);
 }
 
-// to_int tem de dar o mesmo que static_cast<int>(strtol(...)) em qualquer texto: diferencial com 1e6 textos.
+// to_int tem de dar o mesmo que o strtol, com o resultado preso ao intervalo do int (INT_MIN e INT_MAX em vez de dar a
+// volta), em qualquer texto: diferencial com 1e6 textos.
+namespace
+{
+    int saturated_strtol(const char *s)
+    {
+        const long long wide = strtoll(s, nullptr, 10);
+        return wide > INT_MAX ? INT_MAX : (wide < INT_MIN ? INT_MIN : static_cast<int>(wide));
+    }
+}
+
 TEST(EdgeNumbers, StringToIntMatchesStrtolOnRandomText)
 {
     Lcg rng(4242);
@@ -1190,13 +1200,16 @@ TEST(EdgeNumbers, StringToIntMatchesStrtolOnRandomText)
                                                 : alphabet[(r >> 4) % (sizeof(alphabet) - 1)];
         }
         buf[n] = '\0';
-        const int want = static_cast<int>(strtol(buf, nullptr, 10));
-        ASSERT_EQ(ct::String(buf).to_int(), want) << buf;
+        ASSERT_EQ(ct::String(buf).to_int(), saturated_strtol(buf)) << buf;
     }
     const char *edge[] = {"9223372036854775807", "9223372036854775808", "-9223372036854775808", "-9223372036854775809",
                           "99999999999999999999999", "-99999999999999999999999", "2147483648", "-2147483649", "4294967296"};
     for (const char *e : edge)
-        ASSERT_EQ(ct::String(e).to_int(), static_cast<int>(strtol(e, nullptr, 10))) << e;
+        ASSERT_EQ(ct::String(e).to_int(), saturated_strtol(e)) << e;
+    EXPECT_EQ(ct::String("2147483648").to_int(), INT_MAX);
+    EXPECT_EQ(ct::String("4294967296").to_int(), INT_MAX);
+    EXPECT_EQ(ct::String("3000000000").to_int(), INT_MAX);
+    EXPECT_EQ(ct::String("-2147483649").to_int(), INT_MIN);
 }
 
 TEST(EdgeNumbers, IntegerToTextMatchesPrintfOnRandomValues)

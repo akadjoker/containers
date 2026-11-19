@@ -374,8 +374,6 @@ include/ct/string.hpp	std::ptrdiff_t
 include/ct/string.hpp	std::size_t
 include/ct/string.hpp	std::snprintf
 include/ct/string.hpp	std::strlen
-include/ct/string.hpp	std::strtof
-include/ct/string.hpp	std::strtol
 include/ct/string.hpp	std::uint64_t
 include/ct/string.hpp	std::uintptr_t
 include/ct/string.hpp	std::underlying_type

@@ -128,7 +128,8 @@ add_executable(ct_tests
   tests/test_fuzz2.cpp
   tests/test_coverage.cpp
   tests/test_hardening.cpp
-  tests/test_edge.cpp)
+  tests/test_edge.cpp
+  tests/test_numconv.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)
@@ -149,6 +150,7 @@ set(CT_PUBLIC_HEADERS
   ct/ini.hpp
   ct/json.hpp
   ct/json_stream.hpp
+  ct/numconv.hpp
   ct/pool.hpp
   ct/priority_queue.hpp
   ct/ptr.hpp
@@ -198,6 +200,10 @@ add_custom_target(ct_headers DEPENDS ${CT_HEADER_TARGETS})
 add_executable(ct_torture
   tests/torture.cpp)
 target_link_libraries(ct_torture PRIVATE ct)
+
+add_executable(ct_numconv_diff tests/numconv_diff.cpp)
+target_include_directories(ct_numconv_diff PRIVATE tests)
+target_link_libraries(ct_numconv_diff PRIVATE ct)
 
 add_executable(ct_jsregex_cli
   tests/ct_jsregex_cli.cpp)

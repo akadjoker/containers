@@ -12,13 +12,6 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
 - `Json(NAN) == Json(NAN)` da falso e o `dump()` escreve `null`. Um documento com NaN nao e igual a si mesmo. E o que o
   IEEE manda para `double`; nao se mexeu.
 
-### String::to_int e a conversao silenciosa
-
-- `include/ct/string.hpp`, `to_int`: `static_cast<int>(std::strtol(...))`. `String("3000000000").to_int()` da
-  -1294967296 (o long cabe, o int nao) sem erro nenhum, e `to_int` e `to_float` nao tem como dizer que a string nao era
-  um numero (devolvem 0). Nao ha canal de erro para mudar sem mudar a assinatura; o `Ini::get_int` e o
-  `TextReader::read_int` recusam o fora do intervalo.
-
 ## Nao provadas
 
 ### Json: o caminho lento de json_append_double nao e exercitado

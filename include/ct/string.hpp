@@ -1,6 +1,7 @@
 #pragma once
 
 #include "detail/utils.hpp"
+#include "numconv.hpp"
 #include "vector.hpp"
 
 namespace ct
@@ -440,9 +441,14 @@ namespace ct
             return append_number(static_cast<typename std::underlying_type<E>::type>(v));
         }
 
+        // O mesmo texto que snprintf("%.*g", precision, v) no locale "C" (sempre com '.'). De 1 a 17 algarismos
+        // resolve-se sem o snprintf; fora disso, ou quando o arredondamento fica a menos de 2^-56 de um empate, e o
+        // proprio snprintf que escreve.
         String &append_number(double v, int precision = 6)
         {
             char tmp[64];
+            if (char *const e = detail::write_general(v, precision, tmp))
+                return append(tmp, static_cast<size_type>(e - tmp));
             const int n = std::snprintf(tmp, sizeof(tmp), "%.*g", precision, v);
             if (n <= 0)
                 return *this;
@@ -455,6 +461,18 @@ namespace ct
                     if (tmp[i] == dp)
                         tmp[i] = '.';
             return append(tmp, written);
+        }
+
+        // O texto mais curto que volta exactamente ao mesmo valor (ver ct::write_shortest em numconv.hpp).
+        String &append_number_shortest(double v)
+        {
+            char tmp[32];
+            return append(tmp, static_cast<size_type>(write_shortest(v, tmp) - tmp));
+        }
+        String &append_number_shortest(float v)
+        {
+            char tmp[32];
+            return append(tmp, static_cast<size_type>(write_shortest(v, tmp) - tmp));
         }
 
         static String number(long long v)
@@ -490,6 +508,18 @@ namespace ct
         {
             String s;
             s.append_number(v, precision);
+            return s;
+        }
+        static String number_shortest(double v)
+        {
+            String s;
+            s.append_number_shortest(v);
+            return s;
+        }
+        static String number_shortest(float v)
+        {
+            String s;
+            s.append_number_shortest(v);
             return s;
         }
 
@@ -649,43 +679,71 @@ namespace ct
             return compare(pos, n, String(s));
         }
 
-        // O mesmo resultado que static_cast<int>(strtol(c_str(), nullptr, 10)) (espacos iniciais, sinal, algarismos, o
-        // resto e ignorado, fora do intervalo do long fica no limite e depois e truncado para int), sem passar pelo
-        // strtol: metade das instrucoes.
+        // Espacos iniciais, sinal e algarismos; o resto e ignorado. Um valor fora do intervalo do int fica no limite
+        // (INT_MIN ou INT_MAX), e sem algarismos da 0. to_int(out) diz se o texto era mesmo um inteiro.
         int to_int() const
         {
-            const char *p = c_str();
-            while (is_space(*p))
+            const char *p = data();
+            const char *const end = p + size();
+            while (p != end && is_space(*p))
                 ++p;
-            const bool negative = *p == '-';
-            if (*p == '-' || *p == '+')
-                ++p;
-            const unsigned long limit = negative ? static_cast<unsigned long>((std::numeric_limits<long>::max)()) + 1ul
-                                                 : static_cast<unsigned long>((std::numeric_limits<long>::max)());
-            unsigned long value = 0;
-            for (; static_cast<unsigned>(*p - '0') < 10u; ++p)
-            {
-                const unsigned digit = static_cast<unsigned>(*p - '0');
-                if (value > (limit - digit) / 10ul)
-                {
-                    value = limit;
-                    break;
-                }
-                value = value * 10ul + digit;
-            }
-            const long signed_value = negative ? static_cast<long>(0ul - value) : static_cast<long>(value);
-            return static_cast<int>(signed_value);
+            bool negative = false;
+            if (p != end && (*p == '-' || *p == '+'))
+                negative = *p++ == '-';
+            std::uint64_t value;
+            detail::scan_uint(p, end, value);
+            return clamp_int(negative, value);
         }
+
+        // Espacos, sinal, um ou mais algarismos e espacos: nada mais. Devolve false (e out fica como estava) se o texto
+        // nao for isso ou o valor nao couber num int.
+        bool to_int(int &out) const
+        {
+            const char *p = data();
+            const char *const end = p + size();
+            while (p != end && is_space(*p))
+                ++p;
+            bool negative = false;
+            if (p != end && (*p == '-' || *p == '+'))
+                negative = *p++ == '-';
+            std::uint64_t value;
+            const char *const digits_end = detail::scan_uint(p, end, value);
+            if (digits_end == p)
+                return false;
+            p = digits_end;
+            while (p != end && is_space(*p))
+                ++p;
+            if (p != end)
+                return false;
+            const std::uint64_t limit = negative ? std::uint64_t(2147483648u) : std::uint64_t(2147483647u);
+            if (value > limit)
+                return false;
+            out = clamp_int(negative, value);
+            return true;
+        }
+
+        // Como o strtof no locale "C" (espacos iniciais, sinal, digitos com ponto e expoente, inf, nan, e
+        // hexadecimal), mas arredondado correctamente e sem depender do locale: o separador e sempre '.'.
         float to_float() const
         {
-            const char dp = detail::decimal_point();
-            if (dp == '.')
-                return std::strtof(c_str(), nullptr);
-            String local(*this); // num locale com virgula o strtof pararia no '.' de "1.5"
-            for (size_type i = 0; i < local.size(); ++i)
-                if (local[i] == '.')
-                    local[i] = dp;
-            return std::strtof(local.c_str(), nullptr);
+            const char *p = data();
+            const char *const end = p + size();
+            while (p != end && is_space(*p))
+                ++p;
+            float f;
+            parse_float(p, end, f);
+            return f;
+        }
+
+        double to_double() const
+        {
+            const char *p = data();
+            const char *const end = p + size();
+            while (p != end && is_space(*p))
+                ++p;
+            double d;
+            parse_double(p, end, d);
+            return d;
         }
 
         template <typename S>
@@ -743,6 +801,14 @@ namespace ct
         static bool is_space(char c)
         {
             return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f';
+        }
+
+        static int clamp_int(bool negative, std::uint64_t value) noexcept
+        {
+            if (negative)
+                return value >= std::uint64_t(2147483648u) ? (std::numeric_limits<int>::min)()
+                                                           : static_cast<int>(0 - static_cast<long long>(value));
+            return value >= std::uint64_t(2147483647u) ? (std::numeric_limits<int>::max)() : static_cast<int>(value);
         }
 
         // O conjunto como 256 bits: um teste por caracter em vez de um strchr. O NUL nunca esta (o conjunto acaba nele).

@@ -6,9 +6,25 @@ alternativas conhecidas, mais os casos limite que se testaram a seguir. Tudo o q
 
 ## 1. Resumo
 
-Duas rondas. A **ronda 1** mediu a `ct` contra `std`, abseil, boost e ankerl e deixou a lista de perdas das seccoes 5.x; a
-**ronda 2** fecha o que se podia fechar e diz com provas o que nao. Os numeros desta ronda estao nas seccoes 3.1 (instrucoes
-de todos os cenarios), 3.5 (antes e depois) e 3.6 (`-O3`); o tempo da ct desta ronda so se mediu na `HashMap` (3.2b) e no `==` de `String` (5.5); o resumo de cada ponto e a seccao 5.
+Tres rondas. A **ronda 1** mediu a `ct` contra `std`, abseil, boost e ankerl e deixou a lista de perdas das seccoes 5.x; a
+**ronda 2** fechou o que se podia fechar e disse com provas o que nao; a **ronda 3** fez o que a 2 deixou por fazer (a troca da `HashMap` com valores grandes, a arvore B, a ordenacao, os
+leitores de numeros) e repara o que a 2 piorou. Os numeros da ronda 2 estao nas seccoes 3.1 (instrucoes de todos os cenarios), 3.5 (antes e depois) e 3.6 (`-O3`); os da ronda 3 na **3.7**; o resumo de cada ponto e a seccao 5.
+
+**Ronda 3** (o "antes" e origin/main de 63793ca; instrucoes e contagens, porque o dono usava a maquina e o tempo de CPU nao vale mais que uma indicacao):
+- **Defeito da ronda 2, corrigido primeiro** (commit 62f7954, publicavel sozinho; 6.12): a `CT_DEBUG_ITERATORS` ligava-se pela ausencia de `NDEBUG` e mudava o layout do `HashMap` e do `HashSet`, por isso duas unidades de um programa com `NDEBUG` diferente corrompiam memoria em silencio. Agora a macro e explicita e as quatro macros que mudam layout ou comportamento inline levam um namespace inline com o valor no nome; teste de duas unidades e teste de ligacao que tem de falhar.
+- **`HashMap` com valores grandes** (3.7.1, 5.2): a chave fica no slot e o valor num bloco de um slab por mapa. `int-b256`, N = 1e5, instrucoes ronda 2 para ronda 3 (inline antes da ronda 2): `build` 788 para 321 (351), `hit` 36,7 para 30,8 (31,1),
+  `miss` 31,0 para 26,9 (27,7), `erase` 291 para 71 (57), `copy` 566 para 70 (58); alocacoes por construcao 100015 para 6265; **bytes por elemento 294,9 / 302,6 / 293,7 contra 290,5 / 295,6 / 290,9 da ronda 2 (alvo falhado por 1,5 a 2,4 %)**.
+  `CT_HASH_INLINE_MAX` fica em 128 (curva em 3.7.1). `iterate` de todos os mapas desce de 5 a 33 % (uma so carga para um grupo completo de metas).
+- **`BTreeMap` e `BTreeSet`** (3.7.2, 5.9): B+ arvore de nos de 512 bytes. Contra a `btree_map` do abseil, `int` a 1e4 e 1e6: instrucoes `hit` 263 contra 270, `erase` 272 contra 499, iterar 6,4 contra 18,7; bytes por elemento 10,3 e 10,0 contra 11,1;
+  o tempo (com ruido) a 1,1 a 1,17 vezes no `build`, `hit` e `miss` e a 0,5 a 0,8 no `erase` e na iteracao. **Com chaves de texto o `hit` custa 1,7 vezes as instrucoes do abseil** (3.7.2).
+- **`ct::sort` e `stable_sort`** (3.7.3, 5.7): particao por blocos para tipos pequenos e trivialmente copiaveis. `int` aleatorio a 1e6: **59,5 para 24,2 ns por elemento** (std 57,1), mispredicoes 6,97 para 1,96 por elemento, **mas 163 para 209 instrucoes**; repetidos 135 para 58 instrucoes;
+  `stable` ordenada e invertida de 92 e 201 para 7 e 11 instrucoes.
+- **Json, Ini, Xml, TextReader** sobre `numconv.hpp` (3.7.4, 5.4): `Json::dump` 324 para 82 ns por numero (2922 para 705 instrucoes), `parse` 230 para 148 ns (1067 para 559); 1e7 valores de ida e volta sem falhas; o texto muda em 2,6 % dos valores, sempre para mais curto ou mais proximo.
+- **`Pool`** 717 para 174 instrucoes por ciclo (new e delete 583) e o `TreeMap` -17 % no `build` e -37 % no `erase` (3.7.5). `Span::subspan` e `Deque::push_front` nao se fecham e `String::==` desfez-se, com a causa (3.7.5).
+- **`HashMap` `miss` com chaves `int`: saltos falhados**: um prototipo de sondagem de dois slots nao reduz os 0,84 saltos falhados e custa de 14 a 19 % de instrucoes: nao se fez (3.7.6).
+- **EASTL e RE2** medidos (3.7.7): a `hash_map` da EASTL ganha a ct em instrucoes de `hit` e `miss` de `int-int` (19,0 e 15,5 contra 24,9 e 24,5) e perde o resto; a `ct::Regex` e mais depressa que a `std::regex` em tudo e 0,2 a 39 vezes o tempo do RE2.
+- **Mudancas que se notam**: 5.2 (a referencia ao valor de uma entrada de mais de 128 bytes sobrevive ao rehash, a `.value` de uma `const Entry &` nao e const, os blocos dos apagados so voltam no `clear`), 5.7 (`stable_sort` pede n elementos de memoria em vez de n/2 para tipos pequenos),
+  5.4 (o texto de numeros reais do Json e do Ini, 3.7.4) e 6.13 (`Xml::attr_double` com virgula decimal no locale).
 
 - **Onde a ct ganha agora** (instrucoes por operacao a N = 1e5; ct contra o melhor dos outros, e o que era antes): `String::number(double)`
   307 contra 849 de `std::to_chars` (antes 2572); `String::to_float` 133 contra 185 de `from_chars` (antes 659); `String::to_int` 90 contra 141 (antes 175);
@@ -20,14 +36,14 @@ de todos os cenarios), 3.5 (antes e depois) e 3.6 (`-O3`); o tempo da ct desta r
   ate 23 caracteres, `Variant` e fila circular (seccao 5.11), compilacao.
 - **Onde empata**: o que ja empatava (leitura e acesso de `Vector`, `String::find`, `sort` com comparador em tempo) e,
   nesta ronda, `append_char` (20 contra 19 instrucoes), `Arena` (28 contra 27) e `==` de 40 caracteres (54 contra 46: as instrucoes do SSO).
-- **Onde ainda perde** (seccao 5, com causa e prova): `HashMap` com chaves `int` em tabelas de tamanho medio contra abseil e
+- **Onde ainda perde** (seccao 5, com causa e prova; os pontos da ronda 2 que a 3 fechou estao marcados com *ronda 3*): `HashMap` com chaves `int` em tabelas de tamanho medio contra abseil e
   boost (o `miss` custa 0,84 mispredicoes de salto por operacao contra 0,40 e 0,18: e o salto do ciclo de sondagem, e subir a
   carga maxima com sondagem linear rebenta o `miss` 3 a 5 vezes); bytes por elemento de `HashMap` com chaves `int` (23,6 contra 11,8 do abseil, carga maxima de
-  75 %); iterar um `HashMap` (17 contra 5 da ankerl, que guarda os pares densos); `HashMap` com valores grandes **sobe** nas instrucoes (uma alocacao por elemento:
+  75 %); iterar um `HashMap` (17 contra 5 da ankerl, que guarda os pares densos); `HashMap` com valores grandes **subia** nas instrucoes (*resolvido na ronda 3, 3.7.1*; uma alocacao por elemento:
   `build` 351 para 788, `hit` 31 para 37, `miss` 28 para 31, `erase` 57 para 291, `copy` 58 para 566; em tempo `build` 2,8 vezes mais rapido, `hit` +49 %, `miss` +59 %, `erase` 5,7 vezes mais
   lento) como preco de metade da memoria, e perde para o abseil e o boost nas instrucoes (`CT_HASH_INLINE_MAX` desliga-o); `hit` de `HashMap` com chaves de texto sobe 1 a 3 % (o preco da distancia na meta, que paga o resto); `Pool` (718 contra 583 de `new`/`delete`)
-  e `Span::subspan` (6,4 contra 3,5); `TreeMap` a 1e6 contra a `btree` do abseil, `ct::sort` com comparador (25 % mais instrucoes que `std::sort`) e
-  `Deque::push_front` (21 contra 13): nao se tentaram.
+  e `Span::subspan` (6,4 contra 3,5); `TreeMap` a 1e6 contra a `btree` do abseil (*ronda 3: `BTreeMap`*), `ct::sort` com comparador (25 % mais instrucoes que `std::sort`; *ronda 3: 28 % mais instrucoes e 2,4 vezes mais depressa*) e
+  `Deque::push_front` (21 contra 13; *ronda 3: analisado, nao se fecha*): nao se tentaram na ronda 2.
 - **Corrigido** (seccao 6): rondas 1 e 2. Os defeitos reais da ronda 2: `String::to_int` dava a volta fora do intervalo
   (3000000000 dava -1294967296), apagar durante um ciclo num `HashMap` nao se detectava, e dois defeitos do codigo novo apanhados
   pelos testes antes de entrar. **Mudancas que se notam**: seccao 5.4 (`to_int` satura, `to_float` ja nao aceita a virgula do locale), 5.2 (referencias a
@@ -49,8 +65,7 @@ bibliotecas ja instaladas); Boost 1.83 (`unordered_flat_map`, `container::vector
 `spreadsort`); ankerl::unordered_dense 4.5.0 (um so cabecalho, descarregado da versao oficial); fmt 9.1.0 (modo so de
 cabecalhos); valgrind 3.22. Os pacotes Ubuntu de abseil, Boost, fmt e valgrind foram descarregados com `apt-get download` e
 extraidos para uma pasta propria (`dpkg -x`), sem instalar nada no sistema; o repositorio nao os guarda
-(`tools/bench_compare.sh fetch` repete o passo). **Nao corridos**: EASTL (precisa de dois repositorios e de compilar a
-biblioteca) e RE2 e `std::regex` (a ct tem `bench/bench_regex.cpp` contra `std::regex`; nao se repetiu aqui). A ronda 2
+(`tools/bench_compare.sh fetch` repete o passo). **Ronda 3**: EASTL (`git clone --depth 1` da EASTL e da EABase, as fontes da EASTL compiladas com o resto) e RE2 (o `libre2.so.10` do sistema e os cabecalhos de `libre2-dev` extraidos) e `std::regex` entram em 3.7.7. A ronda 2
 mediu `Variant`, `Arena`, `Pool`, fila circular e `Span` (`bench/compare/cmp_extra.cpp`, familia `extra`).
 
 **Programas** (`bench/compare`, so compilam com `-DCT_BUILD_COMPARE=ON`, que vem desligado; esta pasta e a excecao
@@ -75,6 +90,10 @@ declarada ao "sem std": inclui a biblioteca standard e as outras, e `tools/check
   mesma maneira (g++ 13.3 `-O2 -DNDEBUG`); cada mudanca foi medida em todas as operacoes do contentor afectado, nos dois N (1e3 e
   1e5) e em todos os tipos de chave e de valor (seccao 3.5), e uma mudanca so ficou se nenhuma instrucao subiu, ou se a subida esta
   dita com a causa e o saldo.
+- **Ronda 3**: o "antes" e o cabecalho de origin/main de 63793ca e o "depois" o desta arvore, **compilados com o mesmo `bench/compare`** (uma unidade de compilacao maior muda as decisoes de inlining do GCC e dava diferencas de 1 a 8 instrucoes
+  em codigo da biblioteca que nao mudou; ver 6.15); mais, para cada mudanca, o assembler da operacao isolada, quando a diferenca era pequena. Os cenarios novos: `int-b32` a `int-b1024` em `cmp_map` (o valor do varrimento de `CT_HASH_INLINE_MAX`), `cbtree` e os cenarios `bulk` e `range` em
+  `cmp_misc`, `s8` nos mapas ordenados, `cmp_regex`, e a EASTL em `cmp_vector`, `cmp_map` e `cmp_sort`. Mispredicoes de salto com `--branch-sim=yes`. A maquina esteve a carga de 3 a 13 e, no fim, com prioridade baixa (`nice -n 15 ionice -c3`) a pedido do dono: **o tempo de CPU da ronda 3 e o minimo de 3 execucoes
+  alternadas e vale como indicacao** (ruido de 10 a 30 %); as decisoes assentam nas instrucoes, nas alocacoes, nos bytes e nos saltos falhados.
 - Tipos: `int`, `P16` (16 bytes triviais), `B256` (256 bytes triviais), `MO` (so move, destrutor nao trivial); chaves
   `int`, `s8` (8 caracteres, SSO nos dois lados), `s20` (SSO da ct, heap do libstdc++), `s40` (heap nos dois). Chaves
   distintas e de aspecto aleatorio (uma permutacao de `uint32`). N de 1e3, 1e5 e 1e7; `B256` e as chaves de texto so ate
@@ -454,7 +473,7 @@ mais rapidos e o `hit` (+6 %, 0 %) empata; com `int` empata.
 
 ### 3.3 Memoria
 
-`layout` (tamanho do contentor vazio, slots, fator de carga e bytes vivos por elemento depois de construir N elementos; o total vem do contador de alocacoes: tamanho utilizavel mais 8 bytes de cabecalho do malloc), arvore final da ronda 2. `int-b256` mudou: as entradas de mais de 128 bytes ficam fora da tabela, que guarda ponteiros.
+`layout` (tamanho do contentor vazio, slots, fator de carga e bytes vivos por elemento depois de construir N elementos; o total vem do contador de alocacoes: tamanho utilizavel mais 8 bytes de cabecalho do malloc), arvore final da ronda 2. `int-b256` mudou: as entradas de mais de 128 bytes ficam fora da tabela, que guarda ponteiros. **Ronda 3**: a chave fica na tabela e o valor num bloco de um slab (3.7.1): 294,9 / 302,6 / 293,7 bytes por elemento a N = 1e3 / 1e5 / 1e6 (as linhas de `int-b256` abaixo sao as da ronda 2).
 
 ```
 layout	ct	int-int	1000	sizeof_empty=32	size=1000	slots=2048	load=0.488	bytes_per_elem=18.45	heap_bytes=18448
@@ -568,7 +587,7 @@ layout	btree	s20	100000	sizeof_empty=24	bytes_per_elem=91.06	allocs=121064
 layout	bflat	s20	100000	sizeof_empty=24	bytes_per_elem=72.80	allocs=100026
 ```
 
-Crescimento do `Vector` (capacidades por que passa ao fazer `push_back` ate 1e6): ct 8, 16, 32, ... (fator 2, 18 realocacoes, primeiro bloco de 8 elementos); `std::vector` 1, 2, 4, ... (fator 2, 21 realocacoes); `boost::container::vector` 1, 2, 3, 4, 6, 9, 14, ... (fator 1,5 a 1,6, 31 realocacoes). `sizeof` do contentor vazio: `Vector` 24 em todos (tres ponteiros), `HashMap` da ct 32 contra 56 do `std::unordered_map`, 40 do absl, 48 do boost, 64 da ankerl (em depuracao, com `CT_DEBUG_ITERATORS`, o `HashMap` ganha 8 bytes); `String` 24 (SSO de 23) contra 32 (SSO de 15) do libstdc++; `TreeMap` 104, `FlatMap` 24, contra 48 do `std::map`.
+Crescimento do `Vector` (capacidades por que passa ao fazer `push_back` ate 1e6): ct 8, 16, 32, ... (fator 2, 18 realocacoes, primeiro bloco de 8 elementos); `std::vector` 1, 2, 4, ... (fator 2, 21 realocacoes); `boost::container::vector` 1, 2, 3, 4, 6, 9, 14, ... (fator 1,5 a 1,6, 31 realocacoes). `sizeof` do contentor vazio: `Vector` 24 em todos (tres ponteiros), `HashMap` da ct 32 contra 56 do `std::unordered_map`, 40 do absl, 48 do boost, 64 da ankerl (com `CT_DEBUG_ITERATORS=1` o `HashMap` ganha 8 bytes; na ronda 3 uma `HashMap` com valores grandes leva ainda um slab de 48 bytes: 80 no total); `String` 24 (SSO de 23) contra 32 (SSO de 15) do libstdc++; `TreeMap` 104 (112 na ronda 3: o `Pool` guarda o ultimo pedaco), `BTreeMap` 80, `FlatMap` 24, contra 48 do `std::map`.
 
 Alocacoes para construir 1e5 `int` por `push_back`: ct 15, std 18, boost 26; um `unordered_map<int,int>` de 1e5 faz 100014 contra 15 da ct, e o pico de memoria de uma construcao de `Vector<int>` e 524 KB (ct, que usa `realloc`) contra 786 KB (std).
 
@@ -762,6 +781,330 @@ contra a `-O2` (as mesmas colunas nos dois): **mudam de lado de 1** `build_reser
 
 A mesma matriz a -O2 esta na seccao 3.1; a ordem entre a ct e as outras muda onde a razao da ultima coluna passa de um lado de 1 para o outro (por exemplo, compare-se `hit` e `miss` de `int-int` entre as duas).
 
+### 3.7 Ronda 3
+
+Instrucoes (callgrind) e contagens de alocacoes, bytes e mispredicoes de salto (`--branch-sim=yes`), que sao deterministicas. A maquina estava
+partilhada e foi-se tornando mais pesada durante a ronda (a carga de 3 a 13, e no fim o dono pediu prioridade baixa para tudo), por isso o tempo de
+CPU que aqui aparece e o minimo de 3 execucoes alternadas e **vale como indicacao**, nao como medida; onde decide e a contagem de instrucoes, de
+alocacoes, de bytes e de saltos falhados. O "antes" de cada tabela e o cabecalho de origin/main de 63793ca compilado **com o mesmo
+`bench/compare` que o "depois"** (uma unidade de compilacao maior muda as decisoes de inlining do GCC: sem isto a mesma `HashMap<int, P16>`
+dava mais 1 instrucao no `hit` e mais 8 no `iterate` sem que o codigo da biblioteca mudasse; ver 6.15).
+
+#### 3.7.1 `HashMap` com entradas grandes: a chave fica na tabela, o valor num bloco de um slab
+
+A ronda 2 pos as entradas de mais de 128 bytes fora da tabela, uma alocacao por entrada, e pagou com `hit` +49 %, `erase` 5,7 vezes mais lento
+e `build`, `erase` e `copy` com 2 a 10 vezes as instrucoes. Agora o slot guarda a **chave** e uma referencia ao valor, e o valor vive num bloco de
+um **slab por mapa** (pedacos de 4 KiB, uma pilha de ponteiros para os blocos livres): um `hit` ou um `miss` compara a chave no slot e nao
+vai ao bloco, apagar empilha o ponteiro (sem tocar no bloco), copiar e uma passagem com um pedaco do tamanho certo, e uma chave grande (mais de
+32 bytes) continua a por a entrada inteira num bloco do mesmo slab. Instrucoes por operacao, `int-b256`, N = 1e5 (a layout de antes da ronda 2, a da ronda 2 e a desta):
+
+| cenario | antes da ronda 2 (inline) | ronda 2 | ronda 3 | ronda 3 / inline | alvo |
+|---|---:|---:|---:|---:|---|
+| build | 351.4 | 788.1 | 320.6 | 0.91 | <= ronda 2: sim |
+| hit | 31.1 | 36.7 | 30.8 | 0.99 | dentro de 5 %: sim |
+| miss | 27.7 | 31.0 | 26.9 | 0.97 | dentro de 5 %: sim |
+| erase | 57.3 | 291.3 | 70.7 | 1.23 | dentro de 1,5 vezes: sim |
+| copy | 58.0 | 565.7 | 69.6 | 1.20 | dentro de 1,5 vezes: sim |
+| iterate | 21.4 | 19.4 | 18.5 | 0.86 | |
+| churn | 302.3 | 496.1 | 291.5 | 0.96 | |
+
+Alocacoes por construcao de 1e5 entradas: 15 (inline), 100015 (ronda 2), **6265** (agora); copia: 1, 100001, **2**; 1e6 passos de `churn`: 0, 1000000, **1**.
+Em N = 1e3 as mesmas celulas: `build` 770,4 para 305,3, `hit` 42,1 para 35,8, `miss` 43,6 para 37,7, `erase` 303,5 para 91,8, `copy` 559,6 para 65,4 (ronda 2 para ronda 3).
+
+**Bytes por elemento** (`layout`, contador de alocacoes, com os 8 bytes de cabecalho do malloc): inline 544,8 / 694,7 / 555,8; ronda 2 290,5 / 295,6 / 290,9; ronda 3
+**294,9 / 302,6 / 293,7** (N = 1e3 / 1e5 / 1e6). **O alvo "bytes por elemento a baixo ou igual aos da ronda 2" nao se atingiu**: mais 1,5 % a mais 2,4 %. A causa:
+o slot passa de 9 para 17 bytes (a chave de 4 bytes mais a referencia de 8, alinhada a 8, mais a meta), o que a 38 % de carga (N = 1e5, 262144 slots) custa 44,6
+bytes por elemento contra 23,6, e o que se poupa e o cabecalho do malloc de cada entrada (264 bytes pedidos eram 272 no malloc, agora o bloco e de 256 e o pedaco
+de 4 KiB custa 2 bytes por bloco). Um slot de 13 bytes (chave e ponteiro empacotados) nao serve: o `Entry &` que os iteradores devolvem tem de ter `.key` e `.value`
+como membros, e um membro `V &` pede alinhamento de 8. Ainda assim a memoria fica 57 % abaixo da de antes da ronda 2 (695 para 303).
+
+**Tempo** (CPU, minimo de 3 alternados, N = 1e5 | 1e6, ns por operacao; ruido de 10 a 30 %): `build` 904 | 932 (inline), 312 | 463 (ronda 2), **233 | 276**; `hit` 30,0 | 61,6, 42,3 | 86,0, **37,1 | 70,2**;
+`miss` 18,6 | 66,6, 23,9 | 65,3, **12,9 | 53,6**; `erase` 51,5 | 99,5, 262,0 | 409,8, **36,0 | 78,7**; `copy` 438, 328, **79,8**; `churn` 262, 167, **134**; `iterate` 14,6, 15,9, **17,4**.
+O que fica por recuperar e o `hit` (+24 % contra o inline a 1e5, +14 % a 1e6: uma terceira linha de cache, a do bloco, que o chamador le logo a seguir) e o `iterate` (+20 %: os valores
+estao na ordem de insercao e a iteracao anda pela ordem dos slots).
+
+##### O valor de `CT_HASH_INLINE_MAX` (varrimento de 32 a 1024 bytes de valor)
+
+`int-b32` ... `int-b1024` (`bench/compare/cmp_map.cpp`), chave `int` (a entrada tem 8 + tamanho do valor bytes), N = 1e5, a tabela inline (`CT_HASH_INLINE_MAX=100000`)
+contra o valor fora (`CT_HASH_INLINE_MAX=0`). Razao fora / inline, tempo de CPU (menos de 1 e melhor para o valor fora):
+
+| operacao | 32 | 64 | 96 | 128 | 192 | 256 | 512 | 1024 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| build | 0,51 | 0,46 | 0,34 | 0,31 | 0,27 | 0,26 | 0,23 | 0,23 |
+| hit | 1,44 | 1,24 | 1,18 | 1,28 | 1,24 | 1,22 | 1,00 | 1,11 |
+| miss | 0,92 | 0,71 | 0,68 | 0,63 | 0,76 | 0,79 | 0,44 | 0,68 |
+| erase | 1,24 | 0,80 | 0,83 | 0,80 | 0,60 | 0,66 | 0,67 | 0,54 |
+| iterate | 1,91 | 1,51 | 1,24 | 1,26 | 1,25 | 1,33 | 1,24 | 1,23 |
+| copy | 1,31 | 1,14 | 1,09 | 0,22 | 0,21 | 0,18 | 0,44 | 0,52 |
+| bytes por elemento (1e5) | 0,72 | 0,57 | 0,51 | 0,48 | 0,45 | 0,44 | 0,41 | 0,40 |
+
+A 1e6 (so 64, 128 e 256): `build` 0,40 / 0,35 / 0,33, `hit` 1,13 / 1,01 / 1,24, `miss` 0,86 / 0,87 / 0,88, `erase` 1,08 / 0,87 / 0,79, `iterate` 1,72 / 1,42 / 1,49, `copy` 0,84 / 0,85 / 0,70.
+
+Instrucoes por operacao, mesmo varrimento, valor fora / inline (a tabela inline e a de `CT_HASH_INLINE_MAX=100000`); `hit`, `miss`, `build`, `iterate` e `copy` medidos com os blocos livres numa lista dentro do proprio bloco, o `erase` e o `churn` com a pilha de ponteiros do codigo final (so nos tamanhos de 64, 128, 256 e 1024 bytes):
+
+| operacao | b32 | b64 | b96 | b128 | b192 | b256 | b512 | b1024 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| build | 1,05 | 1,03 | 0,97 | 0,94 | 0,94 | 0,91 | 0,86 | 0,79 |
+| hit | 1,08 | 1,08 | 1,03 | 0,99 | 1,03 | 0,99 | 0,99 | 0,99 |
+| miss | 1,03 | 1,03 | 1,00 | 0,97 | 1,00 | 0,97 | 0,97 | 0,97 |
+| iterate | 1,11 | 1,11 | 1,03 | 0,97 | 1,03 | 0,97 | 0,97 | 0,97 |
+| copy | 1,50 | 1,44 | 1,39 | 1,35 | 1,29 | 1,18 | 1,15 | 1,09 |
+| erase |  | 1,40 |  | 1,29 |  | 1,23 |  | 0,99 |
+| churn |  | 1,13 |  | 1,03 |  | 0,96 |  | 0,91 |
+
+A leitura: o valor fora ganha sempre no `build` (2 a 4 vezes) e na memoria (menos 28 % a menos 60 %) e no `miss` (de 64 bytes para cima); o `erase` e o `copy`
+passam a ganhar a partir de 64 e de 128 bytes; o `hit` e o `iterate` perdem quase em todos os tamanhos (de 0 a 44 % e de 23 a 91 %; mais nos valores pequenos).
+A curva nao tem um joelho unico: a 128 a troca passa a ser favoravel em 5 das 6 operacoes (so o `hit` e o `iterate` ficam atras) e a memoria cai a metade, e abaixo de 96 o `copy` e
+o `erase` ainda perdem. **O valor por omissao fica em 128** (entradas de mais de 128 bytes, isto e, valores de 128 bytes ou mais com chave `int`): e o ponto onde o
+`copy` deixa de perder, e quem quiser o `hit` e a iteracao mais depressa a custa de memoria define `CT_HASH_INLINE_MAX` maior.
+
+#### 3.7.2 `BTreeMap` e `BTreeSet` (`include/ct/btreemap.hpp`, `btreeset.hpp`, `detail/btree.hpp`)
+
+Uma B+ arvore: os itens so nas folhas, os nos internos guardam copias das chaves separadoras, as folhas ligam-se para a frente (a iteracao e um varrimento de memoria contigua), os nos (512 bytes por omissao, 62
+itens `int`->`int` por folha, 15 itens `String`->`int`) saem de um slab (`detail/slab.hpp`: sem cabecalho de malloc, um malloc por 8 nos). Pesquisa binaria sem saltos dentro do no. Numa folha cheia o novo
+item vai primeiro para o vizinho da esquerda ou da direita se tiver lugar (a arvore enche-se melhor que com a divisao a meio) e so depois se divide; inserir por ordem crescente divide a ultima folha deixando as outras cheias; apagar
+empresta ou funde com um vizinho (a fusao so se cabe numa folha); `assign_sorted` constroi os nos cheios de uma entrada estritamente crescente em O(n) (sem ser crescente cai em `put` por elemento); a copia mantem a forma. A API e a do `TreeMap`
+(`put`, `find`, `get`, `contains`, `operator[]`, `erase`, `clear`, `begin`/`end`, `lower_bound_it`, `validate`) mais `lower_bound`, `upper_bound`, `first`, `last`, `erase_range(lo, hi)`, `erase_from(lo)`, `erase(primeiro, ultimo)`, `assign_sorted`, `swap`.
+As garantias sao **mais fracas** (dito no cabecalho): inserir e apagar **invalidam** todos os iteradores, ponteiros e referencias para itens (os itens movem-se entre nos); com `CT_DEBUG_ITERATORS=1` (explicita, nao vem de `NDEBUG`) um iterador usado depois de a arvore mudar aborta. `K` tem de ser copiavel.
+Por isso o `TreeMap` (que promete ponteiros estaveis) fica como esta.
+
+O tamanho do no e a pesquisa escolheram-se por medida (instrucoes, mispredicoes e falhas da D1 de 3e5 pesquisas de `int`, `hit`, cachegrind):
+
+| variante | instrucoes por pesquisa | saltos falhados | falhas D1 | bytes por elemento (1e4 / 1e6) |
+|---|---:|---:|---:|---:|
+| ct, nos de 256, pesquisa binaria | 386 | 1,57 | 6,4 | 11,15 / 10,91 |
+| ct, nos de 256, contar quantas chaves sao menores | 650 | 5,0 | 8,1 | |
+| ct, nos de 256, internos de 512 | 361 | 1,4 | 6,0 | |
+| **ct, nos de 512, pesquisa binaria (a que ficou)** | 358 | 1,0 | 6,3 | **10,32 / 9,99** |
+| abseil `btree_map` | 371 | 5,2 | 6,8 | 11,10 / 11,10 |
+
+(a contagem linear fez mais instrucoes e os mesmos saltos falhados que a pesquisa linear com saida antecipada do abseil, e ficou 6 % mais depressa em tempo mas com o dobro das instrucoes; os nos internos mais largos nao ganharam nada medido). Os nos de 512 bytes fecham o alvo de memoria (abaixo do abseil), os de 256 ficavam 0,5 % acima.
+
+Bytes por elemento (`layout`, contador de alocacoes; o abseil e o `std::map` com `std::string`, a ct com `ct::String`, por isso o texto de 20 caracteres vive na heap no abseil e no SSO na ct):
+
+| tipo | N | cbtree (ct) | abseil btree | TreeMap (ct) | std::map |
+|---|---:|---:|---:|---:|---:|
+| int | 10000 | 10,32 | 11,10 | 42,07 | 48,00 |
+| int | 1000000 | 9,99 | 11,10 | 41,15 | 48,00 |
+| s8 | 10000 | 44,58 | 59,11 | 66,80 | 80,00 |
+| s8 | 1000000 | 44,59 | 58,83 | 65,23 | 80,00 |
+| s20 | 10000 | 44,58 | 91,11 | 66,80 | 112,00 |
+| s20 | 1000000 | 44,59 | 90,83 | 65,23 | 112,00 |
+
+Instrucoes por operacao, `int` e texto, N = 1e4 (`cmp_misc ordered`, as outras colunas da ronda 1/2; abseil e `std::map`):
+
+| tipo | cenario | N | cbtree | abseil | TreeMap | std::map | cbtree / abseil |
+|---|---|---:|---:|---:|---:|---:|---:|
+| int | build | 10000 | 429,8 | 443,7 | 397,3 | 628,5 | 0,97 |
+| int | hit | 10000 | 263,2 | 269,8 | 87,2 | 143,8 | 0,98 |
+| int | miss | 10000 | 261,1 | 262,2 | 92,2 | 141,8 | 1,00 |
+| int | erase | 10000 | 271,8 | 499,1 | 310,0 | 378,4 | 0,54 |
+| int | iterate | 10000 | 6,4 | 18,7 | 19,9 | 23,1 | 0,34 |
+| int | range | 10000 | 273,9 | 488,8 | 294,9 | 321,0 | 0,56 |
+| int | bulk | 10000 | 30,4 | 165,7 | 491,0 | 724,3 | 0,18 |
+| s8 | build | 10000 | 1476,3 | 1209,6 | 1181,1 | 1333,9 | 1,22 |
+| s8 | hit | 10000 | 1172,9 | 693,5 | 881,5 | 653,5 | 1,69 |
+| s8 | miss | 10000 | 1173,4 | 731,7 | 938,6 | 644,1 | 1,60 |
+| s8 | erase | 10000 | 1203,8 | 1083,4 | 965,5 | 1078,6 | 1,11 |
+| s8 | iterate | 10000 | 7,7 | 25,2 | 19,4 | 23,1 | 0,31 |
+| s8 | range | 10000 | 1184,4 | 981,3 | 804,6 | 804,3 | 1,21 |
+| s8 | bulk | 10000 | 120,5 | 550,7 | 2119,7 | 1716,0 | 0,22 |
+| s20 | build | 10000 | 1480,2 | 1535,2 | 1184,8 | 1753,6 | 0,96 |
+| s20 | hit | 10000 | 1177,6 | 695,9 | 885,2 | 656,9 | 1,69 |
+| s20 | miss | 10000 | 1178,0 | 735,6 | 942,6 | 648,0 | 1,60 |
+| s20 | erase | 10000 | 1208,0 | 1187,9 | 969,6 | 1234,5 | 1,02 |
+| s20 | iterate | 10000 | 7,7 | 25,2 | 19,4 | 23,1 | 0,31 |
+| s20 | range | 10000 | 1188,7 | 985,2 | 807,3 | 807,8 | 1,21 |
+| s20 | bulk | 10000 | 120,6 | 1610,9 | 2130,8 | 2554,5 | 0,07 |
+
+Tempo de CPU em ns por operacao (minimo de 3 alternados; a maquina com carga de 5 a 9 e prioridade baixa: **indicativo, ruido de 10 a 30 %**); `cbtree` e a ct, a ultima coluna a ct a dividir pelo abseil (alvo: ate 1,2):
+
+| tipo | cenario | N | cbtree | abseil | TreeMap | std::map | cbtree / abseil |
+|---|---|---:|---:|---:|---:|---:|---:|
+| int | build | 10000 | 75,62 | 66,10 | 134,67 | 138,26 | 1,14 |
+| int | hit | 10000 | 54,99 | 47,03 | 68,51 | 75,80 | 1,17 |
+| int | miss | 10000 | 54,07 | 46,41 | 78,55 | 78,95 | 1,16 |
+| int | erase | 10000 | 71,28 | 91,18 | 99,31 | 132,44 | 0,78 |
+| int | iterate | 10000 | 0,83 | 1,64 | 9,81 | 12,26 | 0,50 |
+| int | range | 10000 | 60,01 | 71,85 | 175,42 | 187,05 | 0,84 |
+| int | bulk | 10000 | 2,35 | 26,96 | 69,37 | 127,62 | 0,09 |
+| int | build | 1000000 | 215,99 | 188,30 | 788,95 | 963,14 | 1,15 |
+| int | hit | 1000000 | 209,27 | 187,39 | 545,78 | 759,70 | 1,12 |
+| int | miss | 1000000 | 209,07 | 185,74 | 812,57 | 861,67 | 1,13 |
+| int | erase | 1000000 | 180,85 | 221,76 | 691,56 | 832,93 | 0,82 |
+| int | iterate | 1000000 | 2,80 | 5,84 | 118,34 | 120,46 | 0,48 |
+| int | range | 1000000 | 305,25 | 335,50 | 1374,36 | 1781,85 | 0,91 |
+| int | bulk | 1000000 | 14,55 | 24,10 | 91,66 | 184,35 | 0,60 |
+| s8 | build | 10000 | 203,18 | 208,57 | 204,56 | 233,14 | 0,97 |
+| s8 | hit | 10000 | 184,47 | 149,45 | 154,90 | 148,85 | 1,23 |
+| s8 | miss | 10000 | 175,92 | 162,16 | 170,30 | 155,40 | 1,08 |
+| s8 | erase | 10000 | 188,85 | 193,47 | 166,49 | 196,19 | 0,98 |
+| s8 | iterate | 10000 | 0,70 | 3,19 | 9,64 | 11,65 | 0,22 |
+| s8 | range | 10000 | 167,11 | 192,29 | 215,80 | 240,05 | 0,87 |
+| s8 | bulk | 10000 | 38,00 | 51,77 | 208,81 | 192,19 | 0,73 |
+| s8 | build | 1000000 | 642,32 | 677,73 | 1112,95 | 1360,99 | 0,95 |
+| s8 | hit | 1000000 | 685,23 | 681,77 | 904,25 | 1171,37 | 1,01 |
+| s8 | miss | 1000000 | 650,49 | 691,54 | 1116,28 | 1125,33 | 0,94 |
+| s8 | erase | 1000000 | 663,38 | 846,25 | 1047,06 | 1314,33 | 0,78 |
+| s8 | iterate | 1000000 | 11,30 | 28,23 | 123,75 | 125,79 | 0,40 |
+| s8 | range | 1000000 | 742,90 | 921,38 | 2105,30 | 2285,93 | 0,81 |
+| s8 | bulk | 1000000 | 79,79 | 129,92 | 455,10 | 337,53 | 0,61 |
+
+Contra o `TreeMap` o `BTreeMap` faz 3 vezes as instrucoes no `hit` de `int` (263 contra 87, a pesquisa binaria de 62 itens por no contra um ponteiro por no) e e 1,2 a 3,9 vezes mais depressa em tempo, porque a arvore rubro-negra falha a cache em cada no e a B+ em tres ou quatro.
+
+`bulk` e construir de um intervalo ordenado (`assign_sorted` contra o construtor de intervalo do abseil e do `std::map`, e `put` por elemento no `TreeMap`), `range` e `lower_bound` mais 8 vizinhos. Em `int`, a 1e4 e a 1e6, o `build`, o `hit` e o `miss` ficam a 1,12 a 1,17 vezes o tempo do abseil (dentro do alvo de 1,2,
+mas sem margem), o `erase` a 0,78 a 0,82, a iteracao a 0,5, o `range` a 0,84 a 0,91 e o `bulk` a 0,09 a 0,6. Em instrucoes `int` a 1e4: `hit` 263 contra 270, `erase` 272 contra 499, iterar 6,4 contra 18,7, `bulk` 30 contra 166. **Com chaves de texto o abseil ganha no `hit` e no `miss` em instrucoes (1,7 vezes)**:
+
+O `hit` e o `miss` de texto fazem 1173 instrucoes contra 693 a 732 do abseil (1,6 a 1,7 vezes): 15 a 21 comparacoes de `ct::String` por pesquisa (a pesquisa binaria de 62 ou 15 itens por no, tres niveis), cada uma a 56 a 67 instrucoes contra 46 do `std::string` no abseil. Em tempo o `s8` a 1e4 fica a 1,23 (`hit`) e 1,08 (`miss`) do abseil e a 0,97 no `build`, 0,98 no `erase` e 0,22 na iteracao: a ct guarda a chave inline no no (SSO) e o abseil tem de ir buscar o `std::string` de cada comparacao.
+
+#### 3.7.3 `ct::sort` e `ct::stable_sort`
+
+`ct::sort` com comparador passa a particionar por blocos (BlockQuicksort: blocos de 64 elementos, os desvios dos elementos do lado errado guardam-se com um incremento em vez
+de um salto e trocam-se aos pares) para tipos trivialmente copiaveis de ate 32 bytes; a mediana passa a ser de nove amostras acima de 128 elementos; os iguais ao pivo vao todos
+para a esquerda de uma vez quando o pivo nao e maior que o elemento antes do intervalo (o `partition_left` do pdqsort); a particao le sempre dentro do intervalo (blocos de
+tamanho fixo), por isso as guardas contra um comparador mau ficam. Fica a deteccao de entrada ordenada ou invertida de antes (agora tambem em `stable_sort`), o limite de
+profundidade com heapsort, e o `std::sort`-like Hoare com guardas para os tipos grandes e os que nao sao trivialmente copiaveis (`B256`, `String`). `stable_sort` de tipos pequenos
+funde de um vetor para o outro (buffer de n elementos, antes n/2) e escolhe o menor sem salto quando, nos 32 primeiros elementos da fusao, o lado muda mais de 8 vezes (dados ao acaso);
+em blocos (repetidos, inversoes) fica o salto, que ai e previsivel.
+
+Instrucoes por elemento, N = 1e5, ct antes e depois (`-O2`); as colunas das outras bibliotecas sao as de 3.1 (e a da EASTL, de 3.7.7):
+
+| padrao | algoritmo | antes | depois | variacao | std | boost pdqsort | EASTL |
+|---|---|---:|---:|---:|---:|---:|---:|
+| int.random | sort | 163,2 | 208,8 | +27,9 % | 128,2 | 118,0 | 125,1 |
+| p16.random | sort | 167,1 | 189,6 | +13,5 % | 135,9 | 121,2 | 135,5 |
+| int.dups | sort | 134,8 | 58,4 | -56,7 % | 110,3 | 32,5 | |
+| p16.dups | sort | 134,8 | 49,2 | -63,5 % | 125,3 | 32,3 | |
+| int.sorted | sort | 7,0 | 7,0 | 0 | 117,2 | 11,0 | 71,5 |
+| int.reversed | sort | 10,0 | 10,0 | 0 | 88,1 | 18,5 | |
+| int.random | stable | 221,6 | 276,6 | +24,8 % | 193,4 | | 198,9 |
+| p16.random | stable | 264,7 | 319,4 | +20,7 % | 206,6 | | 196,1 |
+| int.dups | stable | 214,0 | 222,0 | +3,7 % | 189,7 | | |
+| p16.dups | stable | 257,5 | 223,0 | -13,4 % | 203,8 | | |
+| int.sorted | stable | 92,0 | 7,0 | -92,4 % | 119,4 | | 7,1 |
+| int.reversed | stable | 201,4 | 11,0 | -94,5 % | 132,5 | | |
+| p16.reversed | stable | 293,7 | 11,0 | -96,3 % | 205,4 | | |
+
+**As instrucoes sobem em dados ao acaso** (+28 % e +14 % no `sort`, +25 % e +21 % no `stable`, que ja eram a perda) e isso nao se evitou: a particao sem salto faz mais trabalho por elemento
+(guardar o desvio, somar o resultado da comparacao, trocar depois) do que o salto que a substitui. O que ela compra e o salto que a particao normal falha em metade das comparacoes.
+Saltos falhados por elemento (`--branch-sim=yes`, N = 1e5, `int.random`): `sort` **6,97 para 1,96** (std 7,42, boost 7,12); `stable` **7,08 para 1,88** (std 7,94). Tempo de CPU (ns por elemento,
+N = 1e6, minimo de 3 alternados, ruido de 5 a 10 %, a maquina com carga de 4): `sort` `int.random` **59,5 para 24,2** (std 57,1, boost 57,2, EASTL 54,8), `p16.random` 62,1 para 25,3 (std 61,0);
+`stable` `int.random` 64,8 para 55,7 (std 67,9) e `p16.random` 75,6 para 64,4 (std 82,1); `int.dups` `sort` 21,5 para 4,1 (std 20,8) e `stable`
+26,9 para 29,4 (+9 %, std 30,7); `int.sorted` e `reversed` de `stable` 9,4 para 0,43 e 11,6 para 0,81. **`ct::sort` com comparador passa de empate com o `std::sort` a 2,4 vezes mais depressa em
+dados ao acaso de tipos pequenos, com mais instrucoes**; se a metrica fosse so a contagem de instrucoes seria uma regressao, e por isso fica dito aqui e na seccao 5.7. `stable_sort` gasta
+agora n elementos de buffer em vez de n/2 (a 1e5 `int`: 400000 bytes pedidos em vez de 200004) para tipos pequenos.
+Sem regressao nos casos de antes: ordenada 7 e invertida 10 instrucoes (`sort`), os testes `EdgeSort.*` (repetidos abaixo de 2,2 milhoes de comparacoes, ordenada em n comparacoes, comparador `<=` dentro dos limites) passam;
+`tests/test_sort_blocks.cpp` percorre todos os padroes em tamanhos em volta dos limites de bloco (127 a 129, 191 a 193, 319 a 321, ...), a estabilidade, os comparadores maus com ASan e os tipos que nao vao pelos blocos.
+
+#### 3.7.4 Json, Ini, Xml e TextReader sobre `numconv.hpp`
+
+`Json` (leitura e escrita), `Ini` (`get_double`, `set`), `Xml` (`attr_double`, `attr_int`, `attr_uint`) e `TextReader::read_double` deixam o `strtod`, o `snprintf` e o tratamento do locale: leem com
+`parse_double` (arredondamento correcto, nenhum locale) e escrevem com o texto mais curto que volta ao mesmo `double` (`write_shortest_at_least`, o mesmo `write_shortest` com o limite do expoente
+posicional em 10^max(15, algarismos), que e o que o `%.{15,16,17}g` fazia; fica em `detail/numconv_g.hpp`). Saem o `json_dtoa_fast` (o caminho de `long double` so de x86), o caminho lento
+com `snprintf`, `json_strtod_locale`, `ini_decimal_point`, `xml_decimal_point` e `xml_strtod_locale`, e a baseline do nostd perde 17 pares (806 para 789). Um documento com 100000 numeros
+(`jbench`: decimais curtos, mantissas de 17 algarismos, expoentes), ns por numero e instrucoes por numero, antes e depois:
+
+| operacao | antes | depois |
+|---|---:|---:|
+| `Json::dump` | 324 ns, 2922 instrucoes | **82 ns, 705 instrucoes** |
+| `Json::parse` | 230 ns, 1067 instrucoes | **148 ns, 559 instrucoes** |
+
+Nao havia nenhuma alternativa de leitura de JSON ja descarregada (nem simdjson nem a de `std`) para comparar; fica o antes e o depois.
+
+**O que muda no que se escreve** (diferencial contra o codigo de antes, 2000000 de `double` de oito classes: padroes de bits ao acaso, subnormais, decimais curtos, potencias de 2 e vizinhas, inteiros grandes):
+52902 dos 1999880 valores (2,6 %) saem com texto diferente, e **todos** estao num de tres casos, sem nenhum valor mais longo, mais afastado ou so de formato diferente: 14115 saem mais **curtos** (`8.863094000000001e-13`
+onde se escrevia `8.8630940000000015e-13`; subnormais como `1.3328149133403e-310` e `5e-324` onde se escrevia `4.94065645841247e-324`), 9978 do mesmo tamanho mas **mais proximos** do valor
+(`1.5080921830664333e-308` onde se escrevia `...334e-308`: o caminho de `long double` de x86 do Json de antes arredondava mal o ultimo algarismo de uns 0,5 % dos valores) e 2358 **empates exactos** em que passa a sair o algarismo
+par como o `printf` (`1489.7146606445312` e nao `...313`; `2.9802322387695312e-08`). Nao muda: os inteiros de `double` (`100.0`, `1e+15`), o `-0.0`, o `.0` que marca um real, o limite
+do expoente (`1e+15` continua a ser escrito com expoente, `123456789012345.0` sem), `Json(NaN)` e `inf` escreverem `null`. `Ini::set(double)` escreve `0.3333333333333333` (16 algarismos) onde escrevia
+`0.33333333333333331` (17: o `%.15g` nao voltava ao mesmo valor e passava ao `%.17g`). **Leitura**: nenhuma diferenca. Os quatro leitores (Json, Ini, Xml, TextReader) deram bit a bit o mesmo resultado que
+antes em 2000000 de textos ao acaso (1 a 24 algarismos, sinal, ponto, expoente, lixo no fim, hexadecimais, `inf`, `nan(abc)`, espacos) no locale "C"; no locale `pt_BR` (300000 textos) ha seis diferencas, todas
+em `Xml::attr_double` com texto que nao e um numero (devolvia 0 e agora devolve o valor por omissao, como no locale "C": era um defeito do ramo da virgula, ver 6.13). Fuzz de ida e volta do Json (`CT_JSON_ITERS=10000000`, 3,8 s,
+`tests/test_parser_numbers.cpp`, o `ctest` corre 300000): **1e7 valores, 0 falhas** (os mesmos bits ao voltar a ler, texto com a gramatica de numero do JSON, os mesmos algarismos que o `write_shortest`).
+
+#### 3.7.5 `Pool`, `Span`, `Deque`, `String`
+
+- **`Pool`**: a deteccao do duplo `destroy` fazia uma pesquisa binaria no indice de pedacos a cada `allocate`, `create`, `destroy` e `deallocate`. Fica a verificacao toda (nao passou a so de depuracao) mas
+  o ultimo pedaco por onde passou um ponteiro fica em cache (um ponteiro a mais por `Pool`: o `TreeMap` vazio passa de 104 para 112 bytes), e uma chamada que cai nesse pedaco (criar, apagar e criar em sequencia quase sempre cai) so faz uma subtracao e uma comparacao.
+  Ciclo de criar 1e5, apagar metade, criar outra metade (`cmp_extra pool`): **717,3 para 173,5 instrucoes** (`new` e `delete` 582,5). O `TreeMap`, que e feito sobre a `Pool`, melhora sem mudar: `build` de `int`
+  397,3 para 331,6 (-17 %), `erase` 310,0 para 194,0 (-37 %), de `s20` 1184,8 para 1094,4 e 969,6 para 839,4; `hit` e `miss` iguais; `FlatMap` igual.
+  `Pool.InterleavedChunksKeepTheStateChecksExact` (criar e apagar saltando entre pedacos distantes, duplo `destroy` depois de a cache mudar).
+- **`Span::subspan`**: tirado o ramo do offset zero (a verificacao de limites fica uma so): 6,3 para 6,2 instrucoes por elemento (ponteiro cru 3,5). **Nao se fecha**: a diferenca nao e a verificacao (um teste, cerca de 1 instrucao por
+  `subspan`, 0,06 por elemento neste cenario) mas o `for (int x : t)` sobre um tamanho que o compilador nao conhece (`min(16, resto)`), que gasta 5 por elemento, e o ciclo do ponteiro cru sobre 16 fixos que o compilador desenrola
+  em 3,5. So um `subspan` de tamanho em tempo de compilacao o resolvia, e isso e uma API nova que ninguem pediu.
+- **`Deque::push_front`**: nao se mexeu. O caminho rapido tem 15 instrucoes contra 13 do `std::deque`; as 21,5 medidas incluem 6,4 por elemento que sao o `memcpy` do `realloc` quando a fila cresce (o callgrind conta o `rep movsb` byte a byte: 29,8 % das
+  instrucoes do cenario estao na `__memcpy_avx_unaligned_erms`), que o `std::deque` nunca paga porque nao copia os elementos.
+- **`String::==` e `<`**: tentou-se testar o SSO das duas uma so vez quando ambas estao na heap e escrever o `<` sem o resultado de tres vias: `==` de 40 caracteres 53,6 para 49,6 (std 45,6), `<` 59,5 para 57,6 (std 56,2). **Desfez-se**: o codigo
+  maior fazia o GCC deixar de inlinar `HashMap::probe_dist` (chaves de 8 caracteres: `hit` 125,1 para 157,5, `miss` 83,1 para 120,7) e subia as instrucoes do `TreeMap` (+12 % no `hit` de `s20`), do `BTreeMap` (+9 % no `hit` de `s8`) e de `stable_sort` de texto (+7 %).
+  O que sobra de diferenca para o `std::string` (4 instrucoes no `==`) e decodificar o SSO dos dois lados; o `std::string` guarda sempre o ponteiro, e isso nao se consegue sem mudar a representacao.
+
+#### 3.7.6 `HashMap` com chaves `int`: saltos falhados no `miss`
+
+`miss` de `int-int` a N = 1e5: 0,84 saltos falhados por operacao (abseil 0,40, boost 0,18), `hit` 0,36. Prototipo (so na copia do cabecalho, nao entra) de uma sondagem que olha dois slots por volta com **uma so saida**
+(`s0 = meta[i]==0 | chave[i]==k`, `s1` igual para `i+1`, `if (s0 | s1) return`): com `||` curto-circuito o GCC deixou `hit` 24,9 para 23,9 e `miss` 24,5 para 23,0 instrucoes mas **os saltos falhados ficaram em 0,84**
+(o compilador volta a pôr um salto por teste); com `|` sobre os dois testes, `hit` **sobe** 24,9 para 28,3 e `miss` 24,5 para 29,2, `erase` 42,9 para 51,5, `build` 129,5 para 146,4, e os saltos falhados continuam em 0,84. **Nao se fez**:
+nao ha reducao de mispredicoes sem pagar instrucoes no `hit`, e a causa (a primeira sondagem a 38 % de carga e um cara ou coroa: 0,38 por operacao so desta) so desaparece com uma comparacao de varios slots de uma vez (SSE2/SWAR na meta), que
+precisa de uma meta com 8 bytes de folga no fim e de um layout novo da tabela.
+
+#### 3.7.7 EASTL e RE2
+
+**EASTL** (`eastl::vector`, `eastl::hash_map`, `eastl::sort` e `merge_sort`, as fontes da EASTL e a EABase descarregadas com `git clone --depth 1`, compiladas em menos de um minuto; entram em `cmp_vector`, `cmp_map`, `cmp_sort` e em `tools/bench_compare.sh fetch`).
+Instrucoes por operacao | tempo de CPU em ns (N = 1e5, minimo de 3, com a maquina carregada), ct, `std`, EASTL:
+
+| cenario | tipo | ct | std | EASTL |
+|---|---|---|---|---|
+| map build | int-int | 129,5 \| 56,0 | 583,8 \| 201,3 | 555,4 \| 144,6 |
+| map hit | int-int | 24,9 \| 8,1 | 29,1 \| 39,2 | **19,0** \| 23,2 |
+| map miss | int-int | 24,5 \| 10,7 | 23,5 \| 32,8 | **15,5** \| 23,7 |
+| map erase | int-int | 42,9 \| 17,6 | 213,4 \| 182,9 | 203,7 \| 82,7 |
+| map iterate | int-int | 15,1 \| 2,9 | 5,0 \| 8,0 | 14,7 \| 10,7 |
+| map copy | int-int | 23,0 \| 8,8 | 453,5 \| 143,7 | 462,6 \| 137,8 |
+| map build | s8-int | 332,1 \| 169,4 | 735,1 \| 266,9 | 788,0 \| 200,8 |
+| map hit | s8-int | 125,1 \| 110,8 | 133,4 \| 181,0 | 144,1 \| 174,4 |
+| map miss | s8-int | 83,1 \| 92,9 | 94,0 \| 193,8 | 112,7 \| 139,0 |
+| map erase | s8-int | 139,4 \| 128,8 | 328,1 \| 478,9 | 377,3 \| 336,1 |
+| map build 1e6 | int-int (so ns) | 80,1 | 601,1 | 418,0 |
+| map hit 1e6 | int-int (so ns) | 33,5 | 83,7 | 53,4 |
+| vector build | int | 13,4 \| 0,75 | 16,3 \| 4,6 | 18,7 \| 4,9 |
+| vector build | p16 | 15,4 \| 6,5 | 24,7 \| 25,0 | 19,7 \| 25,0 |
+| vector build_reserved | int | 12,0 \| 0,75 | 11,1 \| 0,75 | 11,1 \| 0,75 |
+| vector iterate e copy | int e p16 | iguais | iguais | iguais |
+| sort | int.random | 208,8 \| 24,9 ns (1e6) | 128,3 \| 57,9 | 125,1 \| 54,8 |
+| stable | int.random | 276,7 \| 58,6 | 193,4 \| 70,2 | 198,9 \| 71,9 |
+| sort | p16.random | 189,6 \| 27,1 | 135,9 \| 61,4 | 135,5 \| 59,3 |
+| stable | p16.random | 319,4 \| 62,7 | 206,6 \| 83,1 | 196,1 \| 68,9 |
+| sort | int.sorted | 7,0 \| 0,31 | 117,2 \| 8,6 | 71,5 \| 5,8 |
+| stable | int.sorted | 7,0 \| 0,54 | 119,5 \| 8,5 | 7,1 \| 0,99 |
+
+A `hash_map` da EASTL (encadeada, nos) **ganha a ct no `hit` e no `miss` de `int-int` em instrucoes** (19,0 e 15,5 contra 24,9 e 24,5: faz menos trabalho por pesquisa, a custa de um no por elemento) e perde por muito em tudo o resto
+(`erase` 5 vezes, `copy` 20 vezes, `build` 4 vezes; a 1e6 em tempo 5,2 e 1,6 vezes). O `vector` e igual ao do `std`. A `sort` da EASTL esta ao nivel do `std::sort` (e a da ct, com mais instrucoes e metade do tempo, ver 3.7.3).
+Fora do que se mediu: `eastl::string`, `fixed_vector` e os mapas ordenados (a EASTL tem `rbtree`/`map`, sem arvore B).
+
+**RE2** (o pacote do Ubuntu 24.04, `libre2.so.10` ja instalado e os cabecalhos de `libre2-dev` extraidos) e `std::regex` contra a `ct::Regex`, as mesmas expressoes e o mesmo texto de `bench/bench_regex.cpp` (2,0 MB de registos),
+tempo de CPU em ms, minimo de 5 (`bench/compare/cmp_regex.cpp`, `tools/bench_compare.sh regex`); a razao e `ct` a dividir pelo outro:
+
+| cenario | ct | std::regex | RE2 | ct / std | ct / RE2 |
+|---|---:|---:|---:|---:|---:|
+| literal ausente, procura | 0,229 | 28,234 | 0,130 | 0,01 | 1,76 |
+| literal `status=500`, todas | 1,658 | 31,562 | 1,076 | 0,05 | 1,54 |
+| ip `[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+`, todas | 18,889 | 49,844 | 5,804 | 0,38 | **3,25** |
+| email `[\w.]+@[\w.]+\.com`, todas | 39,748 | 114,275 | 5,736 | 0,35 | **6,93** |
+| `latency=(\d+)\.(\d+)`, todas | 3,649 | 31,317 | 3,544 | 0,12 | 1,03 |
+| 4 maquinas em alternativa, todas | 2,219 | 29,643 | 3,092 | 0,07 | 0,72 |
+| inicio de linha `\n2026-\d\d-\d\d`, todas | 1,512 | 27,199 | 2,897 | 0,06 | 0,52 |
+| `user=(.+?)@` (preguicoso), todas | 3,977 | 30,472 | 4,660 | 0,13 | 0,85 |
+| `[a-z]+=\d+`, todas | 21,596 | 51,400 | 11,318 | 0,42 | 1,91 |
+| `HOST=ALPHA` sem distinguir maiusculas, todas | 2,397 | 32,932 | 1,676 | 0,07 | 1,43 |
+| `\s+` por ' ' (substituir) | 9,469 | 52,665 | 27,915 | 0,18 | **0,34** |
+| `(\w+)@(\w+)` por `\2:\1` | 64,083 | 120,549 | 9,757 | 0,53 | **6,57** |
+| fullmatch de 100000 textos curtos | 16,279 | 24,938 | 6,735 | 0,65 | 2,42 |
+| `(x+x+)+y` em 30 x (x1000; std so com 18 x) | 3,533 | 11039,559 | 0,090 | 0,00 | **39,4** |
+| compilar o regex do email x2000 | 2,528 | 78,953 | 14,341 | 0,03 | **0,18** |
+
+A `ct::Regex` e mais depressa que o `std::regex` em tudo (de 1,2 a 100 vezes) e anda entre 0,2 e 7 vezes o tempo do RE2: ganha na substituicao de `\s+` e na compilacao, empata ou ganha nas procuras de alternativas e de inicio
+de linha, e perde 3 a 7 vezes nas classes de caracteres sobre texto grande (`[\w.]+`) e na substituicao com grupos, onde o RE2 corre um automato deterministico, e 39 vezes no padrao patologico (a `ct` tem protecao
+contra o retrocesso exponencial mas nao um DFA). As procuras da primeira ocorrencia (que acham logo no principio do texto) nao medem nada e ficam fora desta tabela.
+
 ## 4. Tempo antes e depois (so ct)
 
 O tempo da ct desta ronda esta so na seccao 3.2b (a `HashMap`, tempo de CPU, 3 execucoes alternadas, maquina carregada) e na 5.5 (`String ==`). As celulas da ronda 1 (a primeira
@@ -786,8 +1129,9 @@ mostrou que pagam (feito, ver 5.2b); (c) um layout para inteiros que nao leia o 
 chave e o valor no mesmo slot e sem etiqueta (a etiqueta de 7 bits que a ronda 1 mediu acrescenta 8 instrucoes ao `hit`); o
 caminho seria um grupo de 16 metas comparado de uma vez com SSE2 (o que o absl e o boost fazem, a 41 a 48 instrucoes por `hit`
 contra 25 da ct): troca o `miss` de 2 vezes de tempo por um `hit` de 1,7 a 1,9 vezes as instrucoes. Fica como esta.
+**Ronda 3**: provou-se com um prototipo (3.7.6) que uma sondagem de dois slots com uma so saida nao baixa os 0,84 saltos falhados do `miss` (o GCC volta a por um salto por teste) e que, escrita sem curto-circuito, soma 14 % ao `hit` (24,9 para 28,3) e 19 % ao `miss`. Fica.
 
-**5.2 `HashMap`: bytes por elemento.** Feito para valores grandes, nao para `int-int`.
+**5.2 `HashMap`: bytes por elemento.** Feito para valores grandes, nao para `int-int`. **Ronda 3**: a troca da ronda 2 (abaixo) foi desfeita no que custava (a chave volta ao slot e o valor vai para um slab por mapa, ver 3.7.1): `int-b256` a N = 1e5, instrucoes `build` 788 para 321, `hit` 36,7 para 30,8, `miss` 31,0 para 26,9, `erase` 291 para 71, `copy` 566 para 70; bytes 294,9 / 302,6 / 293,7 (a ronda 2: 290,5 / 295,6 / 290,9, alvo falhado por 1,5 a 2,4 % porque o slot passa de 9 para 17 bytes). O que segue e a ronda 2, para comparar.
 - Valores de 256 bytes (`int-b256`, N = 1e5): **694,7 para 295,6 bytes por elemento** (std 301,8, abseil 347,3, boost 325,7,
   ankerl 356,6); N = 1e6: 555,8 para 290,9 (std 299,6, ankerl 293,6). As entradas com mais de 128 bytes ficam fora da tabela
   (cada uma no seu bloco, a tabela guarda ponteiros: 9 bytes por slot em vez de 265). Preco: uma alocacao por elemento, e as instrucoes
@@ -813,13 +1157,13 @@ assembler de `find` e `erase` de `HashMap<int,int>` e igual ao de antes (conferi
 as mesmas instrucoes nos dois tamanhos medidos (a unica diferenca: `copy` de `int-p16` a N = 1e3, 19,2 para 19,3). Entre as chaves de texto o unico recuo medido e o `hit`; fica documentado e e a troca que
 a ronda 1 recusou nos inteiros e aqui se aceita porque o saldo (miss, build, erase, churn) e de 9 a 29 % a favor.
 
-**5.3 Iterar um `HashMap`.** Nao se mudou: 17,4 instrucoes por elemento a N = 1e5 com `int` (18,8 com chaves de texto; ankerl 5,0, absl 14,0, boost 16,9). Um vetor
+**5.3 Iterar um `HashMap`.** **Ronda 3**: o grupo completo de 8 metas e uma so carga de 64 bits (antes um `memcpy` de tamanho variavel que o GCC expandia em saltos e cujo codigo mudava com o inlining): 17,4 para 15,1 instrucoes por elemento em `int-int`, 25,6 para 17,1 em `int-p16`, 18,8 para 16,8 com chaves de texto. A estrutura nao mudou: 17,4 instrucoes por elemento a N = 1e5 com `int` (18,8 com chaves de texto; ankerl 5,0, absl 14,0, boost 16,9). Um vetor
 denso de entradas mais uma tabela de indices (o que a ankerl faz) daria 5, mas a remocao passaria a trocar com o ultimo
 (move um elemento que nao e o apagado), uma referencia a um valor so sobreviveria sem put nem erase de OUTRO elemento, e a ordem
 de iteracao passaria a ser a de insercao com a remocao a baralha-la: muda o que o `HashMap` documenta e o que `erase` faz, por isso nao se fez. Melhorar o
 varrimento por grupos (de 8 metas por palavra de 64 bits para 16 com `movemask`) nao se mediu.
 
-**5.4 Formatar e ler numeros.** Feito (e o maior ganho da ronda). `ct/numconv.hpp` (sem locale, sem a biblioteca standard):
+**5.4 Formatar e ler numeros.** Feito (e o maior ganho da ronda 2). **Ronda 3**: o Json, o Ini, o Xml e o TextReader passam a usar o mesmo `numconv.hpp` (3.7.4): `Json::dump` 324 para 82 ns por numero, `parse` 230 para 148; 2,6 % dos textos de reais mudam, sempre para mais curtos ou mais proximos; 1e7 valores de ida e volta sem falhas. `ct/numconv.hpp` (sem locale, sem a biblioteca standard):
 texto mais curto de `double` e `float` que volta ao mesmo valor (Schubfach, tabelas de potencias de 5 de 128 bits geradas por
 `tests/gen_numconv_tables.py`), leitura com arredondamento correcto (Clinger, Eisel-Lemire e, nos casos duvidosos, decimal de
 precisao arbitraria; hexadecimais, inf, nan), `%.*g` bit a bit igual ao `snprintf` por uma conta de 192 bits com margem de 2^-56
@@ -831,7 +1175,7 @@ Correccao (seccao 7): diferencial contra o `printf` e o `strtod` do sistema (ver
 intervalo satura em `INT_MIN` e `INT_MAX` (3000000000 dava -1294967296) e `String::to_int(int &out)` diz se coube; `String::to_float` e `to_double` nao
 aceitam a virgula do locale (so '.'); `append_number(double, precision)` escreve o mesmo texto de sempre.
 
-**5.5 `String`: `append_char`, `==`, `<`, concatenacao.** Feito em grande parte. `operator==`, `compare` e `operator+` lem o ponteiro e o tamanho
+**5.5 `String`: `append_char`, `==`, `<`, concatenacao.** Feito em grande parte. **Ronda 3**: um caminho rapido para as duas na heap deu `==` 53,6 para 49,6 e `<` 59,5 para 57,6 instrucoes mas fez o GCC deixar de inlinar `probe_dist` (chaves de 8 caracteres no `HashMap`: `hit` 125 para 158) e subiu o `TreeMap`, o `BTreeMap` e a ordenacao de texto de 7 a 12 %: desfez-se (3.7.5). Fica o que a ronda 2 fez. `operator==`, `compare` e `operator+` lem o ponteiro e o tamanho
 com um so teste do SSO (`String::raw_parts`) e `==` deixou de testar `n == 0` antes do `memcmp`; `push_back` tem o caso normal sem
 `size()`, `capacity()`, `data()` e `set_size()`; a concatenacao (`String::concat`) junta com capacidade exacta, sem `reserve` nem `append`.
 Instrucoes (ct antes, depois; std): `==` de 40 caracteres 58,6 para 53,6 (45,6); `<` 68,5 para 59,5 (56,2); `append_char` 24,1 para
@@ -842,10 +1186,10 @@ Instrucoes (ct antes, depois; std): `==` de 40 caracteres 58,6 para 53,6 (45,6);
 se explicou. Uma dica de ramo para o caso da heap (`CT_UNLIKELY` no teste do SSO) deu uma diferenca dentro do ruido, e nao ficou.
 
 **5.6 `Deque` e `PriorityQueue`.** `PriorityQueue`: feito, 358 para 273 instrucoes por elemento (std 309), com a tecnica do buraco (um move por nivel em vez de
-um swap, o `pop` desce ate a folha e sobe). `Deque::push_front`: nao se tentou (21,5 contra 13,3 do `std::deque`: a ct dobra um anel de potencia de 2 e le
+um swap, o `pop` desce ate a folha e sobe). `Deque::push_front`: **ronda 3**: analisado, nao se mexeu: o caminho rapido tem 15 instrucoes contra 13 e as 21,5 incluem 6,4 que sao o `memcpy` do `realloc` contado byte a byte pelo callgrind (3.7.5). Na ronda 2 nao se tentou (21,5 contra 13,3 do `std::deque`: a ct dobra um anel de potencia de 2 e le
 `head_`, `cap_` e `size_` a cada `push_front`, o `std::deque` decrementa um ponteiro).
 
-**5.7 `sort` com comparador em entrada aleatoria.** Nao se tentou nesta ronda (163 instrucoes por elemento em `int` aleatorio contra 128 do
+**5.7 `sort` com comparador em entrada aleatoria.** **Ronda 3**: feito, com a particao por blocos (3.7.3): `int` aleatorio a 1e6 **59,5 para 24,2 ns por elemento** (std 57,1), saltos falhados 6,97 para 1,96 por elemento, **instrucoes 163 para 209 (+28 %)**; `stable_sort` 64,8 para 55,7 ns (std 67,9), instrucoes 222 para 277. As instrucoes sobem porque a particao sem salto faz mais trabalho por elemento; decidiu-se pelo tempo e pelos saltos, e e uma regressao na metrica das instrucoes que o dono deve saber. `stable_sort` ganha a passagem unica para ordenada e invertida (92 e 201 para 7 e 11 instrucoes). Na ronda 2 nao se tentou (163 instrucoes por elemento em `int` aleatorio contra 128 do
 `std::sort` e 118 do pdqsort do boost; 167 contra 136 e 121 em `P16`). O caminho (proposta, nao medida) seria a particao por blocos de 64 (BlockQuicksort/pdqsort),
 em que os indices dos elementos a trocar se juntam sem ramos e que le sempre dentro do intervalo, por isso as guardas que protegem um comparador
 mau (`<=`) ficariam de graca; so serve com comparador barato e tipo trivial (e e esse o caso que perde).
@@ -853,7 +1197,7 @@ mau (`<=`) ficariam de graca; so serve com comparador barato e tipo trivial (e e
 **5.8 `Vector`.** Igual. Novo: `resize_for_overwrite(n)` e `append_uninitialized(n)` (ver 6): crescer sem preencher os elementos novos de um tipo que se
 constroi sem escrever nada (`int`: 9,0 para 5,0 instrucoes por elemento num ciclo de redimensionar e escrever tudo, como o `default_init` do boost; `P16`: 9,5 para 7,0).
 
-**5.9 `TreeMap` a 1e6 elementos.** Nao se tentou. Os iteradores e os ponteiros `Entry *` de `TreeMap` estao documentados como estaveis (a insercao e a remocao nao movem
+**5.9 `TreeMap` a 1e6 elementos.** **Ronda 3**: feito, `BTreeMap` e `BTreeSet` (3.7.2); o `TreeMap` fica como esta. Na ronda 2 nao se tentou. Os iteradores e os ponteiros `Entry *` de `TreeMap` estao documentados como estaveis (a insercao e a remocao nao movem
 elementos), e uma btree move elementos entre nos; por isso o caminho e um `BTreeMap` e um `BTreeSet` a parte, com as garantias mais fracas ditas no cabecalho
 (a insercao e a remocao invalidam iteradores e referencias; a iteracao e a pesquisa por intervalo ficam), nos de 256 bytes com 15 chaves,
 `lower_bound`, `erase` com fusao e emprestimo. Estimativa: umas 600 linhas, mais os testes de ordem, de remocao em todos os casos e diferenciais contra o `TreeMap`.
@@ -865,7 +1209,7 @@ rehash) fica.
 `Variant` (`std::variant`): construir 68,7 contra 70,4, visitar 17,0 contra 18,4, atribuir por copia 34,1 contra 36,3: empata ou ganha. `Arena`
 (`std::pmr::monotonic_buffer_resource`): `allocate(64)` 28,0 contra 27,1 (empate) e uma lista de nos 32,0 contra 33,1. Fila circular
 (`Queue` sobre `Deque` contra `std::queue`): 18,0 contra 22,6, ganha. `Span`: somar tudo 5,0 contra 5,0 de um ponteiro cru; **`subspan` em blocos de 16 perde, 6,4
-contra 3,5** (a verificacao de limites de `subspan` por chamada). **`Pool` perde, 718 contra 583 de `new` e `delete`** num ciclo de criar N, apagar metade e criar
+contra 3,5** (a verificacao de limites de `subspan` por chamada; **ronda 3**: nao se fecha, a diferenca e o ciclo de tamanho desconhecido e nao a verificacao, 3.7.5). **`Pool` perde, 718 contra 583 de `new` e `delete`** (**ronda 3: 174**, a deteccao do duplo `destroy` fica toda mas o ultimo pedaco fica em cache, 3.7.5) num ciclo de criar N, apagar metade e criar
 outra metade: cada `allocate`, `create`, `destroy` e `deallocate` acha o bloco do slot por busca binaria num indice de blocos (`state(p)`, varias vezes por `create` e por `destroy`) para detectar o duplo `destroy`, e e essa seguranca que custa; nao se
 mexeu (mudar a deteccao muda o que a `Pool` garante).
 
@@ -886,6 +1230,9 @@ mexeu (mudar a deteccao muda o que a `Pool` garante).
 | 11 | `HashMap<int, B256>`: 695 bytes por elemento a N = 1e5 (a tabela a 38 % de carga com slots de 265 bytes) | 69,5 MB | 29,6 MB (so se paga uma alocacao por elemento) | `HashLayoutBig.BytesPerElementAreCloseToTheEntrySize`: o limite de 290 falha com o cabecalho de origin/main (694,7) e passa (295,6). |
 
 | 12 | `CT_DEBUG_ITERATORS` ligada pela ausencia de `NDEBUG` (defeito da ronda 2: o ABI dependia do `NDEBUG`) | o `HashMap` e o `HashSet` ganhavam 8 bytes (o contador de versao) e iteradores maiores em toda a unidade sem `NDEBUG`; duas unidades do mesmo programa com `NDEBUG` diferente (uma biblioteca em Release ligada a uma aplicacao em Debug, um teste com `#undef NDEBUG`) discordavam do tamanho e dos membros do mesmo tipo e corrompiam memoria em silencio (partiu 11 testes da biblioteca grafica) | a macro e explicita (`CT_DEBUG_ITERATORS=1`, nunca por omissao nem por `NDEBUG`) e os tipos que o layout ou o comportamento inline faz depender de uma macro levam um namespace inline com o valor no nome (`ct::abi_dbgiter::HashMap`, `abi_hashinline_N`, `abi_tls_mbed`, `abi_re_check_caps`): uma ligacao com unidades que discordam falha por referencia por definir | `tests/abi_a.cpp` (NDEBUG), `abi_b.cpp` (-UNDEBUG) e `abi_main.cpp`: tamanho, alinhamento e posicao de cada membro de `HashMap`, `HashSet`, `String`, `Vector`, `Variant`, `Function`, `TreeMap`, `Deque` iguais nas tres unidades e um `Box` preenchido numa le-se na outra; com os cabecalhos de 63793ca o teste falha (`Box` 448 contra 496 bytes, `HashMap` 32 contra 40) e rebenta; `abi_mixed_a.cpp` + `abi_mixed_b.cpp` (uma com `-DCT_DEBUG_ITERATORS=1`) falham na ligacao (etapa `abi` do `check.sh`, ou `ctest -R ct_abi_mixed`) |
+| 13 | `Xml::attr_double` com virgula decimal no locale (`pt_BR`, `pt_PT`) | texto que nao e numero devolvia 0 (o ramo da virgula nao via o valor por omissao) | devolve o valor por omissao, como no locale "C"; o `strtod` sai | `XmlNumbers.AttributeDoublesIntsAndLocale`; diferencial contra o codigo de antes: 6 diferencas em 300000 textos em `pt_BR`, todas em `Xml::attr_double` com texto invalido |
+| 14 | o caminho de `long double` do Json (`json_dtoa_fast`, so em x86) escrevia o ultimo algarismo mal em cerca de 0,5 % dos reais | `1.5080921830664334e-308` (o decimal de 17 algarismos mais proximo e `...333`), `1489.7146606445313` (empate exacto: o par e `...312`) | o texto mais curto e mais proximo, empates ao par | 52902 dos 1999880 valores mudam, todos para mais curtos (14115), mais proximos (9978) ou empate ao par (2358): 3.7.4; `JsonNumbers.DumpIsTheShortestRoundTripText` |
+| 15 | o codigo de `HashMap<int, P16>` e `String::to_double` mudava de instrucoes sem mudar nada na biblioteca | `hit` de `int-p16` mais 1, `iterate` mais 8, `s2f64` mais 5 a 14 instrucoes: uma unidade de compilacao maior (ou um refactor de uma funcao ao lado) muda as decisoes do GCC | o "antes" mede-se com o mesmo `bench/compare` (seccao 2); o `iterate` ganha uma carga so por grupo de 8 metas; o `write_shortest_at_least` foi para um cabecalho a parte (`detail/numconv_g.hpp`) em vez de mexer no `numconv.hpp` | o assembler de `find`, `erase` e `iterate` isolados de `HashMap<int, P16>` e igual byte a byte; `s2f64` 237 e 320 instrucoes em ambos |
 
 **Auditoria das macros que mudam layout ou comportamento inline** (todos os `#if` dos cabecalhos): `CT_DEBUG_ITERATORS` (layout de `HashMap`, `HashSet` e dos iteradores), `CT_HASH_INLINE_MAX` (layout de `HashMap`; o valor tem de ser um literal inteiro e, se a aplicacao o definir, entra no nome do tipo), `CT_TLS_MBEDTLS` e `CT_TLS_DEFAULT_MBEDTLS` (layout e construtor de `TlsLibrary`) e `CT_RE_CHECK_CAPS` (um `__builtin_trap` no motor de `Regex`): as quatro explicitas, desligadas por omissao e com o namespace inline. Nenhuma depende de `NDEBUG`, de `assert` (os cabecalhos nao usam `assert`), de `__OPTIMIZE__` nem de `_GLIBCXX_DEBUG` (nao aparecem). Ficam fora porque so seguem a plataforma ou o compilador e nao sao escolhas da aplicacao: `_WIN32`, `__APPLE__`, `__ANDROID__`, `__EMSCRIPTEN__`, `__GNUC__`, `_MSC_VER`, `__BYTE_ORDER__` (o `String` recusa-se a compilar em big-endian), `__SIZEOF_INT128__`, `MSG_NOSIGNAL`, `SO_NOSIGPIPE`, `__cpp_inline_variables`;
 `CT_COND_MONOTONIC` (`thread.hpp`, derivada da plataforma: escolhe o relogio da `CondVar`, nao o layout), `CT_NUMCONV_NO_CLINGER` (`numconv.hpp`, derivada de `__i386__` sem `__SSE2_MATH__`: tira um atalho que da o mesmo resultado, nao o layout) e `CT_RECTPACKER_IMPLEMENTATION` ("defina numa unidade so": decide quem define funcoes nao inline, nao o layout).
@@ -955,32 +1302,37 @@ O ficheiro nao usa a biblioteca standard (so o gtest e cabecalhos C) e corre em 
   um vetor direto de 2048 chaves (ordem ascendente na iteracao, `validate()`), `HashMap` e `HashSet` contra um vetor direto de 4096 chaves
   (com copias, atribuicoes e moves pelo caminho).
 
+- **Ronda 3**: `tests/test_btree.cpp` (23 testes: o diferencial de 1e6 operacoes contra o `TreeMap` com contadores de cada caminho de dividir, emprestar e fundir, em nos minimos; chaves de texto; ordem crescente e decrescente; `lower_bound` e `upper_bound` exactos;
+  `erase_range`, `erase_from` e por iteradores; `assign_sorted` ordenado, desordenado e com repetidos; construcoes e destruicoes, valores so move, sobre-alinhados e de 4 KiB, auto-referencia do valor e da chave, auto-atribuicao e auto-movimento, bytes por elemento e alocacoes; o iterador de depuracao),
+  `tests/test_sort_blocks.cpp` (8: todos os padroes e tamanhos em volta dos limites dos blocos, estabilidade, comparadores maus com ASan, repetidos em tempo quase linear, ordenada e invertida numa passagem), `tests/test_parser_numbers.cpp` (6: o texto do Json, o diferencial de ida e volta de 1e7 valores, Ini, Xml com locale, TextReader),
+  `HashLayoutModes.*` e `HashLayoutBig` (as tres disposicoes da tabela: valores so move, sobre-alinhados, chave grande, diferencial contra um vetor directo, contagem de construcoes, reutilizacao dos blocos) e `Pool.InterleavedChunksKeepTheStateChecksExact`.
+
 **Resultado da ronda 1**: um defeito real (6.1) e as melhorias de eficiencia de 6.2 a 6.5. Todos os outros testes passaram sem mexer em codigo.
 Tudo corre com ASan + UBSan. A ronda 2 acrescentou 45 testes (seccao 6, linhas 6 a 11, e `test_numconv`, `test_string_ops`, `test_pq_hole`, `test_hash_iter`, `test_hash_layout`, `test_vector_overwrite`) e o diferencial longo de `numconv.hpp`.
 
 ## 8. O que ficou por fazer
 
-Da ronda 2 (cada ponto diz porque, ver a seccao 5):
+Da ronda 3 (cada ponto diz porque, ver a seccao 5 e a 3.7):
 
-- **`BTreeMap` e `BTreeSet`** (5.9): nao se fez. `TreeMap` fica como esta (rubro-negra com `Pool`); 4 a 6 vezes atras da `btree_map` do abseil a 1e6.
-- **Carga maxima de 87,5 % no `HashMap`** (5.1, 5.2): medida com um prototipo e recusada (o `miss` de `int-int` passa de 24,5 para 71,7 instrucoes). O que a faria
-  possivel e uma tabela de grupos de 16 metas comparados de uma vez (SSE2/NEON e uma alternativa portatil), com o custo de 41 a 48 instrucoes por `hit` do absl e do boost
-  contra 25 da ct. Os bytes por elemento de `int-int` ficam em 23,6 (absl 11,8).
-- **Iterar um `HashMap` a 5 instrucoes por elemento** (5.3): pede armazenamento denso, que muda o `erase` e as referencias; nao se fez.
-- **`ct::sort` com comparador em entrada aleatoria** (5.7): 25 % mais instrucoes que `std::sort`; a particao por blocos nao se tentou.
-- **`Deque::push_front`** (5.6): 21,5 contra 13,3 instrucoes; nao se tentou.
-- **O tempo da ct desta ronda** so se mediu na `HashMap` (3.2b, 3 execucoes alternadas com a maquina a carga de 20 a 25 e ruido de ate 30 %) e no `==` de `String`: falta o tempo de `String` e dos numeros, e repetir a `HashMap` com a maquina livre. O tempo das outras bibliotecas e o da ronda 1.
-- **EASTL e RE2** (nao se compilaram: a EASTL pede dois repositorios, e o RE2 so tem o pacote desempacotado); `std::regex` nao se repetiu. Nao ha vector com armazenamento
-  interno (small vector) na ct para medir. `Span` mede-se so contra um ponteiro cru (o `std::span` e C++20 e esta bateria compila em C++17).
-- **Json, Ini, Xml e TextReader** continuam a ler e a escrever `double` com `strtod` e `snprintf` e a tratar o locale a mao: podiam usar `ct::parse_double` e
-  `ct::write_shortest`, mas o texto que o `Json::dump` escreve mudaria (o Json escolhe 15, 16 ou 17 algarismos e o limite do expoente depende deles; o mais curto
-  escreve `5e-324` onde o Json escreve `4.9406564584124654e-324`), por isso nao se mexeu. O caminho lento de `json_append_double` continua por exercitar (docs/SUSPEITAS.md).
+- **Bytes por elemento da `HashMap` com valores grandes** ficam 1,5 a 2,4 % acima dos da ronda 2 (294,9 / 302,6 / 293,7 contra 290,5 / 295,6 / 290,9): o slot de 17 bytes (chave e referencia) so desce a 13 com uma representacao em que o `Entry &` do iterador deixa de existir.
+  O `hit` fica 14 a 24 % acima do da tabela inline (um terceiro acesso, o do bloco) e o `iterate` 20 %.
+- **`.value` de uma `const Entry &` nao e const** com valores grandes (docs/SUSPEITAS.md): precisa de uma decisao do dono.
+- **`BTreeMap` com chaves de texto** gasta 1,7 vezes as instrucoes do `btree_map` do abseil no `hit` e no `miss` (a pesquisa binaria faz 15 a 21 comparacoes de `ct::String` por pesquisa e a comparacao da ct custa 56 a 67 instrucoes contra 46 do `std::string`);
+  o `String::==` e o `<` ficam a 4 instrucoes do `std::string` (o `std::string` guarda sempre o ponteiro). Um prefixo de 8 bytes da chave nos nos internos, ou uma comparacao de tres vias, reduziam-no; nao se fez. O `BTreeMap` nao tem iteradores para tras (as folhas ligam so para a frente),
+  nem `erase(iterator)` isolado, nem pesquisa transparente (`find` com `StringView`).
+- **`ct::sort` com comparador em dados ao acaso** gasta mais instrucoes (+28 %) para ganhar 2,4 vezes em tempo: uma particao por blocos com menos instrucoes por elemento nao se tentou; e `stable_sort` de tipos pequenos pede n elementos de memoria em vez de n/2.
+- **`HashMap` com chaves `int`: saltos falhados no `miss`** (0,84 por operacao contra 0,40 do abseil): so se resolve com uma comparacao de varios slots de uma vez, que pede uma meta com 8 bytes de folga e um layout novo (3.7.6).
+- **`Deque::push_front`, `Span::subspan` e `String::==`**: analisados, ficam (3.7.5).
+- **O tempo de CPU da ronda 3** e indicativo (a maquina esteve a carga de 3 a 13 e, no fim, com prioridade baixa): falta repeti-lo com a maquina livre, e o tempo de `String`, dos numeros e da ordenacao com mais de 3 execucoes.
+- **EASTL**: so se mediu `vector`, `hash_map`, `sort` e `merge_sort`; falta `eastl::string`, `fixed_vector`, `eastl::map`. **RE2**: o `bench/bench_regex.cpp` continua so contra o `std::regex`; o `cmp_regex` e que tem o RE2.
+- `Ini::get_int`, `TextReader::read_int` e os inteiros do Xml continuam a usar `strtoll` ou a conta propria (nao tem locale nem arredondamento): os reais dos quatro leitores ja passaram para o `numconv.hpp`.
 
-Das anteriores:
+Das rondas 1 e 2 que a 3 nao tocou:
 
-- Falha de alocacao (nao ha caminho de erro, ver 7).
-- `Vector` de 1 elemento com capacidade 8; `reserve` do `String` a dobrar a partir do SSO.
-- `-march=native`.
+- **Carga maxima de 87,5 % no `HashMap`** (5.1, 5.2): medida com um prototipo e recusada (o `miss` de `int-int` passa de 24,5 para 71,7 instrucoes). Os bytes por elemento de `int-int` ficam em 23,6 (absl 11,8).
+- **Iterar um `HashMap` a 5 instrucoes por elemento** (5.3): pede armazenamento denso, que muda o `erase` e as referencias; nao se fez (agora 15 instrucoes).
+- Falha de alocacao (nao ha caminho de erro, ver 7); `Vector` de 1 elemento com capacidade 8; `reserve` do `String` a dobrar a partir do SSO; `-march=native`.
+- Nao ha vector com armazenamento interno (small vector) na ct para medir. `Span` mede-se so contra um ponteiro cru (o `std::span` e C++20 e esta bateria compila em C++17).
 
 ## 9. Como repetir
 
@@ -1005,6 +1357,17 @@ build/ct_numconv_diff 24000000 2 pt_BR.utf8                                     
 build/ct_numconv_diff --float-all 1 0                                           # os 2^32 floats, texto mais curto
 ```
 
+
+Ronda 3: `tools/bench_compare.sh fetch` traz tambem a EASTL e a EABase (`git clone --depth 1`) e `build` compila as fontes da EASTL; `tools/bench_compare.sh regex` corre `cmp_regex` (ct, `std::regex` e RE2). O varrimento de `CT_HASH_INLINE_MAX`:
+
+```sh
+CT_COMPARE_BUILD=/tmp/in  CT_COMPARE_OPT="-O2 -DCT_HASH_INLINE_MAX=100000" tools/bench_compare.sh build   # a tabela inline
+CT_COMPARE_BUILD=/tmp/out CT_COMPARE_OPT="-O2 -DCT_HASH_INLINE_MAX=0"      tools/bench_compare.sh build   # o valor sempre fora
+for t in b32 b64 b96 b128 b192 b256 b512 b1024; do for s in build hit miss erase iterate copy; do
+  CMP_CPUTIME=1 /tmp/in/cmp_map ct $s int-$t 100000; CMP_CPUTIME=1 /tmp/out/cmp_map ct $s int-$t 100000; done; done
+CMP_CALLGRIND=1 valgrind --tool=callgrind --collect-atstart=no /tmp/in/cmp_map ct hit int-b256 100000   # instrucoes; --branch-sim=yes para os saltos
+CT_JSON_ITERS=10000000 build/ct_tests --gtest_filter='JsonNumbers.RoundTrip*'                           # 1e7 valores de ida e volta do Json
+```
 
 `CT_COMPARE_QUICK=1` so faz N = 1e3 e 1e5; `CT_COMPARE_ONLY=map` so a familia `map` na etapa `time`; `CT_COMPARE_THIRD`,
 `CT_COMPARE_OUT`, `CT_COMPARE_BUILD` mudam as pastas. Todos os comandos correm num scope do systemd com `MemoryMax=4G` e a

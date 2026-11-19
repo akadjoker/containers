@@ -1,6 +1,6 @@
 // Mapas de hash: ct::HashMap contra std::unordered_map, absl::flat_hash_map, boost::unordered_flat_map e
 // ankerl::unordered_dense::map, cada um com o seu hasher por omissao.
-// uso: cmp_map <impl> <cenario> <chave-valor> <N>   impl: ct std absl boost ankerl   tipo: int-int int-p16 int-b256 int-mo s8-int s20-int s40-int
+// uso: cmp_map <impl> <cenario> <chave-valor> <N>   impl: ct std absl boost ankerl   tipo: int-int int-p16 int-b256 int-mo s8-int s20-int s40-int (e int-b32 a int-b1024 para varrer o tamanho do valor)
 #include "harness.hpp"
 
 #include <ct/hashmap.hpp>
@@ -25,6 +25,26 @@
 #endif
 
 using namespace cmp;
+
+// Valores de tamanho N bytes (so para varrer o tamanho do valor: int-b32 ... int-b1024)
+template <std::size_t N> struct Blob
+{
+    std::uint64_t v[N / 8];
+};
+namespace cmp
+{
+    template <std::size_t N> struct Mk<Blob<N>>
+    {
+        static Blob<N> make(std::uint64_t i)
+        {
+            Blob<N> b;
+            for (std::size_t k = 0; k < N / 8; ++k)
+                b.v[k] = i + k;
+            return b;
+        }
+        static std::uint64_t val(const Blob<N> &x) { return x.v[0] + x.v[N / 8 - 1]; }
+    };
+}
 
 enum Kind { KInt, KS8, KS20, KS40 };
 
@@ -327,6 +347,13 @@ template <class X> static int by_type(const char *scen, const char *type, Runner
     if (!std::strcmp(type, "int-p16")) return run_c<X, KInt, P16>(scen, type, R);
     if (!std::strcmp(type, "int-b256")) return run_c<X, KInt, B256>(scen, type, R);
     if (!std::strcmp(type, "int-mo")) return run_c<X, KInt, MO>(scen, type, R);
+    if (!std::strcmp(type, "int-b32")) return run_c<X, KInt, Blob<32>>(scen, type, R);
+    if (!std::strcmp(type, "int-b64")) return run_c<X, KInt, Blob<64>>(scen, type, R);
+    if (!std::strcmp(type, "int-b96")) return run_c<X, KInt, Blob<96>>(scen, type, R);
+    if (!std::strcmp(type, "int-b128")) return run_c<X, KInt, Blob<128>>(scen, type, R);
+    if (!std::strcmp(type, "int-b192")) return run_c<X, KInt, Blob<192>>(scen, type, R);
+    if (!std::strcmp(type, "int-b512")) return run_c<X, KInt, Blob<512>>(scen, type, R);
+    if (!std::strcmp(type, "int-b1024")) return run_c<X, KInt, Blob<1024>>(scen, type, R);
     if (!std::strcmp(type, "s8-int")) return run_c<X, KS8, int>(scen, type, R);
     if (!std::strcmp(type, "s20-int")) return run_c<X, KS20, int>(scen, type, R);
     if (!std::strcmp(type, "s40-int")) return run_c<X, KS40, int>(scen, type, R);

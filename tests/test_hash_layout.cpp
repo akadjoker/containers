@@ -92,7 +92,8 @@ TEST(HashLayoutBig, ReferencesToValuesSurviveRehashAndEverythingWorks)
     Big::live = 0;
     {
         ct::HashMap<int, Big> m;
-        static_assert(sizeof(ct::HashMap<int, Big>::Entry) > 128, "o teste precisa de uma entrada grande");
+        static_assert(sizeof(ct::detail::HashEntry<int, Big, false>) > 128, "o teste precisa de uma entrada grande");
+        static_assert(ct::detail::HashMode<int, Big>::value == 1, "chave pequena: a chave fica na tabela e o valor num bloco");
         m.put(0, Big(1000));
         Big *first = m.find(0);
         ASSERT_NE(first, nullptr);
@@ -159,8 +160,10 @@ TEST(HashLayoutBig, ReferencesToValuesSurviveRehashAndEverythingWorks)
     EXPECT_EQ(Big::live, 0);
 }
 
-// 100000 entradas de 4 + 256 bytes com um alocador que conta: sizeof(entrada) + 9 bytes de tabela por slot em vez de
-// sizeof(entrada) + 1 por slot de uma tabela a 38 % de carga (o que dava 700 bytes por elemento)
+// 100000 entradas de 4 + 256 bytes com um alocador que conta: 16 + 1 bytes de tabela por slot (a chave e a referencia ao valor)
+// e o valor num bloco de um slab (sem cabecalho de malloc, um pedaco de 16 blocos por alocacao), em vez de sizeof(entrada) + 1
+// por slot de uma tabela a 38 % de carga (o que dava 700 bytes por elemento). A 38 % de carga os 17 bytes por slot
+// custam 44,6 por elemento; a 1e3 e a 1e6 elementos a carga e maior e o total fica abaixo dos 296 da ronda 2.
 TEST(HashLayoutBig, BytesPerElementAreCloseToTheEntrySize)
 {
     CountingAlloc::requested = CountingAlloc::live_bytes = CountingAlloc::calls = 0;
@@ -169,13 +172,23 @@ TEST(HashLayoutBig, BytesPerElementAreCloseToTheEntrySize)
         for (int i = 0; i < 100000; ++i)
             m.put(i, Big(static_cast<uint64_t>(i)));
         const double per_elem = static_cast<double>(CountingAlloc::live_bytes) / 100000.0;
-        EXPECT_LT(per_elem, 290.0) << "bytes vivos por elemento";
+        EXPECT_LT(per_elem, 305.0) << "bytes vivos por elemento";
         EXPECT_GT(per_elem, 260.0);
-        EXPECT_GE(CountingAlloc::calls, 100000u); // uma alocacao por entrada, mais as tabelas
-        EXPECT_LT(CountingAlloc::calls, 100100u);
+        EXPECT_LT(CountingAlloc::calls, 100000u / 10) << "os valores vem de pedacos, nao ha uma alocacao por entrada";
         m.erase_if([](const int &k, Big &) { return k >= 50000; });
         EXPECT_EQ(m.size(), 50000u);
-        EXPECT_LT(CountingAlloc::live_bytes, 50000u * 320u);
+        // os blocos dos valores apagados ficam no mapa (uma lista de livres) e os proximos put reutilizam-nos
+        const size_t before = CountingAlloc::live_bytes;
+        for (int i = 100000; i < 150000; ++i)
+            m.put(i, Big(static_cast<uint64_t>(i)));
+        EXPECT_EQ(m.size(), 100000u);
+        EXPECT_LT(CountingAlloc::live_bytes, before + before / 100) << "os blocos libertados foram reutilizados";
+        // quando o mapa fica vazio o slab volta ao alocador
+        m.erase_if([](const int &, Big &) { return true; });
+        EXPECT_EQ(m.size(), 0u);
+        EXPECT_LT(CountingAlloc::live_bytes, 20u * 1000 * 1000);
+        m.clear();
+        EXPECT_LT(CountingAlloc::live_bytes, 20u * 1000 * 1000);
     }
     EXPECT_EQ(CountingAlloc::live_bytes, 0u) << "tudo libertado";
 }

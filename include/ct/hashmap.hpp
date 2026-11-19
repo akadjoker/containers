@@ -2,6 +2,7 @@
 #pragma once
 
 #include "detail/utils.hpp"
+#include "detail/slab.hpp"
 #include "span.hpp"
 #include "string.hpp"
 
@@ -140,41 +141,90 @@ namespace ct
             using type = C;
         };
 
-        // Entradas com mais de 128 bytes ficam fora da tabela, cada uma no seu bloco (a tabela guarda ponteiros): a
-        // tabela fica com 9 bytes por slot em vez de sizeof(entrada) + 1, por isso nao desperdica 25 a 60 % de memoria
-        // em slots vazios, cresce sem mover as entradas e uma referencia a um valor sobrevive ao rehash.
+        // Entradas grandes (sizeof(chave) + sizeof(valor) acima de CT_HASH_INLINE_MAX) deixam de ir inteiras para os slots,
+        // porque a tabela anda a 38 a 75 % de carga e cada slot vazio custa o tamanho da entrada: com valores de 256 bytes
+        // eram 695 bytes por elemento. Duas disposicoes (a escolha e do tipo, em tempo de compilacao):
+        //  - chave pequena (ate 32 bytes): o slot guarda a CHAVE e uma referencia ao valor, e o valor vive num bloco de um
+        //    "slab" do mapa (blocos de tamanho fixo em pedacos, lista de livres). Um hit ou um miss compara a chave no slot
+        //    e nao vai ao bloco; apagar devolve o bloco a lista; copiar e uma passagem so (um pedaco do tamanho certo);
+        //  - chave grande: o slot guarda so um ponteiro para a entrada inteira (o bloco vem do mesmo slab).
         // (CT_HASH_INLINE_MAX muda o limite; com um valor enorme nenhuma entrada fica fora e a tabela e a de antes.)
 #if !defined(CT_HASH_INLINE_MAX)
 #define CT_HASH_INLINE_MAX 128
 #endif
         constexpr std::size_t kHashInlineMax = CT_HASH_INLINE_MAX;
+        constexpr std::size_t kHashSmallKey = 32;
+
+        template <typename K, typename V, bool ValueRef>
+        struct HashEntry
+        {
+            K key;
+            V value;
+        };
+        // Com o valor fora da tabela o `value` e uma referencia ao bloco (e.value, &e.value e e.value = x funcionam como antes)
+        template <typename K, typename V>
+        struct HashEntry<K, V, true>
+        {
+            K key;
+            V &value;
+        };
+
     } // namespace detail
 
     // Mapa de hash de enderecamento aberto com sondagem linear e remocao por deslocamento (sem marcadores).
     //
     // - Referencias, ponteiros e iteradores para elementos NAO sobrevivem a put, operator[] nem a erase (o rehash e o
-    //   deslocamento movem elementos), excepto quando a entrada tem mais de 128 bytes (ficam fora da tabela, ver
-    //   detail::kHashInlineMax): ai uma referencia a um valor sobrevive ao rehash e a insercoes, mas nao ao erase desse elemento.
+    //   deslocamento movem elementos), excepto quando a entrada e grande (chave + valor acima de detail::kHashInlineMax, 128
+    //   por omissao): ai o VALOR vive num bloco que nunca se move, e uma referencia ao valor sobrevive ao rehash e a insercoes
+    //   (nao ao erase desse elemento, nem ao clear); a chave e a entrada (iteradores, Entry &) continuam a mover-se. Os
+    //   blocos dos valores apagados ficam no mapa para os proximos put; so o clear e o destrutor os devolvem ao alocador.
     // - A meta (um byte por slot) diz se o slot esta ocupado; para chaves que nao sao inteiros, enumeracoes nem ponteiros
     //   (strings, chaves compostas, entradas grandes) guarda tambem a distancia do elemento ao seu slot de origem (0x81 + dist, e
     //   0xFF para 126 ou mais), de modo que a sondagem so compara chaves onde a distancia bate (uma falha quase nunca
     //   compara strings) e a remocao desloca os seguintes sem recalcular o hash.
-    template <typename K, typename V, typename H = Hash<K>, typename Alloc = HeapAlloc>
-    class HashMap : private H, private Alloc
+    namespace detail
     {
-    public:
-        struct Entry
+        // 0: a entrada inteira no slot; 1: a chave no slot e o valor num bloco do slab; 2: o slot e um ponteiro para a
+        // entrada inteira (chave grande), que vive num bloco do slab.
+        template <typename K, typename V>
+        struct HashMode
         {
-            K key;
-            V value;
+            static constexpr bool kBig = sizeof(HashEntry<K, V, false>) > kHashInlineMax;
+            static constexpr bool kSmallKey = sizeof(K) <= kHashSmallKey;
+            static constexpr int value = !kBig ? 0 : (kSmallKey ? (sizeof(V) >= sizeof(void *) ? 1 : 0) : 2);
         };
+        template <typename T, int Mode>
+        struct HashSlabFor
+        {
+            using type = BlockSlab<T>;
+        };
+        template <typename T>
+        struct HashSlabFor<T, 0>
+        {
+            using type = NoSlab;
+        };
+    } // namespace detail
+
+    template <typename K, typename V, typename H = Hash<K>, typename Alloc = HeapAlloc>
+    class HashMap : private H, private Alloc,
+                    private detail::HashSlabFor<typename detail::hash_pick<detail::HashMode<K, V>::value == 1, V, detail::HashEntry<K, V, false>>::type,
+                                                detail::HashMode<K, V>::value>::type
+    {
+        static constexpr int kMode = detail::HashMode<K, V>::value;
+
+    public:
+        using Entry = detail::HashEntry<K, V, kMode == 1>;
 
         using size_type = std::size_t;
 
     private:
-        static constexpr bool kIndirect = sizeof(Entry) > detail::kHashInlineMax;
+        static constexpr bool kIndirect = kMode == 2;
+        static constexpr bool kOut = kMode != 0;
         static constexpr bool kDist = kIndirect || !detail::is_bytewise_comparable<K>::value;
         using Slot = typename detail::hash_pick<kIndirect, Entry *, Entry>::type;
+        using Block = typename detail::hash_pick<kMode == 1, V, Entry>::type;
+        using Slab = typename detail::HashSlabFor<Block, kMode>::type;
+        using Mode = detail::integral_constant<int, kMode>;
 
     public:
         HashMap() noexcept
@@ -198,7 +248,7 @@ namespace ct
             release_slots();
         }
 
-        HashMap(const HashMap &o) : H(static_cast<const H &>(o)), Alloc(static_cast<const Alloc &>(o)),
+        HashMap(const HashMap &o) : H(static_cast<const H &>(o)), Alloc(static_cast<const Alloc &>(o)), Slab(),
                                     slots_(nullptr), meta_(nullptr), mask_(0), size_(0)
         {
             if (o.size_)
@@ -207,7 +257,7 @@ namespace ct
 
         HashMap(HashMap &&o) noexcept
             : H(static_cast<H &&>(o)),
-              Alloc(static_cast<Alloc &&>(o)), slots_(o.slots_), meta_(o.meta_), mask_(o.mask_),
+              Alloc(static_cast<Alloc &&>(o)), Slab(static_cast<Slab &&>(o)), slots_(o.slots_), meta_(o.meta_), mask_(o.mask_),
               size_(o.size_)
         {
             o.slots_ = nullptr;
@@ -235,6 +285,7 @@ namespace ct
                 release_slots();
                 static_cast<H &>(*this) = static_cast<H &&>(o);
                 static_cast<Alloc &>(*this) = static_cast<Alloc &&>(o);
+                slab().adopt(static_cast<Slab &>(o));
                 slots_ = o.slots_;
                 meta_ = o.meta_;
                 mask_ = o.mask_;
@@ -257,7 +308,7 @@ namespace ct
             if (!size_)
                 return nullptr;
             size_type i = probe(k);
-            return meta_[i] ? &entry(i).value : nullptr;
+            return meta_[i] ? value_ptr(i) : nullptr;
         }
         const V *find(const K &k) const noexcept
         {
@@ -273,7 +324,7 @@ namespace ct
             if (!size_)
                 return nullptr;
             size_type i = probe_as(k);
-            return meta_[i] ? &entry(i).value : nullptr;
+            return meta_[i] ? value_ptr(i) : nullptr;
         }
         template <typename Q, typename HH = H, typename = typename HH::is_transparent,
                   typename = typename detail::enable_if<!detail::is_same<Q, K>::value>::type,
@@ -406,6 +457,8 @@ namespace ct
             meta_[i] = 0;
             --size_;
             CT_HASH_TOUCH();
+            if (kMode != 0 && size_ == 0)
+                slab().release_all(allocator()); // vazio: os blocos voltam ao alocador
         }
 
         void clear()
@@ -430,6 +483,8 @@ namespace ct
                 detail::fatal("ct::HashMap: capacidade invalida");
             if (want > capacity())
                 rehash(want);
+            if (n > size_)
+                slab().prepare(allocator(), n - size_);
         }
 
         // Percorrer: a ordem e a dos slots (sem significado). Apagar ou inserir durante o ciclo e INVALIDO: a remocao
@@ -492,6 +547,8 @@ namespace ct
                 size_ -= removed;
                 CT_HASH_TOUCH();
                 rehash(mask_ + 1);
+                if (kMode != 0 && size_ == 0)
+                    slab().release_all(allocator());
             }
             return removed;
         }
@@ -512,6 +569,20 @@ namespace ct
             return kDist ? static_cast<std::uint8_t>(dist >= 126 ? 255 : 0x81 + dist) : static_cast<std::uint8_t>(1);
         }
 
+        Slab &slab() noexcept { return static_cast<Slab &>(*this); }
+
+        // Com o valor fora da tabela o endereco do valor e uma referencia lida do slot: o compilador nao sabe que nao e
+        // nula e deixava um teste a mais em cada hit.
+        V *value_ptr(size_type i) const noexcept
+        {
+            V *p = &entry(i).value;
+#if defined(__GNUC__) || defined(__clang__)
+            if (kMode == 1 && !p)
+                __builtin_unreachable();
+#endif
+            return p;
+        }
+
         Entry &entry(size_type i) const noexcept { return entry_ref(slots_[i], detail::integral_constant<bool, kIndirect>()); }
         static Entry &entry_ref(Entry &e, detail::false_type) noexcept { return e; }
         static Entry &entry_ref(Entry *e, detail::true_type) noexcept { return *e; }
@@ -519,37 +590,57 @@ namespace ct
         template <typename KK, typename VV>
         void construct_at(size_type i, KK &&k, VV &&v)
         {
-            construct_slot(i, detail::integral_constant<bool, kIndirect>(), detail::forward<KK>(k), detail::forward<VV>(v));
+            construct_slot(i, Mode(), detail::forward<KK>(k), detail::forward<VV>(v));
         }
         template <typename KK, typename VV>
-        void construct_slot(size_type i, detail::false_type, KK &&k, VV &&v)
+        void construct_slot(size_type i, detail::integral_constant<int, 0>, KK &&k, VV &&v)
         {
             ::new (static_cast<void *>(&slots_[i])) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
         }
         template <typename KK, typename VV>
-        void construct_slot(size_type i, detail::true_type, KK &&k, VV &&v)
+        void construct_slot(size_type i, detail::integral_constant<int, 1>, KK &&k, VV &&v)
         {
-            void *block = allocator().allocate(sizeof(Entry), alignof(Entry));
-            ::new (block) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
-            slots_[i] = static_cast<Entry *>(block);
+            V *block = slab().take(allocator());
+            ::new (static_cast<void *>(block)) V(detail::forward<VV>(v));
+            ::new (static_cast<void *>(&slots_[i])) Entry{detail::forward<KK>(k), *block};
+        }
+        template <typename KK, typename VV>
+        void construct_slot(size_type i, detail::integral_constant<int, 2>, KK &&k, VV &&v)
+        {
+            Entry *block = slab().take(allocator());
+            ::new (static_cast<void *>(block)) Entry{detail::forward<KK>(k), detail::forward<VV>(v)};
+            slots_[i] = block;
         }
 
-        void destroy_at(size_type i) { destroy_slot(i, detail::integral_constant<bool, kIndirect>()); }
-        void destroy_slot(size_type i, detail::false_type) { slots_[i].~Entry(); }
-        void destroy_slot(size_type i, detail::true_type)
+        void destroy_at(size_type i) { destroy_slot(i, Mode()); }
+        void destroy_slot(size_type i, detail::integral_constant<int, 0>) { slots_[i].~Entry(); }
+        void destroy_slot(size_type i, detail::integral_constant<int, 1>)
         {
-            slots_[i]->~Entry();
-            allocator().deallocate(slots_[i], sizeof(Entry));
+            V *block = &slots_[i].value;
+            block->~V();
+            slab().give(allocator(), block);
+            slots_[i].~Entry();
+        }
+        void destroy_slot(size_type i, detail::integral_constant<int, 2>)
+        {
+            Entry *block = slots_[i];
+            block->~Entry();
+            slab().give(allocator(), block);
         }
 
         // Move o elemento do slot from para o slot to (que esta por construir) e deixa from por construir
-        void move_slot(size_type to, size_type from) { move_slot_impl(to, from, detail::integral_constant<bool, kIndirect>()); }
-        void move_slot_impl(size_type to, size_type from, detail::false_type)
+        void move_slot(size_type to, size_type from) { move_slot_impl(to, from, Mode()); }
+        void move_slot_impl(size_type to, size_type from, detail::integral_constant<int, 0>)
         {
             ::new (static_cast<void *>(&slots_[to])) Entry{detail::move(slots_[from].key), detail::move(slots_[from].value)};
             slots_[from].~Entry();
         }
-        void move_slot_impl(size_type to, size_type from, detail::true_type) { slots_[to] = slots_[from]; }
+        void move_slot_impl(size_type to, size_type from, detail::integral_constant<int, 1>)
+        {
+            ::new (static_cast<void *>(&slots_[to])) Entry{detail::move(slots_[from].key), slots_[from].value};
+            slots_[from].~Entry();
+        }
+        void move_slot_impl(size_type to, size_type from, detail::integral_constant<int, 2>) { slots_[to] = slots_[from]; }
 
         // Pre-condicao: esta tabela esta vazia e o.size_ > 0. Quando o hasher e o da origem (a copia construida) e a
         // capacidade que fica e a dela (o caso de uma tabela que cresceu por dobragem), cada entrada volta ao mesmo
@@ -557,6 +648,7 @@ namespace ct
         void copy_entries(const HashMap &o, bool same_hasher)
         {
             reserve(o.size_);
+            slab().prepare(allocator(), o.size_);
             if (same_hasher && mask_ == o.mask_)
             {
                 const std::uint8_t *const src_meta = o.meta_;
@@ -565,8 +657,7 @@ namespace ct
                 const size_type last = mask_;
                 for (size_type i = 0; i <= last; ++i)
                     if (src_meta[i])
-                        copy_slot(dst, i, entry_ref(src[i], detail::integral_constant<bool, kIndirect>()),
-                                  detail::integral_constant<bool, kIndirect>());
+                        copy_slot(dst, i, entry_ref(src[i], detail::integral_constant<bool, kIndirect>()), Mode());
                 std::memcpy(meta_, o.meta_, mask_ + 1);
                 size_ = o.size_;
                 CT_HASH_TOUCH();
@@ -580,12 +671,18 @@ namespace ct
                 if (o.meta_[i])
                     put(o.entry(i).key, o.entry(i).value);
         }
-        static void copy_slot(Slot *dst, size_type i, const Entry &e, detail::false_type) { ::new (static_cast<void *>(&dst[i])) Entry(e); }
-        void copy_slot(Slot *dst, size_type i, const Entry &e, detail::true_type)
+        static void copy_slot(Slot *dst, size_type i, const Entry &e, detail::integral_constant<int, 0>) { ::new (static_cast<void *>(&dst[i])) Entry(e); }
+        void copy_slot(Slot *dst, size_type i, const Entry &e, detail::integral_constant<int, 1>)
         {
-            void *block = allocator().allocate(sizeof(Entry), alignof(Entry));
-            ::new (block) Entry(e);
-            dst[i] = static_cast<Entry *>(block);
+            V *block = slab().take(allocator());
+            ::new (static_cast<void *>(block)) V(e.value);
+            ::new (static_cast<void *>(&dst[i])) Entry{e.key, *block};
+        }
+        void copy_slot(Slot *dst, size_type i, const Entry &e, detail::integral_constant<int, 2>)
+        {
+            Entry *block = slab().take(allocator());
+            ::new (static_cast<void *>(block)) Entry(e);
+            dst[i] = block;
         }
 
         template <typename KK, typename VV>
@@ -760,7 +857,7 @@ namespace ct
                         j = (j + 1) & mask_;
                         ++d;
                     }
-                    relocate_into(j, old_slots[i], detail::integral_constant<bool, kIndirect>());
+                    relocate_into(j, old_slots[i], Mode());
                     meta_[j] = meta_for(d);
                 }
             if (old_slots)
@@ -774,20 +871,46 @@ namespace ct
             }
         }
         // move o elemento de um slot da tabela antiga para o slot j da nova
-        void relocate_into(size_type j, Entry &from, detail::false_type)
+        void relocate_into(size_type j, Entry &from, detail::integral_constant<int, 0>)
         {
             ::new (static_cast<void *>(&slots_[j])) Entry{detail::move(from.key), detail::move(from.value)};
             from.~Entry();
         }
-        void relocate_into(size_type j, Entry *from, detail::true_type) { slots_[j] = from; }
+        void relocate_into(size_type j, Entry &from, detail::integral_constant<int, 1>)
+        {
+            ::new (static_cast<void *>(&slots_[j])) Entry{detail::move(from.key), from.value};
+            from.~Entry();
+        }
+        void relocate_into(size_type j, Entry *from, detail::integral_constant<int, 2>) { slots_[j] = from; }
 
+        // Destroi os elementos e devolve os blocos dos valores ao alocador (o slab fica vazio)
         void destroy_all()
         {
             if (slots_ && size_)
-                for (size_type i = 0; i <= mask_; ++i)
-                    if (meta_[i])
-                        destroy_at(i);
+            {
+                if (kMode == 0)
+                {
+                    for (size_type i = 0; i <= mask_; ++i)
+                        if (meta_[i])
+                            destroy_at(i);
+                }
+                else if (!(detail::is_trivially_destructible_t<K>::value && detail::is_trivially_destructible_t<V>::value))
+                {
+                    for (size_type i = 0; i <= mask_; ++i)
+                        if (meta_[i])
+                            destroy_in_place(i, Mode());
+                }
+            }
+            slab().release_all(allocator());
         }
+        // como destroy_at mas sem devolver o bloco a lista (o slab vai ser todo libertado a seguir)
+        void destroy_in_place(size_type i, detail::integral_constant<int, 0>) { slots_[i].~Entry(); }
+        void destroy_in_place(size_type i, detail::integral_constant<int, 1>)
+        {
+            slots_[i].value.~V();
+            slots_[i].~Entry();
+        }
+        void destroy_in_place(size_type i, detail::integral_constant<int, 2>) { slots_[i]->~Entry(); }
 
         Alloc &allocator() { return static_cast<Alloc &>(*this); }
 

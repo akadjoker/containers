@@ -101,6 +101,26 @@ itself (GoogleTest is fetched only to build the test suite).
 | [http_server.hpp](include/ct/http_server.hpp) | `HttpServer` | Poll-based HTTP server with routes and static files |
 | [ini.hpp](include/ct/ini.hpp) | `Ini` | INI settings parser/serializer with typed getters and file IO. Values are plain text with no escapes and no inline comments; a value that starts with `"` and ends with the matching `"` is unquoted (`""` is a literal quote, line breaks are allowed inside), anything else is kept verbatim, and `dump()` quotes only what would not survive a round trip |
 
+## Changes that can break callers
+
+- **A const map gives const access to its values, in every `HashMap` layout.** In a `HashMap` whose entries are over 128 bytes
+  (`CT_HASH_INLINE_MAX`) the value is stored outside the table, and `.value` reached through a `const Entry &` (a
+  `const_iterator`, a `const HashMap &`, `for (auto &e : constmap)`) used to be non-const: `e.value.x = 1`, `it->value.bump()`
+  or `V &r = it->value` compiled and wrote into the const map, while the same code with a small value did not. They now fail
+  to compile with the usual "read-only object" / "discards qualifiers" errors, like the small-value layout always did. Nothing
+  changes in how you read: `it->value`, `entry.value` and `for (auto &e : map)` are spelled as before, `find` and `get` of a
+  const map still give `const V *` and `const V &`, and an `iterator` still converts to a `const_iterator`. Code that
+  wrote through a const map has to get a non-const map (or the value from the non-const `find`) first.
+- **No iterator lets you change a key** (`HashMap`, `BTreeMap`, `FlatMap`, `TreeMap`; `HashSet` and `BTreeSet` always gave
+  `const K &`). `it->key = k` and `e.key = k` in a loop over a non-const map no longer compile: the key is `const K`. Such
+  a write left the element where the old key hashed or sorted it and corrupted the table; `erase` the old key and `put`
+  the new one instead. As with `std::pair<const K, V>`, an `Entry` is copy-constructible but not assignable.
+- For a `HashMap` with entries over 128 bytes and a small key the `const_iterator` shows a `HashMap::ConstEntry` (a `const
+  K key` and a `const V &value`), not `const HashMap::Entry`. Code that spells the entry type for a const map (`const
+  HashMap<K, V>::Entry &e : constmap`) should use `auto &` or `HashMap<K, V>::ConstEntry`. `sizeof` and the layout of every
+  map and of `Entry` are unchanged ([tests/test_const_access.cpp](tests/test_const_access.cpp) pins them, and the writes that
+  must not compile are in [tests/const_fail.cpp](tests/const_fail.cpp), stage `constfail` of `tools/check.sh`).
+
 ## Choosing an ordered container
 
 | | `TreeMap` | `BTreeMap` / `BTreeSet` | `HashMap` |
@@ -503,7 +523,7 @@ suite and the torture test.
 ### One command for everything
 
 ```sh
-tools/check.sh            # nostd, headers, release, asan, tsan, parse
+tools/check.sh            # nostd, headers, release, abi, constfail, asan, tsan, parse
 tools/check.sh --quick    # sanitizer stages without the JsRegex and Unicode suites
 tools/check.sh --deep     # fuzzers with 100000 operations per seed
 tools/check.sh nostd asan # only those stages

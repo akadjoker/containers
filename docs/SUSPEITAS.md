@@ -12,15 +12,6 @@ Os numeros de linha sao os da arvore em que isto foi escrito; procure pelo nome 
 - `Json(NAN) == Json(NAN)` da falso e o `dump()` escreve `null`. Um documento com NaN nao e igual a si mesmo. E o que o
   IEEE manda para `double`; nao se mexeu.
 
-### HashMap com valores grandes: o `value` de uma entrada const nao e const
-
-- `include/ct/hashmap.hpp`, `detail::HashEntry<K, V, true>`. Quando a entrada tem mais de 128 bytes (e a chave e pequena) o slot guarda a
-  chave e uma **referencia** ao valor (`V &value`), que vive num bloco do slab do mapa. Uma referencia como membro nao propaga o `const`:
-  `for (const auto &e : constmap) e.value.x = 1;` compila e escreve no mapa. So acontece com valores grandes e so por este caminho
-  (`find` e `get` de um mapa const dao `const V *` e `const V &`). Nao se resolveu porque a alternativa seria um iterador que devolve um
-  proxy por valor, e `for (auto &e : m)` deixava de compilar. Esta dito no cabecalho. Decisao do dono: aceitar, ou trocar o iterador por
-  um proxy (e partir o `auto &`).
-
 ## Nao provadas
 
 ### O strtod e o strtof da glibc arredondam mal alguns hexadecimais subnormais

@@ -13,8 +13,11 @@ namespace ct
     public:
         struct Entry
         {
-            K key;
+            // const: uma chave alterada por um iterador deixa o no fora do sitio da arvore. Os nos nunca se movem nem se
+            // atribuem (a arvore religa ponteiros) e a chave constroi-se no sitio, por isso o const nao custa nada.
+            const K key;
             V value;
+            Entry() = delete; // so o TreeMap cria nos (memoria do Pool, sem construir o Entry inteiro)
 
         private:
             friend class TreeMap;
@@ -121,7 +124,7 @@ namespace ct
                 }
             }
             Entry *z = pool_.allocate();
-            ::new (static_cast<void *>(&z->key)) K(detail::forward<KK>(k));
+            ::new (const_cast<void *>(static_cast<const void *>(&z->key))) K(detail::forward<KK>(k));
             ::new (static_cast<void *>(&z->value)) V(detail::forward<VV>(v));
             link(z, y);
             return z->value;

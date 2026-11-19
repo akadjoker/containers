@@ -50,9 +50,9 @@ namespace ct
         {
             const size_type count = container_.size();
             if (count < 2) { container_.clear(); return; }
-            detail::swap_vals(container_[0], container_[count - 1]);
+            T last(detail::move(container_[count - 1]));
             container_.pop_back();
-            siftDown(0);
+            adjustHeap(0, container_.size(), detail::move(last));
         }
 
         void clear() noexcept { container_.clear(); }
@@ -74,29 +74,52 @@ namespace ct
                 siftDown(index - 1);
         }
 
+        // A tecnica do buraco: o valor que sobe ou desce fica de fora e os outros movem-se um passo (um move por nivel
+        // em vez de um swap, que sao tres), e no pop o buraco desce ate a folha escolhendo o filho maior sem o comparar
+        // com o valor, que depois sobe do fundo ao seu lugar (menos comparacoes, como o libstdc++).
         void siftUp(size_type index)
         {
-            while (index)
+            if (!index) return;
+            size_type parent = (index - 1) / 2;
+            if (!compare_(container_[parent], container_[index])) return;
+            T value(detail::move(container_[index]));
+            do
+            {
+                container_[index] = detail::move(container_[parent]);
+                index = parent;
+                if (!index) break;
+                parent = (index - 1) / 2;
+            } while (compare_(container_[parent], value));
+            container_[index] = detail::move(value);
+        }
+
+        // value vai para o lugar certo da sub-arvore com raiz em index, que esta vazia (buraco); count e o tamanho
+        void adjustHeap(size_type index, size_type count, T &&value)
+        {
+            const size_type top = index;
+            size_type child = index * 2 + 1;
+            while (child < count)
+            {
+                if (child + 1 < count && compare_(container_[child], container_[child + 1])) ++child;
+                container_[index] = detail::move(container_[child]);
+                index = child;
+                child = index * 2 + 1;
+            }
+            while (index > top)
             {
                 const size_type parent = (index - 1) / 2;
-                if (!compare_(container_[parent], container_[index])) return;
-                detail::swap_vals(container_[parent], container_[index]);
+                if (!compare_(container_[parent], value)) break;
+                container_[index] = detail::move(container_[parent]);
                 index = parent;
             }
+            container_[index] = detail::move(value);
         }
 
         void siftDown(size_type index)
         {
             const size_type count = container_.size();
-            for (;;)
-            {
-                size_type child = index * 2 + 1;
-                if (child >= count) return;
-                if (child + 1 < count && compare_(container_[child], container_[child + 1])) ++child;
-                if (!compare_(container_[index], container_[child])) return;
-                detail::swap_vals(container_[index], container_[child]);
-                index = child;
-            }
+            T value(detail::move(container_[index]));
+            adjustHeap(index, count, detail::move(value));
         }
     };
 

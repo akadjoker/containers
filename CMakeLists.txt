@@ -130,7 +130,9 @@ add_executable(ct_tests
   tests/test_hardening.cpp
   tests/test_edge.cpp
   tests/test_numconv.cpp
-  tests/test_vector_overwrite.cpp)
+  tests/test_vector_overwrite.cpp
+  tests/test_string_ops.cpp
+  tests/test_pq_hole.cpp)
 target_link_libraries(ct_tests PRIVATE ct_sockets gtest_main)
 target_compile_definitions(ct_tests PRIVATE CT_UCD_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/ucd")
 include(GoogleTest)

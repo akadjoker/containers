@@ -919,36 +919,31 @@ namespace ct
         }
 
         // Algarismos decimais de p a end: devolve o fim, ou p se nao houver nenhum. Zeros do principio nao contam;
-        // out = valor, ou 2^64 - 1 se tiver mais de 19 algarismos significativos (nunca cabe num int).
+        // out = valor, ou 2^64 - 1 se tiver mais de 19 algarismos significativos (nunca cabe num int). A soma nao
+        // testa o limite a cada algarismo: com mais de 19 da a volta, e o numero deles (a diferenca de ponteiros)
+        // decide no fim. Com terminated = true *end e '\0' (o NUL de um String) e os ciclos nao testam end.
+        template <bool Terminated>
         CT_FORCEINLINE const char *scan_uint(const char *p, const char *end, uint64_t &out) noexcept
         {
             const char *const begin = p;
-            while (p != end && *p == '0')
+            while ((Terminated || p != end) && *p == '0')
                 ++p;
+            const char *const first = p;
             uint64_t v = 0;
-            int n = 0;
 #if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_MSC_VER)
             uint64_t chunk;
-            while (n <= 8 && end - p >= 8 && eight_digits(p, chunk))
+            while (end - p >= 8 && eight_digits(p, chunk))
             {
                 v = v * 100000000ull + chunk;
                 p += 8;
-                n += 8;
             }
 #endif
-            bool sat = false;
-            while (p != end && is_digit_char(*p))
+            while ((Terminated || p != end) && is_digit_char(*p))
             {
-                if (n >= 19)
-                    sat = true;
-                else
-                {
-                    v = v * 10 + static_cast<unsigned>(*p - '0');
-                    ++n;
-                }
+                v = v * 10 + static_cast<unsigned>(*p - '0');
                 ++p;
             }
-            out = sat ? ~0ull : v;
+            out = (p - first > 19) ? ~0ull : v;
             return p == begin ? begin : p;
         }
 

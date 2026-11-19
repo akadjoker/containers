@@ -192,6 +192,46 @@ namespace ct
         const char *c_str() const noexcept { return data(); }
 
         size_type size() const noexcept { return is_small() ? small_size() : storage_.heap.size; }
+        // O ponteiro e o tamanho com um so teste do SSO (data() e size() separados testam-no duas vezes cada)
+        void raw_parts(const char *&p, size_type &n) const noexcept
+        {
+            if (is_small())
+            {
+                p = storage_.small.data;
+                n = small_size();
+            }
+            else
+            {
+                p = storage_.heap.data;
+                n = storage_.heap.size;
+            }
+        }
+        // A concatenacao de dois pedacos com a capacidade exacta, sem passar por reserve e append (que dobrariam e
+        // testariam aliasing): o resultado e um objecto novo, nao ha alias possivel.
+        static String concat(const char *a, size_type na, const char *b, size_type nb)
+        {
+            size_type total = 0;
+            if (!detail::checked_add(na, nb, total) || total > (std::numeric_limits<size_type>::max)() - 1)
+                detail::fatal("ct::String: tamanho invalido");
+            String r;
+            char *out;
+            if (total <= kSSO)
+                out = r.storage_.small.data;
+            else
+            {
+                r.heap_alloc(total);
+                out = r.storage_.heap.data;
+            }
+            if (na)
+                std::memcpy(out, a, na);
+            if (nb)
+                std::memcpy(out + na, b, nb);
+            if (total <= kSSO)
+                r.set_small_size(total);
+            else
+                r.set_heap_size(total);
+            return r;
+        }
         size_type length() const noexcept { return size(); }
         bool empty() const noexcept { return size() == 0; }
         size_type capacity() const noexcept { return is_small() ? kSSO : heap_capacity(); }
@@ -245,7 +285,35 @@ namespace ct
             set_size(n);
         }
 
+        // O caso de sempre (cabe no SSO ou na capacidade) sem passar por size(), capacity(), data() e set_size(), que
+        // testam cada um o SSO; o resto (crescer, tamanho maximo) fica a parte.
         void push_back(char c)
+        {
+            if (is_small())
+            {
+                const size_type current = small_size();
+                if (CT_LIKELY(current < kSSO))
+                {
+                    storage_.small.data[current] = c;
+                    storage_.small.data[current + 1] = '\0';
+                    storage_.small.data[kSSO] = static_cast<char>(kSSO - current - 1);
+                    return;
+                }
+            }
+            else
+            {
+                const size_type current = storage_.heap.size;
+                if (CT_LIKELY(current < heap_capacity()))
+                {
+                    storage_.heap.data[current] = c;
+                    storage_.heap.data[current + 1] = '\0';
+                    storage_.heap.size = current + 1;
+                    return;
+                }
+            }
+            push_back_slow(c);
+        }
+        CT_NOINLINE void push_back_slow(char c)
         {
             const size_type current = size();
             if (current == max_size())
@@ -475,34 +543,28 @@ namespace ct
             return append(tmp, static_cast<size_type>(write_shortest(v, tmp) - tmp));
         }
 
+        // Um inteiro cabe sempre no SSO (no maximo 20 algarismos e o sinal, 23 e o limite): conta-se os algarismos e
+        // escrevem-se de tras para a frente directamente no buffer, sem temporario nem append
         static String number(long long v)
         {
-            String s;
-            s.append_number(v);
-            return s;
+            return small_number(v < 0 ? 0ull - static_cast<unsigned long long>(v) : static_cast<unsigned long long>(v), v < 0);
         }
         template <typename I,
                   typename = typename detail::enable_if<std::is_integral<I>::value>::type>
         static String number(I v)
         {
-            String s;
-            s.append_number(v);
-            return s;
+            return number_integral(v, detail::integral_constant<bool, std::is_signed<I>::value>{});
         }
         template <typename E,
                   typename = typename detail::enable_if<std::is_enum<E>::value>::type,
                   typename = void>
         static String number(E v)
         {
-            String s;
-            s.append_number(v);
-            return s;
+            return number(static_cast<typename std::underlying_type<E>::type>(v));
         }
         static String number(unsigned long long v)
         {
-            String s;
-            s.append_number(v);
-            return s;
+            return small_number(v, false);
         }
         static String number(double v, int precision = 6)
         {
@@ -650,13 +712,17 @@ namespace ct
             return out;
         }
 
+        // data() nunca e nulo (o buffer do SSO ou o bloco da heap), por isso o memcmp com n = 0 e valido
         int compare(const String &o) const
         {
-            const size_type n = size() < o.size() ? size() : o.size();
-            const int result = n ? std::memcmp(data(), o.data(), n) : 0;
+            const char *pa, *pb;
+            size_type na, nb;
+            raw_parts(pa, na);
+            o.raw_parts(pb, nb);
+            const int result = std::memcmp(pa, pb, na < nb ? na : nb);
             if (result)
                 return result;
-            return size() < o.size() ? -1 : (size() > o.size() ? 1 : 0);
+            return na < nb ? -1 : (na > nb ? 1 : 0);
         }
 
         int compare(size_type pos, size_type n, const String &o) const
@@ -683,15 +749,17 @@ namespace ct
         // (INT_MIN ou INT_MAX), e sem algarismos da 0. to_int(out) diz se o texto era mesmo um inteiro.
         int to_int() const
         {
-            const char *p = data();
-            const char *const end = p + size();
-            while (p != end && is_space(*p))
+            const char *p;
+            size_type len;
+            raw_parts(p, len);
+            const char *const end = p + len;
+            while (is_space(*p))
                 ++p;
-            bool negative = false;
-            if (p != end && (*p == '-' || *p == '+'))
-                negative = *p++ == '-';
+            const char sign = *p;
+            const bool negative = sign == '-';
+            p += (sign == '-' || sign == '+') ? 1 : 0;
             std::uint64_t value;
-            detail::scan_uint(p, end, value);
+            detail::scan_uint<true>(p, end, value);
             return clamp_int(negative, value);
         }
 
@@ -699,15 +767,17 @@ namespace ct
         // nao for isso ou o valor nao couber num int.
         bool to_int(int &out) const
         {
-            const char *p = data();
-            const char *const end = p + size();
+            const char *p;
+            size_type len;
+            raw_parts(p, len);
+            const char *const end = p + len;
             while (p != end && is_space(*p))
                 ++p;
             bool negative = false;
             if (p != end && (*p == '-' || *p == '+'))
                 negative = *p++ == '-';
             std::uint64_t value;
-            const char *const digits_end = detail::scan_uint(p, end, value);
+            const char *const digits_end = detail::scan_uint<true>(p, end, value);
             if (digits_end == p)
                 return false;
             p = digits_end;
@@ -726,8 +796,10 @@ namespace ct
         // hexadecimal), mas arredondado correctamente e sem depender do locale: o separador e sempre '.'.
         float to_float() const
         {
-            const char *p = data();
-            const char *const end = p + size();
+            const char *p;
+            size_type len;
+            raw_parts(p, len);
+            const char *const end = p + len;
             while (p != end && is_space(*p))
                 ++p;
             float f;
@@ -737,8 +809,10 @@ namespace ct
 
         double to_double() const
         {
-            const char *p = data();
-            const char *const end = p + size();
+            const char *p;
+            size_type len;
+            raw_parts(p, len);
+            const char *const end = p + len;
             while (p != end && is_space(*p))
                 ++p;
             double d;
@@ -831,6 +905,33 @@ namespace ct
                 return ((bits[c >> 6] >> (c & 63)) & 1) != 0;
             }
         };
+
+        template <typename I>
+        static String number_integral(I v, detail::true_type)
+        {
+            return number(static_cast<long long>(v));
+        }
+
+        template <typename I>
+        static String number_integral(I v, detail::false_type)
+        {
+            return number(static_cast<unsigned long long>(v));
+        }
+
+        static String small_number(unsigned long long u, bool negative) noexcept
+        {
+            const unsigned bits = 64u - static_cast<unsigned>(detail::clz64(u | 1ull));
+            const unsigned estimate = (bits * 1233u) >> 12;
+            const unsigned digits = estimate - ((u | 1ull) < detail::pow10_u64(static_cast<int>(estimate)) ? 1u : 0u) + 1u;
+            const unsigned total = digits + (negative ? 1u : 0u);
+            String s;
+            char *const data = s.storage_.small.data;
+            write_digits(u, data + total);
+            if (negative)
+                data[0] = '-';
+            s.set_small_size(total);
+            return s;
+        }
 
         template <typename I>
         String &append_integral(I v, detail::true_type)
@@ -993,8 +1094,11 @@ namespace ct
 
     inline bool operator==(const String &a, const String &b)
     {
-        return a.size() == b.size() &&
-               (a.size() == 0 || std::memcmp(a.data(), b.data(), a.size()) == 0);
+        const char *pa, *pb;
+        std::size_t na, nb;
+        a.raw_parts(pa, na);
+        b.raw_parts(pb, nb);
+        return na == nb && std::memcmp(pa, pb, na) == 0;
     }
     inline bool operator==(const String &a, const char *b)
     {
@@ -1012,38 +1116,25 @@ namespace ct
 
     inline String operator+(const String &a, const String &b)
     {
-        String result;
-        std::size_t total = 0;
-        if (!detail::checked_add(a.size(), b.size(), total))
-            detail::fatal("ct::String: tamanho invalido");
-        result.reserve(total);
-        result.append(a);
-        result.append(b);
-        return result;
+        const char *pa, *pb;
+        std::size_t na, nb;
+        a.raw_parts(pa, na);
+        b.raw_parts(pb, nb);
+        return String::concat(pa, na, pb, nb);
     }
     inline String operator+(const String &a, const char *b)
     {
-        String result;
-        const std::size_t n = std::strlen(b);
-        std::size_t total = 0;
-        if (!detail::checked_add(a.size(), n, total))
-            detail::fatal("ct::String: tamanho invalido");
-        result.reserve(total);
-        result.append(a);
-        result.append(b, n);
-        return result;
+        const char *pa;
+        std::size_t na;
+        a.raw_parts(pa, na);
+        return String::concat(pa, na, b, std::strlen(b));
     }
     inline String operator+(const char *a, const String &b)
     {
-        String result;
-        const std::size_t n = std::strlen(a);
-        std::size_t total = 0;
-        if (!detail::checked_add(n, b.size(), total))
-            detail::fatal("ct::String: tamanho invalido");
-        result.reserve(total);
-        result.append(a, n);
-        result.append(b);
-        return result;
+        const char *pb;
+        std::size_t nb;
+        b.raw_parts(pb, nb);
+        return String::concat(a, std::strlen(a), pb, nb);
     }
     inline String operator+(const String &a, char c)
     {

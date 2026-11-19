@@ -287,13 +287,16 @@ namespace numconv_check
         const char *e2 = ct::parse_double(s, s + len, d2);
         char *end3;
         float f1 = os_strtof(s, &end3);
-        // O strtof da glibc arredonda mal alguns hexadecimais subnormais (0x1.8b9ff5p-128 da ...fe, o certo e ...ff):
-        // com ate 13 algarismos hexadecimais (52 bits) o strtod e exacto e o corte para float e um so arredondamento.
+        // O strtod e o strtof da glibc arredondam mal os hexadecimais com mais de 53 bits de mantissa quando o resultado
+        // e subnormal (0x1.8b9ff5p-128 em float da ...fe e o certo e ...ff; 0X98A382a242e7eCp-1078 em double da ...7e e o
+        // certo e ...7f, confirmado com aritmetica exacta). Nesses casos so se compara o fim do texto; com ate 13
+        // algarismos hexadecimais o strtod e exacto e o corte para float e um so arredondamento.
+        bool skip_double_value = false, skip_float_value = false;
         {
             const char *h = s;
             if (*h == '-' || *h == '+')
                 ++h;
-            if (h[0] == '0' && (h[1] == 'x' || h[1] == 'X') && d1 - d1 == 0)
+            if (h[0] == '0' && (h[1] == 'x' || h[1] == 'X'))
             {
                 int hex_digits = 0;
                 bool leading = true;
@@ -306,9 +309,17 @@ namespace numconv_check
                     leading = false;
                     ++hex_digits;
                 }
-                if (hex_digits <= 13)
+                const double a = d1 < 0 ? -d1 : d1;
+                if (hex_digits > 13)
                 {
-                    const double a = d1 < 0 ? -d1 : d1;
+                    if (a < 2.2250738585072014e-308)
+                        skip_double_value = true;
+                    const float af = f1 < 0 ? -f1 : f1;
+                    if (af < 1.17549435e-38f)
+                        skip_float_value = true;
+                }
+                else if (d1 - d1 == 0)
+                {
                     if (a >= 3.4028235677973366e38)
                         f1 = d1 < 0 ? -float_of(0x7F800000u) : float_of(0x7F800000u);
                     else
@@ -318,7 +329,7 @@ namespace numconv_check
         }
         float f2;
         const char *e3 = ct::parse_float(s, s + len, f2);
-        if (bits_of(d1) != bits_of(d2) && !(d1 != d1 && d2 != d2))
+        if (!skip_double_value && bits_of(d1) != bits_of(d2) && !(d1 != d1 && d2 != d2))
         {
             os_snprintf(msg, msg_size, "double '%.200s': strtod %016llx, ct %016llx", s, (unsigned long long)bits_of(d1), (unsigned long long)bits_of(d2));
             return false;
@@ -328,7 +339,7 @@ namespace numconv_check
             os_snprintf(msg, msg_size, "double '%.200s': strtod parou em %ld, ct em %ld", s, (long)(end1 - s), (long)(e2 - s));
             return false;
         }
-        if (bits_of(f1) != bits_of(f2) && !(f1 != f1 && f2 != f2))
+        if (!skip_float_value && bits_of(f1) != bits_of(f2) && !(f1 != f1 && f2 != f2))
         {
             os_snprintf(msg, msg_size, "float '%.200s': strtof %08x, ct %08x", s, bits_of(f1), bits_of(f2));
             return false;

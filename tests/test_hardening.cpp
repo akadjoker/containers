@@ -1059,7 +1059,8 @@ TEST(Hardening, NumerosDeVirgulaFlutuanteNaoDependemDoLocale)
     EXPECT_EQ(ct::String("1.5").to_float(), 1.5f);
     EXPECT_EQ(ct::String("-2.25e2").to_float(), -225.0f);
     EXPECT_EQ(ct::String("3").to_float(), 3.0f);
-    EXPECT_EQ(ct::String("1,5").to_float(), 1.5f); // a virgula continua a servir neste locale, como antes
+    EXPECT_EQ(ct::String("1,5").to_float(), 1.0f); // a virgula do locale ja nao serve: o separador e sempre '.' (numconv.hpp)
+    EXPECT_EQ(ct::String("1,5").to_double(), 1.0);
 
     ct::MemoryStream out;
     {

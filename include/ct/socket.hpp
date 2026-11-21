@@ -184,7 +184,28 @@ namespace ct
             (void)fd;
 #endif
         }
-        bool open(int type, int family) noexcept { close(); fd_ = ::socket(family, type, 0); if (!valid()) { remember(); return false; } no_sigpipe(fd_); return true; }
+        static void no_inherit(detail::SocketHandle fd) noexcept
+        {
+#if defined(_WIN32)
+            SetHandleInformation(reinterpret_cast<HANDLE>(fd), HANDLE_FLAG_INHERIT, 0);
+#else
+            const int flags = fcntl(fd, F_GETFD, 0);
+            if (flags >= 0) fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+#endif
+        }
+        bool open(int type, int family) noexcept
+        {
+            close();
+#if defined(SOCK_CLOEXEC)
+            fd_ = ::socket(family, type | SOCK_CLOEXEC, 0);
+#else
+            fd_ = ::socket(family, type, 0);
+#endif
+            if (!valid()) { remember(); return false; }
+            no_inherit(fd_);
+            no_sigpipe(fd_);
+            return true;
+        }
         bool checked(int rc) noexcept { if (rc == 0) return true; remember(); return false; }
         void remember() noexcept { const int e = detail::socket_error(); error_ = {detail::socket_error_text(e), e}; }
         detail::SocketHandle fd_;
@@ -298,11 +319,16 @@ namespace ct
         for (;;)
         {
             a.len_ = sizeof(a.storage_);
+#if defined(__linux__)
+            fd = ::accept4(fd_, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_, SOCK_CLOEXEC);
+#else
             fd = ::accept(fd_, reinterpret_cast<sockaddr *>(&a.storage_), &a.len_);
+#endif
             if (fd != detail::invalid_socket) break;
             remember();
             if (!detail::interrupted(error_.code)) return false;
         }
+        no_inherit(fd);
         no_sigpipe(fd);
         out = TcpStream(fd);
         if (peer) *peer = a;

@@ -159,7 +159,13 @@ namespace ct
 #if defined(_WIN32)
             DWORD r = recv_ms, s = send_ms;
 #else
-            timeval r = { static_cast<long>(recv_ms / 1000), static_cast<long>((recv_ms % 1000) * 1000) }, s = { static_cast<long>(send_ms / 1000), static_cast<long>((send_ms % 1000) * 1000) };
+            /* the fields' own types: tv_usec is a long on Linux and an int (suseconds_t) on macOS, where a long in the braces is a
+               narrowing error */
+            timeval r{}, s{};
+            r.tv_sec = static_cast<decltype(r.tv_sec)>(recv_ms / 1000);
+            r.tv_usec = static_cast<decltype(r.tv_usec)>((recv_ms % 1000) * 1000);
+            s.tv_sec = static_cast<decltype(s.tv_sec)>(send_ms / 1000);
+            s.tv_usec = static_cast<decltype(s.tv_usec)>((send_ms % 1000) * 1000);
 #endif
             return checked(setsockopt(fd_, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char *>(&r), sizeof(r))) && checked(setsockopt(fd_, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char *>(&s), sizeof(s)));
         }

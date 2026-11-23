@@ -44,8 +44,17 @@ namespace ct
                 (void)ssl_name; (void)crypto_name;
                 std::snprintf(error_, sizeof(error_), "%s", "no TLS backend for this platform");
 #else
+#if defined(__APPLE__)
+                // macOS ends a process that loads the unversioned libssl.dylib or libcrypto.dylib ("is loading libcrypto in an
+                // unsafe way", abort): only versioned names are asked for. OpenSSL 3 of Homebrew if it is there, else the system's
+                // own LibreSSL 3.3 (in the dyld cache: the file is not on the disk, the path still loads), which has no SSL_read_ex
+                // and SSL_write_ex: SSL_read and SSL_write stand in for them below.
+                static const char *const ssl_names[] = {"/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib", "/usr/local/opt/openssl@3/lib/libssl.3.dylib", "/usr/lib/libssl.48.dylib", nullptr};
+                static const char *const crypto_names[] = {"/opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib", "/usr/local/opt/openssl@3/lib/libcrypto.3.dylib", "/usr/lib/libcrypto.46.dylib", nullptr};
+#else
                 static const char *const ssl_names[] = {"libssl.so.3", "libssl.so", "libssl.so.1.1", "libssl.3.dylib", "libssl.dylib", nullptr};
                 static const char *const crypto_names[] = {"libcrypto.so.3", "libcrypto.so", "libcrypto.so.1.1", "libcrypto.3.dylib", "libcrypto.dylib", nullptr};
+#endif
                 ssl_ = open_first(ssl_name, ssl_names);
                 if (!ssl_) return;
                 crypto_ = open_first(crypto_name, crypto_names);
@@ -56,7 +65,16 @@ namespace ct
                 CT_TLS_SYM(SSL_CTX_load_verify_locations) CT_TLS_SYM(SSL_CTX_set_verify) CT_TLS_SYM(SSL_CTX_ctrl) CT_TLS_SYM(SSL_CTX_set_alpn_protos)
                 CT_TLS_SYM(SSL_new) CT_TLS_SYM(SSL_free) CT_TLS_SYM(SSL_set_fd) CT_TLS_SYM(SSL_set_connect_state) CT_TLS_SYM(SSL_ctrl)
                 CT_TLS_SYM(SSL_set1_host) CT_TLS_SYM(SSL_get0_param) CT_TLS_SYM(X509_VERIFY_PARAM_set1_ip_asc) CT_TLS_SYM(SSL_do_handshake)
-                CT_TLS_SYM(SSL_read_ex) CT_TLS_SYM(SSL_write_ex) CT_TLS_SYM(SSL_shutdown) CT_TLS_SYM(SSL_get_error) CT_TLS_SYM(SSL_get_verify_result)
+                // the _ex pair came with OpenSSL 1.1.1 and LibreSSL 3.4; an older library has the plain pair
+                f_.SSL_read_ex = reinterpret_cast<decltype(f_.SSL_read_ex)>(symbol("SSL_read_ex"));
+                f_.SSL_write_ex = reinterpret_cast<decltype(f_.SSL_write_ex)>(symbol("SSL_write_ex"));
+                if (!f_.SSL_read_ex || !f_.SSL_write_ex)
+                {
+                    f_.SSL_read_ex = nullptr;
+                    f_.SSL_write_ex = nullptr;
+                    CT_TLS_SYM(SSL_read) CT_TLS_SYM(SSL_write)
+                }
+                CT_TLS_SYM(SSL_shutdown) CT_TLS_SYM(SSL_get_error) CT_TLS_SYM(SSL_get_verify_result)
                 CT_TLS_SYM(X509_verify_cert_error_string) CT_TLS_SYM(ERR_get_error) CT_TLS_SYM(ERR_error_string_n) CT_TLS_SYM(ERR_clear_error)
                 CT_TLS_SYM(SSL_get0_alpn_selected) CT_TLS_SYM(SSL_get_version) CT_TLS_SYM(SSL_pending)
 #undef CT_TLS_SYM
@@ -144,13 +162,31 @@ namespace ct
             TlsStatus read(void *ssl, void *data, std::size_t n, std::size_t &got, TlsFailure &failure) noexcept override
             {
                 f_.ERR_clear_error();
-                if (f_.SSL_read_ex(ssl, data, n, &got) == 1) return TlsStatus::Ok;
+                if (f_.SSL_read_ex)
+                {
+                    if (f_.SSL_read_ex(ssl, data, n, &got) == 1) return TlsStatus::Ok;
+                }
+                else
+                {
+                    const int r = f_.SSL_read(ssl, data, n > 0x40000000u ? 0x40000000 : static_cast<int>(n));
+                    if (r > 0) { got = static_cast<std::size_t>(r); return TlsStatus::Ok; }
+                    return io_status(ssl, failure, r);
+                }
                 return io_status(ssl, failure);
             }
             TlsStatus write(void *ssl, const void *data, std::size_t n, std::size_t &written, TlsFailure &failure) noexcept override
             {
                 f_.ERR_clear_error();
-                if (f_.SSL_write_ex(ssl, data, n, &written) == 1) return TlsStatus::Ok;
+                if (f_.SSL_write_ex)
+                {
+                    if (f_.SSL_write_ex(ssl, data, n, &written) == 1) return TlsStatus::Ok;
+                }
+                else
+                {
+                    const int r = f_.SSL_write(ssl, data, n > 0x40000000u ? 0x40000000 : static_cast<int>(n));
+                    if (r > 0) { written = static_cast<std::size_t>(r); return TlsStatus::Ok; }
+                    return io_status(ssl, failure, r);
+                }
                 return io_status(ssl, failure);
             }
             void shutdown(void *ssl) noexcept override { f_.SSL_shutdown(ssl); }
@@ -199,9 +235,11 @@ namespace ct
                 }
             }
 
-            TlsStatus io_status(void *ssl, TlsFailure &failure) noexcept
+            // rc is what the call returned: 0 from the _ex pair, 0 or less from SSL_read and SSL_write (SSL_get_error tells a
+            // "want read" from a close by it: with 0 it never says WANT_READ for a call that returned -1)
+            TlsStatus io_status(void *ssl, TlsFailure &failure, int rc = 0) noexcept
             {
-                const int error = f_.SSL_get_error(ssl, 0);
+                const int error = f_.SSL_get_error(ssl, rc);
                 if (error == ErrorWantRead) return TlsStatus::WantRead;
                 if (error == ErrorWantWrite) return TlsStatus::WantWrite;
                 if (error == ErrorZeroReturn) return TlsStatus::Closed;
@@ -254,6 +292,8 @@ namespace ct
                 int (*SSL_do_handshake)(void *);
                 int (*SSL_read_ex)(void *, void *, std::size_t, std::size_t *);
                 int (*SSL_write_ex)(void *, const void *, std::size_t, std::size_t *);
+                int (*SSL_read)(void *, void *, int);
+                int (*SSL_write)(void *, const void *, int);
                 int (*SSL_shutdown)(void *);
                 int (*SSL_get_error)(const void *, int);
                 long (*SSL_get_verify_result)(const void *);
